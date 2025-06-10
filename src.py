@@ -1,3 +1,5 @@
+import azure.functions as func
+
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 import httpx  # Replaced pycurl and io
