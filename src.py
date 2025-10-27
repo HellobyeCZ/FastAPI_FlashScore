@@ -1,9 +1,11 @@
-import azure.functions as func
-
 from fastapi import FastAPI, HTTPException
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 import httpx  # Replaced pycurl and io
 import json
+
+from app.schemas.odds import OddsResponse
+from app.services.odds import map_odds_payload
 
 app = FastAPI(title="FastAPI Project", version="0.1.0")
 
@@ -13,7 +15,7 @@ async def root():
     return {"message": "Hello World"}
 
 
-@app.get("/odds/{event_id}")
+@app.get("/odds/{event_id}", response_model=OddsResponse)
 async def get_odds(event_id: str):  # Changed to async def
     url = f'https://global.ds.lsapp.eu/odds/pq_graphql?_hash=oce&eventId={event_id}&projectId=1&geoIpCode=CZ&geoIpSubdivisionCode=CZ10'
     headers = {
@@ -41,7 +43,9 @@ async def get_odds(event_id: str):  # Changed to async def
         except json.JSONDecodeError as e:
             raise HTTPException(status_code=500, detail=f"JSON decode error from external API: {e}")
 
-    return JSONResponse(content=response_json)
+    odds_response = map_odds_payload(event_id=event_id, payload=response_json)
+    return JSONResponse(content=jsonable_encoder(odds_response))
+
 
 # You can include routers here
 # from app.routers import items_router
