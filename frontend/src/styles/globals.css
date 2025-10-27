@@ -1,0 +1,33 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import "./design-tokens.css";
+
+* {
+  box-sizing: border-box;
+}
+
+a {
+  color: inherit;
+}
+
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 3px solid var(--color-brand-accent);
+  outline-offset: 2px;
+}
+
+main {
+  max-width: var(--max-content-width);
+  margin: 0 auto;
+  padding: 2rem 1.5rem 4rem;
+}
+
+@media (max-width: 600px) {
+  main {
+    padding: 1.5rem 1rem 3rem;
+  }
+}
