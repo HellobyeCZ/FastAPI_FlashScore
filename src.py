@@ -5,7 +5,10 @@ from fastapi.responses import JSONResponse
 import httpx  # Replaced pycurl and io
 import json
 
+from app.config import get_settings
+
 app = FastAPI(title="FastAPI Project", version="0.1.0")
+settings = get_settings()
 
 
 @app.get("/")
@@ -15,19 +18,8 @@ async def root():
 
 @app.get("/odds/{event_id}")
 async def get_odds(event_id: str):  # Changed to async def
-    url = f'https://global.ds.lsapp.eu/odds/pq_graphql?_hash=oce&eventId={event_id}&projectId=1&geoIpCode=CZ&geoIpSubdivisionCode=CZ10'
-    headers = {
-        'Accept': '*/*',
-        'Sec-Fetch-Site': 'cross-site',
-        'Origin': 'https://www.livesport.cz',
-        'Sec-Fetch-Dest': 'empty',
-        'Accept-Language': 'cs-CZ,cs;q=0.9',
-        'Sec-Fetch-Mode': 'cors',
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3.1 Safari/605.1.15',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'Referer': 'https://www.livesport.cz/',
-        'Priority': 'u=3, i'
-    }
+    url = settings.build_odds_url(event_id)
+    headers = settings.default_headers.copy()
 
     async with httpx.AsyncClient() as client:
         try:
