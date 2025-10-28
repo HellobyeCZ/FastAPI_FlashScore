@@ -1,17 +1,44 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.encoders import jsonable_encoder
+from functools import lru_cache
+from typing import Any
+
+from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
-import httpx  # Replaced pycurl and io
-import json
+
+from app.schemas.errors import APIErrorResponse
+from app.services.odds_client import OddsAPIError, OddsClient, build_odds_client
+
+from app.config import get_settings
 
 from app.schemas.odds import OddsResponse
 from app.services.odds import map_odds_payload
 
 app = FastAPI(title="FastAPI Project", version="0.1.0")
+settings = get_settings()
+
+
+@lru_cache()
+def _get_odds_client() -> OddsClient:
+    return build_odds_client()
+
+
+def odds_client_dependency() -> OddsClient:
+    return _get_odds_client()
+
+
+@app.on_event("shutdown")
+async def shutdown_odds_client() -> None:
+    await _get_odds_client().aclose()
+
+
+@app.exception_handler(OddsAPIError)
+async def odds_error_handler(_: Request, exc: OddsAPIError) -> JSONResponse:
+    return JSONResponse(status_code=exc.status_code, content={"error": exc.to_dict()})
 
 
 @app.get("/")
-async def root():
+async def root() -> dict[str, str]:
     return {"message": "Hello World"}
 
 
