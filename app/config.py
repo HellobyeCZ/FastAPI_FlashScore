@@ -1,7 +1,6 @@
 """Application configuration settings."""
 from __future__ import annotations
 
-import importlib.util
 from functools import lru_cache
 from typing import Dict, Type
 from urllib.parse import urlencode
@@ -68,23 +67,32 @@ class _SettingsFields:
 def _get_base_settings_class() -> Type[_SettingsFields]:
     """Return the appropriate Pydantic settings base class.
 
-    Pydantic v2 exposes BaseSettings via the external ``pydantic-settings`` package
-    while Pydantic v1 provides it directly from ``pydantic``. Detect the available
-    implementation so the application keeps working across both versions without
-    forcing an additional dependency.
+    Prefer the ``pydantic-settings`` package (Pydantic v2) and gracefully fall back
+    to the built-in ``BaseSettings`` from Pydantic v1 when available.
     """
 
-    if importlib.util.find_spec("pydantic_settings"):
-        from pydantic_settings import BaseSettings, SettingsConfigDict  # type: ignore
-
-        class SettingsBase(_SettingsFields, BaseSettings):
+    try:
+        from pydantic_settings import BaseSettings as SettingsBaseCls, SettingsConfigDict  # type: ignore
+    except ImportError:
+        SettingsBaseCls = None  # type: ignore[assignment]
+    else:
+        class SettingsBase(_SettingsFields, SettingsBaseCls):  # type: ignore[misc]
             model_config = SettingsConfigDict(env_file=".env", env_prefix="APP_")
 
         return SettingsBase
 
-    from pydantic import BaseSettings  # type: ignore
+    try:
+        from pydantic import BaseSettings as SettingsBaseCls  # type: ignore
+    except ImportError:
+        try:
+            from pydantic.v1 import BaseSettings as SettingsBaseCls  # type: ignore
+        except Exception as exc:  # pragma: no cover - defensive guard for misconfiguration
+            raise ImportError(
+                "BaseSettings is not available. Install `pydantic-settings` "
+                "or use Pydantic v1 which still exports BaseSettings."
+            ) from exc
 
-    class SettingsBase(_SettingsFields, BaseSettings):
+    class SettingsBase(_SettingsFields, SettingsBaseCls):  # type: ignore[misc]
         class Config:
             env_file = ".env"
             env_prefix = "APP_"
