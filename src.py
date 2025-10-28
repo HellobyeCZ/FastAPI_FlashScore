@@ -156,6 +156,26 @@ def _configure_telemetry(app: FastAPI) -> None:
 
 
 app = FastAPI(title="FastAPI Project", version="0.1.0")
+settings = get_settings()
+
+
+@lru_cache()
+def _get_odds_client() -> OddsClient:
+    return build_odds_client()
+
+
+def odds_client_dependency() -> OddsClient:
+    return _get_odds_client()
+
+
+@app.on_event("shutdown")
+async def shutdown_odds_client() -> None:
+    await _get_odds_client().aclose()
+
+
+@app.exception_handler(OddsAPIError)
+async def odds_error_handler(_: Request, exc: OddsAPIError) -> JSONResponse:
+    return JSONResponse(status_code=exc.status_code, content={"error": exc.to_dict()})
 
 _configure_telemetry(app)
 
@@ -231,11 +251,11 @@ async def correlation_id_middleware(request: Request, call_next):
 
 
 @app.get("/")
-async def root():
+async def root() -> dict[str, str]:
     return {"message": "Hello World"}
 
 
-@app.get("/odds/{event_id}")
+@app.get("/odds/{event_id}", response_model=OddsResponse)
 async def get_odds(event_id: str):  # Changed to async def
     url = f'https://global.ds.lsapp.eu/odds/pq_graphql?_hash=oce&eventId={event_id}&projectId=1&geoIpCode=CZ&geoIpSubdivisionCode=CZ10'
     headers = {
@@ -316,7 +336,9 @@ async def get_odds(event_id: str):  # Changed to async def
                 )
                 raise HTTPException(status_code=500, detail=f"JSON decode error from external API: {e}")
 
-    return JSONResponse(content=response_json)
+    odds_response = map_odds_payload(event_id=event_id, payload=response_json)
+    return JSONResponse(content=jsonable_encoder(odds_response))
+
 
 # You can include routers here
 # from app.routers import items_router
