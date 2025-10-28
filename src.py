@@ -1,24 +1,43 @@
+import json
 import logging
 import logging.config
 import os
 import time
 import uuid
 from contextvars import ContextVar
-from typing import Optional
+from functools import lru_cache
+from typing import Any, Optional
 
-import json
 import httpx  # Replaced pycurl and io
 import structlog
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
-from opentelemetry import metrics, trace
-from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
-from opentelemetry.sdk.metrics import MeterProvider
-from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
-from opentelemetry.sdk.resources import Resource
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+from app.config import get_settings
+from app.services.odds import map_odds_payload
+from app.services.odds_client import OddsAPIError, OddsClient, build_odds_client
+from app.schemas.odds import OddsResponse
+
+try:
+    from opentelemetry import metrics, trace
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+    from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+    from opentelemetry.sdk.metrics import MeterProvider
+    from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor
+except ImportError:  # pragma: no cover - optional dependency guard
+    metrics = None  # type: ignore[assignment]
+    trace = None  # type: ignore[assignment]
+    FastAPIInstrumentor = None  # type: ignore[assignment]
+    HTTPXClientInstrumentor = None  # type: ignore[assignment]
+    MeterProvider = None  # type: ignore[assignment]
+    PeriodicExportingMetricReader = None  # type: ignore[assignment]
+    Resource = None  # type: ignore[assignment]
+    TracerProvider = None  # type: ignore[assignment]
+    BatchSpanProcessor = None  # type: ignore[assignment]
 
 try:
     from azure.monitor.opentelemetry.exporter import (
@@ -36,6 +55,53 @@ except ImportError:  # pragma: no cover - optional dependency guard
     LoggingHandler = None
     set_logger_provider = None
     BatchLogRecordProcessor = None
+
+
+_OPENTELEMETRY_AVAILABLE = all(
+    item is not None
+    for item in (
+        metrics,
+        trace,
+        FastAPIInstrumentor,
+        HTTPXClientInstrumentor,
+        MeterProvider,
+        PeriodicExportingMetricReader,
+        Resource,
+        TracerProvider,
+        BatchSpanProcessor,
+    )
+)
+
+
+class _NoopSpan:
+    def __enter__(self) -> "_NoopSpan":
+        return self
+
+    def __exit__(self, *exc_info: object) -> bool:
+        return False
+
+
+class _NoopTracer:
+    def start_as_current_span(self, *args: Any, **kwargs: Any) -> "_NoopSpan":
+        return _NoopSpan()
+
+
+class _NoopHistogram:
+    def record(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
+
+class _NoopCounter:
+    def add(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
+
+class _NoopMeter:
+    def create_histogram(self, *args: Any, **kwargs: Any) -> _NoopHistogram:
+        return _NoopHistogram()
+
+    def create_counter(self, *args: Any, **kwargs: Any) -> _NoopCounter:
+        return _NoopCounter()
 
 
 def configure_logging() -> None:
@@ -101,11 +167,15 @@ def _configure_telemetry(app: FastAPI) -> None:
 
     telemetry_logger = structlog.get_logger("telemetry")
 
+    if not _OPENTELEMETRY_AVAILABLE:
+        telemetry_logger.info("telemetry_disabled", reason="opentelemetry_not_installed")
+        return
+
     global _telemetry_instrumented
     if not _telemetry_instrumented:
         # Instrument FastAPI and HTTPX to automatically create spans.
-        FastAPIInstrumentor.instrument_app(app, excluded_urls="/health")
-        HTTPXClientInstrumentor().instrument()
+        FastAPIInstrumentor.instrument_app(app, excluded_urls="/health")  # type: ignore[union-attr]
+        HTTPXClientInstrumentor().instrument()  # type: ignore[union-attr]
         _telemetry_instrumented = True
 
     connection_string = os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING")
@@ -180,8 +250,12 @@ async def odds_error_handler(_: Request, exc: OddsAPIError) -> JSONResponse:
 _configure_telemetry(app)
 
 logger = structlog.get_logger("odds_client")
-tracer = trace.get_tracer(__name__)
-meter = metrics.get_meter("fastapi_flashscore.odds_client")
+if _OPENTELEMETRY_AVAILABLE:
+    tracer = trace.get_tracer(__name__)  # type: ignore[union-attr]
+    meter = metrics.get_meter("fastapi_flashscore.odds_client")  # type: ignore[union-attr]
+else:
+    tracer = _NoopTracer()
+    meter = _NoopMeter()
 odds_latency_histogram = meter.create_histogram(
     name="odds_client_latency_ms",
     unit="ms",
