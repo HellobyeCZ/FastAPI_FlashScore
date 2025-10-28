@@ -136,3 +136,9 @@ dmypy.json
 cython_debug/
 
 .python_packages
+# Node / Next.js artefacts
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/playwright-report/
+frontend/test-results/
