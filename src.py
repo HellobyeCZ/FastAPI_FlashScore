@@ -7,7 +7,10 @@ from fastapi.responses import JSONResponse
 from app.schemas.errors import APIErrorResponse
 from app.services.odds_client import OddsAPIError, OddsClient, build_odds_client
 
+from app.config import get_settings
+
 app = FastAPI(title="FastAPI Project", version="0.1.0")
+settings = get_settings()
 
 
 @lru_cache()
