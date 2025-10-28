@@ -1,18 +1,16 @@
 """Application configuration settings."""
 from __future__ import annotations
 
+import importlib.util
 from functools import lru_cache
-from typing import Dict
+from typing import Dict, Type
 from urllib.parse import urlencode
 
 from pydantic import Field, HttpUrl
-from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-class Settings(BaseSettings):
-    """Settings loaded from environment variables or .env files."""
-
-    model_config = SettingsConfigDict(env_file=".env", env_prefix="APP_")
+class _SettingsFields:
+    """Shared field definitions for the application settings."""
 
     odds_endpoint_base: HttpUrl = Field(
         "https://global.ds.lsapp.eu/odds/pq_graphql",
@@ -67,8 +65,38 @@ class Settings(BaseSettings):
         return f"{self.odds_endpoint_base}?{urlencode(query_params)}"
 
 
+def _get_base_settings_class() -> Type[_SettingsFields]:
+    """Return the appropriate Pydantic settings base class.
+
+    Pydantic v2 exposes BaseSettings via the external ``pydantic-settings`` package
+    while Pydantic v1 provides it directly from ``pydantic``. Detect the available
+    implementation so the application keeps working across both versions without
+    forcing an additional dependency.
+    """
+
+    if importlib.util.find_spec("pydantic_settings"):
+        from pydantic_settings import BaseSettings, SettingsConfigDict  # type: ignore
+
+        class SettingsBase(_SettingsFields, BaseSettings):
+            model_config = SettingsConfigDict(env_file=".env", env_prefix="APP_")
+
+        return SettingsBase
+
+    from pydantic import BaseSettings  # type: ignore
+
+    class SettingsBase(_SettingsFields, BaseSettings):
+        class Config:
+            env_file = ".env"
+            env_prefix = "APP_"
+
+    return SettingsBase
+
+
+Settings: Type[_SettingsFields] = _get_base_settings_class()
+
+
 @lru_cache
-def get_settings() -> Settings:
+def get_settings() -> _SettingsFields:
     """Return a cached Settings instance."""
 
     return Settings()
