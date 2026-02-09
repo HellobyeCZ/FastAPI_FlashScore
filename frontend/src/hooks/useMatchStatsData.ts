@@ -1,23 +1,23 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { fetchEventOdds } from "@/lib/api-client";
-import type { EventOddsSummary } from "@/types/odds";
+import { fetchEventMatchStats } from "@/lib/api-client";
+import type { MatchStatsSummary } from "@/types/match-stats";
 
-interface UseOddsDataOptions {
+interface UseMatchStatsDataOptions {
   eventId?: string;
   enabled?: boolean;
 }
 
-export function useOddsData({ eventId, enabled = false }: UseOddsDataOptions) {
-  return useQuery<EventOddsSummary, Error>({
-    queryKey: ["odds", eventId],
+export function useMatchStatsData({ eventId, enabled = false }: UseMatchStatsDataOptions) {
+  return useQuery<MatchStatsSummary, Error>({
+    queryKey: ["match-stats", eventId],
     queryFn: () => {
       if (!eventId) {
         throw new Error("Missing event identifier");
       }
 
-      return fetchEventOdds(eventId);
+      return fetchEventMatchStats(eventId);
     },
     enabled: enabled && Boolean(eventId),
     staleTime: Number.POSITIVE_INFINITY,

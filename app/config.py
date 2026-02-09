@@ -50,18 +50,45 @@ class _SettingsFields:
         },
         description="Default headers sent to the odds endpoint.",
     )
+    stats_feed_base: HttpUrl = Field(
+        "https://2.flashscore.ninja/2/x/feed",
+        description="Base URL for Flashscore match statistics feed.",
+    )
+    stats_feed_sign: str = Field(
+        "SW9D1eZo",
+        description="Value for x-fsign header required by Flashscore feed.",
+    )
 
     def build_odds_url(self, event_id: str) -> str:
         """Construct the odds endpoint URL for the provided event."""
 
+        odds_endpoint_base = self._resolve_value(self.odds_endpoint_base)
+        odds_hash = self._resolve_value(self.odds_hash)
+        project_id = self._resolve_value(self.project_id)
+        geo_ip_code = self._resolve_value(self.geo_ip_code)
+        geo_ip_subdivision_code = self._resolve_value(self.geo_ip_subdivision_code)
+
         query_params = {
-            "_hash": self.odds_hash,
+            "_hash": odds_hash,
             "eventId": event_id,
-            "projectId": str(self.project_id),
-            "geoIpCode": self.geo_ip_code,
-            "geoIpSubdivisionCode": self.geo_ip_subdivision_code,
+            "projectId": str(project_id),
+            "geoIpCode": geo_ip_code,
+            "geoIpSubdivisionCode": geo_ip_subdivision_code,
         }
-        return f"{self.odds_endpoint_base}?{urlencode(query_params)}"
+        return f"{odds_endpoint_base}?{urlencode(query_params)}"
+
+    def build_match_stats_url(self, event_id: str) -> str:
+        """Construct the match statistics feed URL for the provided event."""
+
+        stats_feed_base = str(self._resolve_value(self.stats_feed_base)).rstrip("/")
+        return f"{stats_feed_base}/df_st_1_{event_id}"
+
+    @staticmethod
+    def _resolve_value(value):
+        """Resolve values when Pydantic FieldInfo descriptors leak into runtime."""
+
+        default = getattr(value, "default", None)
+        return default if default is not None else value
 
 
 def _get_base_settings_class() -> Type[_SettingsFields]:

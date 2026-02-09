@@ -12,9 +12,12 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from app.config import get_settings
+from app.schemas.match_stats import MatchStatsResponse
+from app.schemas.odds import OddsResponse
+from app.services.match_stats import map_match_stats_payload
 from app.services.odds import map_odds_payload
 from app.services.odds_client import OddsAPIError, OddsClient, build_odds_client
-from app.schemas.odds import OddsResponse
+from app.services.stats_client import MatchStatsClient, StatsAPIError, build_match_stats_client
 
 try:
     from opentelemetry import metrics, trace
@@ -231,17 +234,32 @@ def _get_odds_client() -> OddsClient:
     return build_odds_client()
 
 
+@lru_cache()
+def _get_match_stats_client() -> MatchStatsClient:
+    return build_match_stats_client()
+
+
 def odds_client_dependency() -> OddsClient:
     return _get_odds_client()
+
+
+def match_stats_client_dependency() -> MatchStatsClient:
+    return _get_match_stats_client()
 
 
 @app.on_event("shutdown")
 async def shutdown_odds_client() -> None:
     await _get_odds_client().aclose()
+    await _get_match_stats_client().aclose()
 
 
 @app.exception_handler(OddsAPIError)
 async def odds_error_handler(_: Request, exc: OddsAPIError) -> JSONResponse:
+    return JSONResponse(status_code=exc.status_code, content={"error": exc.to_dict()})
+
+
+@app.exception_handler(StatsAPIError)
+async def stats_error_handler(_: Request, exc: StatsAPIError) -> JSONResponse:
     return JSONResponse(status_code=exc.status_code, content={"error": exc.to_dict()})
 
 _configure_telemetry(app)
@@ -261,6 +279,15 @@ odds_latency_histogram = meter.create_histogram(
 odds_error_counter = meter.create_counter(
     name="odds_client_errors",
     description="Number of errors encountered while calling the upstream odds provider.",
+)
+match_stats_latency_histogram = meter.create_histogram(
+    name="match_stats_client_latency_ms",
+    unit="ms",
+    description="Latency of calls to the upstream match stats provider.",
+)
+match_stats_error_counter = meter.create_counter(
+    name="match_stats_client_errors",
+    description="Number of errors encountered while calling the upstream match stats provider.",
 )
 
 
@@ -382,6 +409,77 @@ async def get_odds(
         )
 
     return map_odds_payload(event_id=event_id, payload=response_json)
+
+
+@app.get("/match-stats/{event_id}", response_model=MatchStatsResponse)
+async def get_match_stats(
+    event_id: str,
+    match_stats_client: MatchStatsClient = Depends(match_stats_client_dependency),
+) -> MatchStatsResponse:
+    url = settings.build_match_stats_url(event_id)
+
+    with tracer.start_as_current_span(
+        "match_stats.client.request",
+        attributes={
+            "match_stats.event_id": event_id,
+            "http.method": "GET",
+            "http.url": url,
+        },
+    ):
+        start_time = time.perf_counter()
+        try:
+            logger.info(
+                "match_stats_request_started",
+                event_id=event_id,
+                url=url,
+            )
+            response_text = await match_stats_client.get_match_stats(event_id)
+        except StatsAPIError as exc:
+            latency_ms = (time.perf_counter() - start_time) * 1000
+            match_stats_latency_histogram.record(
+                latency_ms,
+                attributes={"event_id": event_id, "outcome": "error"},
+            )
+            match_stats_error_counter.add(
+                1,
+                attributes={"event_id": event_id, "error_type": exc.code},
+            )
+            logger.warning(
+                "match_stats_request_upstream_error",
+                event_id=event_id,
+                code=exc.code,
+                status_code=exc.upstream_status,
+                latency_ms=latency_ms,
+            )
+            raise
+        except Exception:
+            latency_ms = (time.perf_counter() - start_time) * 1000
+            match_stats_error_counter.add(
+                1,
+                attributes={"event_id": event_id, "error_type": "unexpected"},
+            )
+            logger.exception(
+                "match_stats_request_unexpected_error",
+                event_id=event_id,
+                latency_ms=latency_ms,
+            )
+            raise HTTPException(
+                status_code=500,
+                detail="Unexpected internal error while retrieving match stats.",
+            )
+
+        latency_ms = (time.perf_counter() - start_time) * 1000
+        match_stats_latency_histogram.record(
+            latency_ms,
+            attributes={"event_id": event_id, "outcome": "success"},
+        )
+        logger.info(
+            "match_stats_request_completed",
+            event_id=event_id,
+            latency_ms=latency_ms,
+        )
+
+    return map_match_stats_payload(event_id=event_id, payload=response_text)
 
 
 # You can include routers here

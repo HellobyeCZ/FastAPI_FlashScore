@@ -1,4 +1,5 @@
 import type { BookmakerOdds, EventOddsSummary, MarketOdds, RawOddsResponse } from "@/types/odds";
+import type { MatchStatsSummary, RawMatchStatsResponse } from "@/types/match-stats";
 
 type JsonObject = Record<string, unknown>;
 
@@ -172,7 +173,85 @@ function buildOddsUrl(eventId: string): string {
   return `/api/odds/${encodedEventId}`;
 }
 
-async function parseErrorMessage(response: Response): Promise<string> {
+function normaliseMatchStatsPayload(payload: unknown, fallbackEventId: string): MatchStatsSummary {
+  if (!isObject(payload)) {
+    throw new Error("Unexpected match stats response format.");
+  }
+
+  const raw = payload as RawMatchStatsResponse;
+  const event = isObject(raw.event) ? raw.event : {};
+  const periods = asArray(event.periods)
+    .map((periodCandidate, periodIndex) => {
+      if (!isObject(periodCandidate)) {
+        return undefined;
+      }
+
+      const categories = asArray(periodCandidate.categories)
+        .map((categoryCandidate, categoryIndex) => {
+          if (!isObject(categoryCandidate)) {
+            return undefined;
+          }
+
+          const stats = asArray(categoryCandidate.stats)
+            .map((statCandidate) => {
+              if (!isObject(statCandidate)) {
+                return undefined;
+              }
+
+              const label = asString(statCandidate.label);
+              const home = asString(statCandidate.home);
+              const away = asString(statCandidate.away);
+
+              if (!label || !home || !away) {
+                return undefined;
+              }
+
+              return {
+                code: asString(statCandidate.code),
+                label,
+                home,
+                away
+              };
+            })
+            .filter((stat): stat is NonNullable<typeof stat> => Boolean(stat));
+
+          if (!stats.length) {
+            return undefined;
+          }
+
+          return {
+            name: asString(categoryCandidate.name) ?? `Category ${categoryIndex + 1}`,
+            stats
+          };
+        })
+        .filter((category): category is NonNullable<typeof category> => Boolean(category));
+
+      if (!categories.length) {
+        return undefined;
+      }
+
+      return {
+        name: asString(periodCandidate.name) ?? `Period ${periodIndex + 1}`,
+        categories
+      };
+    })
+    .filter((period): period is NonNullable<typeof period> => Boolean(period));
+
+  const eventId = asString(event.event_id) ?? fallbackEventId;
+  return {
+    eventId,
+    periods,
+    lastUpdated: asString(raw.retrieved_at),
+    source: asString(raw.source)
+  };
+}
+
+function buildMatchStatsUrl(eventId: string): string {
+  const encodedEventId = encodeURIComponent(eventId);
+  return `/api/match-stats/${encodedEventId}`;
+}
+
+async function parseErrorMessage(response: Response, fallbackMessage: string): Promise<string> {
   try {
     const payload = (await response.json()) as unknown;
     if (isObject(payload) && isObject(payload.error) && asString(payload.error.message)) {
@@ -182,7 +261,7 @@ async function parseErrorMessage(response: Response): Promise<string> {
     // Ignore parsing failures and use generic error below.
   }
 
-  return `Odds request failed with status ${response.status}.`;
+  return `${fallbackMessage} (${response.status}).`;
 }
 
 export async function fetchEventOdds(eventId: string): Promise<EventOddsSummary> {
@@ -195,9 +274,26 @@ export async function fetchEventOdds(eventId: string): Promise<EventOddsSummary>
   });
 
   if (!response.ok) {
-    throw new Error(await parseErrorMessage(response));
+    throw new Error(await parseErrorMessage(response, "Odds request failed"));
   }
 
   const payload = (await response.json()) as unknown;
   return normalisePayload(payload, eventId);
+}
+
+export async function fetchEventMatchStats(eventId: string): Promise<MatchStatsSummary> {
+  const response = await fetch(buildMatchStatsUrl(eventId), {
+    method: "GET",
+    headers: {
+      Accept: "application/json"
+    },
+    cache: "no-store"
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response, "Match stats request failed"));
+  }
+
+  const payload = (await response.json()) as unknown;
+  return normaliseMatchStatsPayload(payload, eventId);
 }
