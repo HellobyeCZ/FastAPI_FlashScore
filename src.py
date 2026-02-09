@@ -1,4 +1,3 @@
-import json
 import logging
 import logging.config
 import os
@@ -8,10 +7,8 @@ from contextvars import ContextVar
 from functools import lru_cache
 from typing import Any, Optional
 
-import httpx  # Replaced pycurl and io
 import structlog
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.encoders import jsonable_encoder
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from app.config import get_settings
@@ -330,27 +327,10 @@ async def root() -> dict[str, str]:
 
 
 @app.get("/odds/{event_id}", response_model=OddsResponse)
-async def get_odds(event_id: str):  # Changed to async def
-    url = f'https://global.ds.lsapp.eu/odds/pq_graphql?_hash=oce&eventId={event_id}&projectId=1&geoIpCode=CZ&geoIpSubdivisionCode=CZ10'
-    headers = {
-        'Accept': '*/*',
-        'Sec-Fetch-Site': 'cross-site',
-        'Origin': 'https://www.livesport.cz',
-        'Sec-Fetch-Dest': 'empty',
-        'Accept-Language': 'cs-CZ,cs;q=0.9',
-        'Sec-Fetch-Mode': 'cors',
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3.1 Safari/605.1.15',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'Referer': 'https://www.livesport.cz/',
-        'Priority': 'u=3, i'
-    }
-
-    correlation_id = get_correlation_id()
-    traceparent = get_traceparent()
-    if correlation_id:
-        headers[CORRELATION_ID_RESPONSE_HEADER] = correlation_id
-    if traceparent:
-        headers[TRACEPARENT_HEADER] = traceparent
+async def get_odds(
+    event_id: str, odds_client: OddsClient = Depends(odds_client_dependency)
+) -> OddsResponse:
+    url = settings.build_odds_url(event_id)
 
     with tracer.start_as_current_span(
         "odds.client.request",
@@ -361,57 +341,47 @@ async def get_odds(event_id: str):  # Changed to async def
         },
     ):
         start_time = time.perf_counter()
-        async with httpx.AsyncClient() as client:
-            try:
-                logger.info(
-                    "odds_request_started",
-                    event_id=event_id,
-                    url=url,
-                )
-                response = await client.get(url, headers=headers)
-                latency_ms = (time.perf_counter() - start_time) * 1000
-                response.raise_for_status()  # Raises an exception for 4XX/5XX responses
-                odds_latency_histogram.record(latency_ms, attributes={"event_id": event_id})
-                logger.info(
-                    "odds_request_completed",
-                    event_id=event_id,
-                    status_code=response.status_code,
-                    latency_ms=latency_ms,
-                )
-                response_json = response.json()
-            except httpx.HTTPStatusError as e:
-                latency_ms = (time.perf_counter() - start_time) * 1000
-                odds_latency_histogram.record(latency_ms, attributes={"event_id": event_id, "outcome": "error"})
-                odds_error_counter.add(1, attributes={"event_id": event_id, "error_type": "http_status"})
-                logger.error(
-                    "odds_request_http_error",
-                    event_id=event_id,
-                    status_code=e.response.status_code,
-                    latency_ms=latency_ms,
-                    exc_info=True,
-                )
-                raise HTTPException(status_code=e.response.status_code, detail=f"HTTP error from external API: {e}")
-            except httpx.RequestError as e:
-                latency_ms = (time.perf_counter() - start_time) * 1000
-                odds_error_counter.add(1, attributes={"event_id": event_id, "error_type": "request"})
-                logger.error(
-                    "odds_request_transport_error",
-                    event_id=event_id,
-                    latency_ms=latency_ms,
-                    exc_info=True,
-                )
-                raise HTTPException(status_code=500, detail=f"Request error to external API: {e}")
-            except json.JSONDecodeError as e:
-                odds_error_counter.add(1, attributes={"event_id": event_id, "error_type": "json_decode"})
-                logger.error(
-                    "odds_request_decode_error",
-                    event_id=event_id,
-                    exc_info=True,
-                )
-                raise HTTPException(status_code=500, detail=f"JSON decode error from external API: {e}")
+        try:
+            logger.info(
+                "odds_request_started",
+                event_id=event_id,
+                url=url,
+            )
+            response_json = await odds_client.get_odds(event_id)
+        except OddsAPIError as exc:
+            latency_ms = (time.perf_counter() - start_time) * 1000
+            odds_latency_histogram.record(latency_ms, attributes={"event_id": event_id, "outcome": "error"})
+            odds_error_counter.add(1, attributes={"event_id": event_id, "error_type": exc.code})
+            logger.warning(
+                "odds_request_upstream_error",
+                event_id=event_id,
+                code=exc.code,
+                status_code=exc.upstream_status,
+                latency_ms=latency_ms,
+            )
+            raise
+        except Exception:
+            latency_ms = (time.perf_counter() - start_time) * 1000
+            odds_error_counter.add(1, attributes={"event_id": event_id, "error_type": "unexpected"})
+            logger.exception(
+                "odds_request_unexpected_error",
+                event_id=event_id,
+                latency_ms=latency_ms,
+            )
+            raise HTTPException(
+                status_code=500,
+                detail="Unexpected internal error while retrieving odds.",
+            )
 
-    odds_response = map_odds_payload(event_id=event_id, payload=response_json)
-    return JSONResponse(content=jsonable_encoder(odds_response))
+        latency_ms = (time.perf_counter() - start_time) * 1000
+        odds_latency_histogram.record(latency_ms, attributes={"event_id": event_id, "outcome": "success"})
+        logger.info(
+            "odds_request_completed",
+            event_id=event_id,
+            latency_ms=latency_ms,
+        )
+
+    return map_odds_payload(event_id=event_id, payload=response_json)
 
 
 # You can include routers here

@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { defaultLocale, formatMessage, locales, type Locale, type MessageKey } from "@/lib/i18n";
+import { defaultLocale, formatMessage, type Locale, type MessageKey } from "@/lib/i18n";
 
 type LocaleContextValue = {
   locale: Locale;
@@ -45,5 +45,3 @@ export function useLocale() {
 
   return context;
 }
-
-export { locales };
