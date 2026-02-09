@@ -167,16 +167,9 @@ function normalisePayload(payload: unknown, fallbackEventId: string): EventOddsS
   throw new Error("Unsupported odds response shape.");
 }
 
-function resolveApiBaseUrl(): string {
-  const explicit =
-    process.env.NEXT_PUBLIC_ODDS_API_BASE_URL ?? process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
-  return explicit.replace(/\/+$/, "");
-}
-
 function buildOddsUrl(eventId: string): string {
-  const apiBaseUrl = resolveApiBaseUrl();
   const encodedEventId = encodeURIComponent(eventId);
-  return apiBaseUrl ? `${apiBaseUrl}/odds/${encodedEventId}` : `/odds/${encodedEventId}`;
+  return `/api/odds/${encodedEventId}`;
 }
 
 async function parseErrorMessage(response: Response): Promise<string> {

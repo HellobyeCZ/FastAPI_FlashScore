@@ -2,6 +2,10 @@ export const locales = ["en", "cs"] as const;
 export type Locale = (typeof locales)[number];
 export const defaultLocale: Locale = "en";
 
+export function isLocale(value: string): value is Locale {
+  return locales.includes(value as Locale);
+}
+
 const enMessages = {
   "a11y.live": "Live updates are enabled.",
   "app.description": "Search an event and compare live bookmaker odds in one place.",
