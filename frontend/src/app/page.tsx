@@ -82,23 +82,6 @@ export default function HomePage() {
         </div>
       </section>
 
-      <section aria-live="polite" aria-busy={isLoading} className="space-y-4">
-        {isLoading && (
-          <div className="rounded-3xl border border-[color:var(--color-brand-outline)] bg-[color:var(--color-brand-surface-alt)] p-6 text-sm text-[color:var(--color-text-muted)]">
-            {t("feedback.loading")}
-          </div>
-        )}
-        {error && (
-          <div
-            role="alert"
-            className="rounded-3xl border border-[color:var(--color-danger)] bg-[color:var(--color-brand-surface-alt)] p-6 text-sm text-[color:var(--color-danger)]"
-          >
-            {t("feedback.error")}
-          </div>
-        )}
-        {data && <OddsTable summary={data} />}
-      </section>
-
       {eventId && (
         <section aria-live="polite" aria-busy={statsLoading || (statsFetching && !statsData)} className="space-y-4">
           <h2 className="text-2xl font-bold text-[color:var(--color-text-high)]">{t("stats.title")}</h2>
@@ -118,6 +101,23 @@ export default function HomePage() {
           {statsData && <MatchStatsTable summary={statsData} />}
         </section>
       )}
+
+      <section aria-live="polite" aria-busy={isLoading} className="space-y-4">
+        {isLoading && (
+          <div className="rounded-3xl border border-[color:var(--color-brand-outline)] bg-[color:var(--color-brand-surface-alt)] p-6 text-sm text-[color:var(--color-text-muted)]">
+            {t("feedback.loading")}
+          </div>
+        )}
+        {error && (
+          <div
+            role="alert"
+            className="rounded-3xl border border-[color:var(--color-danger)] bg-[color:var(--color-brand-surface-alt)] p-6 text-sm text-[color:var(--color-danger)]"
+          >
+            {t("feedback.error")}
+          </div>
+        )}
+        {data && <OddsTable summary={data} />}
+      </section>
     </main>
   );
 }

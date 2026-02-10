@@ -1,6 +1,17 @@
 export interface RawMatchStatsResponse {
   event?: {
     event_id?: string;
+    home_team?: string;
+    away_team?: string;
+    sport?: string;
+    country?: string;
+    competition?: string;
+    competition_stage?: string;
+    competition_path?: string;
+    start_time_utc?: string;
+    status?: string;
+    status_detail?: string;
+    outcome?: string;
     periods?: Array<{
       name?: string;
       categories?: Array<{
@@ -37,6 +48,17 @@ export interface MatchStatsPeriod {
 
 export interface MatchStatsSummary {
   eventId: string;
+  homeTeam?: string;
+  awayTeam?: string;
+  sport?: string;
+  country?: string;
+  competition?: string;
+  competitionStage?: string;
+  competitionPath?: string;
+  startTimeUtc?: string;
+  status?: string;
+  statusDetail?: string;
+  outcome?: string;
   periods: MatchStatsPeriod[];
   lastUpdated?: string;
   source?: string;

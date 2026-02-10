@@ -17,7 +17,12 @@ from app.schemas.odds import OddsResponse
 from app.services.match_stats import map_match_stats_payload
 from app.services.odds import map_odds_payload
 from app.services.odds_client import OddsAPIError, OddsClient, build_odds_client
-from app.services.stats_client import MatchStatsClient, StatsAPIError, build_match_stats_client
+from app.services.stats_client import (
+    MatchPageMetadata,
+    MatchStatsClient,
+    StatsAPIError,
+    build_match_stats_client,
+)
 
 try:
     from opentelemetry import metrics, trace
@@ -417,6 +422,7 @@ async def get_match_stats(
     match_stats_client: MatchStatsClient = Depends(match_stats_client_dependency),
 ) -> MatchStatsResponse:
     url = settings.build_match_stats_url(event_id)
+    match_metadata = MatchPageMetadata()
 
     with tracer.start_as_current_span(
         "match_stats.client.request",
@@ -433,7 +439,14 @@ async def get_match_stats(
                 event_id=event_id,
                 url=url,
             )
-            response_text = await match_stats_client.get_match_stats(event_id)
+            response_feeds = await match_stats_client.get_match_stats_feeds(event_id)
+            try:
+                match_metadata = await match_stats_client.get_match_metadata(event_id)
+            except Exception:
+                logger.warning(
+                    "match_stats_page_metadata_unavailable",
+                    event_id=event_id,
+                )
         except StatsAPIError as exc:
             latency_ms = (time.perf_counter() - start_time) * 1000
             match_stats_latency_histogram.record(
@@ -479,7 +492,17 @@ async def get_match_stats(
             latency_ms=latency_ms,
         )
 
-    return map_match_stats_payload(event_id=event_id, payload=response_text)
+    return map_match_stats_payload(
+        event_id=event_id,
+        feed_payloads=response_feeds,
+        home_team=match_metadata.home_team,
+        away_team=match_metadata.away_team,
+        sport=match_metadata.sport,
+        country=match_metadata.country,
+        competition=match_metadata.competition,
+        competition_stage=match_metadata.competition_stage,
+        competition_path=match_metadata.competition_path,
+    )
 
 
 # You can include routers here

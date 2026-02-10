@@ -240,6 +240,17 @@ function normaliseMatchStatsPayload(payload: unknown, fallbackEventId: string): 
   const eventId = asString(event.event_id) ?? fallbackEventId;
   return {
     eventId,
+    homeTeam: asString(event.home_team),
+    awayTeam: asString(event.away_team),
+    sport: asString(event.sport),
+    country: asString(event.country),
+    competition: asString(event.competition),
+    competitionStage: asString(event.competition_stage),
+    competitionPath: asString(event.competition_path),
+    startTimeUtc: asString(event.start_time_utc),
+    status: asString(event.status),
+    statusDetail: asString(event.status_detail),
+    outcome: asString(event.outcome),
     periods,
     lastUpdated: asString(raw.retrieved_at),
     source: asString(raw.source)
