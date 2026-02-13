@@ -1,8 +1,8 @@
 "use client";
 
 import { useId } from "react";
-import { useLocale, locales } from "@/contexts/LocaleContext";
-import type { MessageKey } from "@/lib/i18n";
+import { useLocale } from "@/contexts/LocaleContext";
+import { locales, type MessageKey } from "@/lib/i18n";
 import { clsx } from "clsx";
 
 export function LocaleSwitcher() {

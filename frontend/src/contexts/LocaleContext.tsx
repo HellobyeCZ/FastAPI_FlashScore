@@ -1,7 +1,8 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { defaultLocale, formatMessage, locales, type Locale, type MessageKey } from "@/lib/i18n";
+import { usePathname } from "next/navigation";
+import { defaultLocale, formatMessage, isLocale, type Locale, type MessageKey } from "@/lib/i18n";
 
 type LocaleContextValue = {
   locale: Locale;
@@ -11,8 +12,25 @@ type LocaleContextValue = {
 
 const LocaleContext = createContext<LocaleContextValue | undefined>(undefined);
 
+function extractLocaleFromPath(pathname: string | null): Locale | null {
+  if (!pathname) {
+    return null;
+  }
+
+  const [segment] = pathname.split("/").filter(Boolean);
+  return segment && isLocale(segment) ? segment : null;
+}
+
 export function LocaleProvider({ children }: { children: React.ReactNode }) {
-  const [locale, setLocale] = useState<Locale>(defaultLocale);
+  const pathname = usePathname();
+  const [locale, setLocale] = useState<Locale>(() => extractLocaleFromPath(pathname) ?? defaultLocale);
+
+  useEffect(() => {
+    const localeFromPath = extractLocaleFromPath(pathname);
+    if (localeFromPath && localeFromPath !== locale) {
+      setLocale(localeFromPath);
+    }
+  }, [locale, pathname]);
 
   useEffect(() => {
     document.documentElement.lang = locale;
@@ -45,5 +63,3 @@ export function useLocale() {
 
   return context;
 }
-
-export { locales };

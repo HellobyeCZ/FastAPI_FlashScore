@@ -1,0 +1,217 @@
+export const locales = ["en", "cs"] as const;
+export type Locale = (typeof locales)[number];
+export const defaultLocale: Locale = "en";
+
+export function isLocale(value: string): value is Locale {
+  return locales.includes(value as Locale);
+}
+
+const enMessages = {
+  "a11y.live": "Live updates are enabled.",
+  "app.description": "Search an event and compare live bookmaker odds in one place.",
+  "app.title": "FastAPI FlashScore Odds",
+  "bulk.concurrencyLabel": "Max concurrency",
+  "bulk.description":
+    "Start background scraping by competition path. The worker discovers last N seasons, extracts event IDs, and stores fresh snapshots.",
+  "bulk.empty": "No bulk scrape jobs yet.",
+  "bulk.errorLoad": "Unable to load bulk scrape jobs",
+  "bulk.errorStart": "Unable to start bulk scrape job",
+  "bulk.includeOdds": "Include odds",
+  "bulk.includeStats": "Include match stats",
+  "bulk.jobsTitle": "Bulk scrape jobs",
+  "bulk.pathLabel": "Competition path",
+  "bulk.pathPlaceholder": "football/czech-republic/chance-liga",
+  "bulk.seasonsLabel": "Seasons",
+  "bulk.status.completed": "Completed",
+  "bulk.status.completed_with_errors": "Completed with errors",
+  "bulk.status.failed": "Failed",
+  "bulk.status.queued": "Queued",
+  "bulk.status.running": "Running",
+  "bulk.status.unknown": "Unknown",
+  "bulk.submit": "Start bulk scrape",
+  "bulk.submitting": "Starting...",
+  "bulk.table.competition": "Competition path",
+  "bulk.table.error": "Last error",
+  "bulk.table.id": "Job",
+  "bulk.table.progress": "Progress",
+  "bulk.table.status": "Status",
+  "bulk.table.updated": "Updated (UTC)",
+  "bulk.title": "Bulk Scraper",
+  "feedback.error": "Unable to load odds right now.",
+  "feedback.loading": "Loading latest odds...",
+  "feedback.statsError": "Unable to load match stats right now.",
+  "feedback.statsLoading": "Loading match stats...",
+  "feedback.summary": "{count} markets loaded",
+  "locale.cs": "Czech",
+  "locale.en": "English",
+  "locale.switcher": "Language",
+  "refresh.label": "Auto refresh",
+  "refresh.next": "Next update in {seconds}s",
+  "refresh.off": "Off",
+  "refresh.on": "On",
+  "saved.description": "Browse all matches that were already scraped and stored.",
+  "saved.empty": "No saved matches yet. Fetch odds or stats first.",
+  "saved.error": "Unable to load saved matches right now.",
+  "saved.loading": "Loading saved matches...",
+  "saved.menu.matchesCount": "{count} matches",
+  "saved.menu.seasonUnknown": "Unknown season",
+  "saved.menu.seasonsCount": "{count} seasons",
+  "saved.menu.title": "Competition Browser",
+  "saved.snapshots": "Stats {stats} | Odds {odds}",
+  "saved.table.competition": "Competition",
+  "saved.table.eventId": "Event ID",
+  "saved.table.lastFetched": "Last fetched (UTC)",
+  "saved.table.open": "Open",
+  "saved.table.snapshots": "Snapshots",
+  "saved.table.start": "Start (UTC)",
+  "saved.table.status": "Status",
+  "saved.table.teams": "Teams",
+  "saved.title": "Saved Matches",
+  "search.aria": "Enter event ID",
+  "search.cta": "Fetch odds",
+  "search.label": "Event ID",
+  "search.placeholder": "e.g. 123456",
+  "search.support": "Use a FlashScore event identifier.",
+  "stats.away": "Away",
+  "stats.empty": "No match statistics are available for this event yet.",
+  "stats.home": "Home",
+  "stats.meta.kickoff": "Kick-off (UTC)",
+  "stats.meta.competition": "Competition",
+  "stats.meta.country": "Country/Region",
+  "stats.meta.outcome": "Outcome",
+  "stats.meta.path": "Competition Path",
+  "stats.meta.sport": "Sport",
+  "stats.meta.stage": "Stage/Round",
+  "stats.meta.status": "Status",
+  "stats.meta.teams": "Teams",
+  "stats.meta.unknown": "Unknown",
+  "stats.metric": "Statistic",
+  "stats.title": "Match Statistics",
+  "table.bookmaker": "Bookmaker",
+  "table.empty": "No markets are available for this event yet.",
+  "table.market": "Market",
+  "table.odds": "Odds",
+  "table.selection": "Selection",
+  "tabs.live": "Live Fetch",
+  "tabs.saved": "Saved Matches",
+  "timestamp.updated": "Updated {time}"
+};
+
+export type MessageKey = keyof typeof enMessages;
+type MessageCatalog = Record<MessageKey, string>;
+
+const csMessages: MessageCatalog = {
+  "a11y.live": "Zive aktualizace jsou zapnute.",
+  "app.description": "Vyhledejte udalost a porovnejte zive kurzy bookmakeru na jednom miste.",
+  "app.title": "FastAPI FlashScore kurzy",
+  "bulk.concurrencyLabel": "Maximalni soubeznost",
+  "bulk.description":
+    "Spustte scraping na pozadi podle cesty souteze. Worker najde poslednich N sezon, vytahne event ID a ulozi aktualni snapshoty.",
+  "bulk.empty": "Zatim nejsou zadne bulk scrape joby.",
+  "bulk.errorLoad": "Bulk scrape joby se nepodarilo nacist",
+  "bulk.errorStart": "Bulk scrape job se nepodarilo spustit",
+  "bulk.includeOdds": "Vcetne kurzu",
+  "bulk.includeStats": "Vcetne statistik",
+  "bulk.jobsTitle": "Bulk scrape joby",
+  "bulk.pathLabel": "Cesta souteze",
+  "bulk.pathPlaceholder": "football/czech-republic/chance-liga",
+  "bulk.seasonsLabel": "Sezony",
+  "bulk.status.completed": "Dokonceno",
+  "bulk.status.completed_with_errors": "Dokonceno s chybami",
+  "bulk.status.failed": "Selhalo",
+  "bulk.status.queued": "Ve fronte",
+  "bulk.status.running": "Bezi",
+  "bulk.status.unknown": "Neznamy stav",
+  "bulk.submit": "Spustit bulk scrape",
+  "bulk.submitting": "Spoustim...",
+  "bulk.table.competition": "Cesta souteze",
+  "bulk.table.error": "Posledni chyba",
+  "bulk.table.id": "Job",
+  "bulk.table.progress": "Prubeh",
+  "bulk.table.status": "Stav",
+  "bulk.table.updated": "Aktualizovano (UTC)",
+  "bulk.title": "Bulk Scraper",
+  "feedback.error": "Kurzy se ted nepodarilo nacist.",
+  "feedback.loading": "Nacitam aktualni kurzy...",
+  "feedback.statsError": "Statistiky zapasu se ted nepodarilo nacist.",
+  "feedback.statsLoading": "Nacitam statistiky zapasu...",
+  "feedback.summary": "Nacteno trhu: {count}",
+  "locale.cs": "Cestina",
+  "locale.en": "Anglictina",
+  "locale.switcher": "Jazyk",
+  "refresh.label": "Automaticke obnovovani",
+  "refresh.next": "Dalsi aktualizace za {seconds}s",
+  "refresh.off": "Vypnuto",
+  "refresh.on": "Zapnuto",
+  "saved.description": "Prohlednete vsechny zapasy, ktere uz byly stazeny a ulozeny.",
+  "saved.empty": "Zatim nejsou ulozene zadne zapasy. Nejdrive nactete kurzy nebo statistiky.",
+  "saved.error": "Ulozene zapasy se ted nepodarilo nacist.",
+  "saved.loading": "Nacitam ulozene zapasy...",
+  "saved.menu.matchesCount": "{count} zapasu",
+  "saved.menu.seasonUnknown": "Neznama sezona",
+  "saved.menu.seasonsCount": "{count} sezon",
+  "saved.menu.title": "Prohlizec soutezi",
+  "saved.snapshots": "Statistiky {stats} | Kurzy {odds}",
+  "saved.table.competition": "Soutez",
+  "saved.table.eventId": "ID udalosti",
+  "saved.table.lastFetched": "Posledni stazeni (UTC)",
+  "saved.table.open": "Otevrit",
+  "saved.table.snapshots": "Snapshoty",
+  "saved.table.start": "Zacatek (UTC)",
+  "saved.table.status": "Stav",
+  "saved.table.teams": "Tymy",
+  "saved.title": "Ulozene zapasy",
+  "search.aria": "Zadejte ID udalosti",
+  "search.cta": "Nacist kurzy",
+  "search.label": "ID udalosti",
+  "search.placeholder": "napr. 123456",
+  "search.support": "Pouzijte identifikator udalosti z FlashScore.",
+  "stats.away": "Hoste",
+  "stats.empty": "Pro tuto udalost zatim nejsou dostupne statistiky zapasu.",
+  "stats.home": "Domaci",
+  "stats.meta.kickoff": "Zacatek (UTC)",
+  "stats.meta.competition": "Soutez",
+  "stats.meta.country": "Zeme/Region",
+  "stats.meta.outcome": "Vysledek",
+  "stats.meta.path": "Cesta souteze",
+  "stats.meta.sport": "Sport",
+  "stats.meta.stage": "Faze/Kolo",
+  "stats.meta.status": "Stav",
+  "stats.meta.teams": "Tymy",
+  "stats.meta.unknown": "Nezname",
+  "stats.metric": "Statistika",
+  "stats.title": "Statistiky zapasu",
+  "table.bookmaker": "Bookmaker",
+  "table.empty": "Pro tuto udalost zatim nejsou dostupne trhy.",
+  "table.market": "Trh",
+  "table.odds": "Kurz",
+  "table.selection": "Vyber",
+  "tabs.live": "Live data",
+  "tabs.saved": "Ulozene zapasy",
+  "timestamp.updated": "Aktualizovano {time}"
+};
+
+const catalogs: Record<Locale, MessageCatalog> = {
+  en: enMessages,
+  cs: csMessages
+};
+
+function interpolate(template: string, values?: Record<string, string | number>): string {
+  if (!values) {
+    return template;
+  }
+
+  return template.replace(/\{(\w+)\}/g, (_, token: string) => {
+    const value = values[token];
+    return value === undefined ? `{${token}}` : String(value);
+  });
+}
+
+export function formatMessage(
+  locale: Locale,
+  key: MessageKey,
+  values?: Record<string, string | number>
+): string {
+  const template = catalogs[locale][key] ?? catalogs[defaultLocale][key];
+  return interpolate(template, values);
+}

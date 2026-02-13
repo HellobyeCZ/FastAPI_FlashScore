@@ -20,6 +20,41 @@ This repository exposes a FastAPI service that proxies FlashScore odds data and 
 
    The API will be available at `http://localhost:8000`.
 
+## Persistent Snapshot Database
+
+The backend now stores every successful fetch of:
+
+- `/odds/{event_id}` into `odds_snapshots`
+- `/match-stats/{event_id}` into `match_stats_snapshots`
+- Match-stats snapshots include `is_terminal` flag (`1` for completed/final state, `0` otherwise).
+
+When `is_terminal=1` exists for an event, backend scraping is short-circuited:
+
+- `/match-stats/{event_id}` is served from the newest terminal snapshot in DB.
+- `/odds/{event_id}` is served from DB (latest saved odds) instead of scraping upstream again.
+
+Schema management is Prisma-based (in `frontend/prisma/schema.prisma`), while FastAPI writes snapshots directly to the same SQLite database.
+
+1. Configure Prisma DB URL:
+   ```bash
+   cd frontend
+   cp .env.example .env
+   ```
+2. Apply schema/migrations:
+   ```bash
+   npm run prisma:deploy
+   npm run prisma:generate
+   ```
+
+Prisma 7 note: datasource URLs are configured in `frontend/prisma.config.ts` (not inside `schema.prisma`).
+
+Storage path is configured in FastAPI via `APP_STORAGE_DB_PATH` (default: `data/flashscore_snapshots.sqlite3`), and should point to the same SQLite file as Prisma `DATABASE_URL`.
+
+Useful inspection endpoints:
+
+- `GET /storage/odds/{event_id}?limit=25`
+- `GET /storage/match-stats/{event_id}?limit=25`
+
 ## Frontend (Next.js)
 
 The `frontend/` workspace contains a responsive, accessible dashboard powered by Next.js, React Query, and Playwright end-to-end tests.
