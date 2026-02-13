@@ -1,0 +1,33 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model OddsSnapshot {
+  id                  Int      @id @default(autoincrement())
+  eventId             String   @map("event_id")
+  fetchedAt           DateTime @map("fetched_at")
+  source              String?
+  correlationId       String?  @map("correlation_id")
+  oddsPayloadJson     String   @map("odds_payload_json")
+  upstreamPayloadJson String   @map("upstream_payload_json")
+
+  @@index([eventId, fetchedAt], map: "idx_odds_snapshots_event_fetched")
+  @@map("odds_snapshots")
+}
+
+model MatchStatsSnapshot {
+  id                   Int      @id @default(autoincrement())
+  eventId              String   @map("event_id")
+  fetchedAt            DateTime @map("fetched_at")
+  source               String?
+  correlationId        String?  @map("correlation_id")
+  matchStatsPayloadJson String  @map("match_stats_payload_json")
+  feedPayloadsJson     String   @map("feed_payloads_json")
+
+  @@index([eventId, fetchedAt], map: "idx_match_stats_snapshots_event_fetched")
+  @@map("match_stats_snapshots")
+}

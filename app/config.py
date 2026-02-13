@@ -58,6 +58,10 @@ class _SettingsFields:
         "SW9D1eZo",
         description="Value for x-fsign header required by Flashscore feed.",
     )
+    storage_db_path: str = Field(
+        "data/flashscore_snapshots.sqlite3",
+        description="Filesystem path for persistent snapshot storage.",
+    )
 
     def build_odds_url(self, event_id: str) -> str:
         """Construct the odds endpoint URL for the provided event."""

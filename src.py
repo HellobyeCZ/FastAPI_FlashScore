@@ -8,15 +8,22 @@ from functools import lru_cache
 from typing import Any, Optional
 
 import structlog
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
 from app.config import get_settings
+from app.schemas.bulk_scrape import (
+    BulkScrapeJobCreateRequest,
+    BulkScrapeJobDetail,
+    BulkScrapeJobListResponse,
+)
 from app.schemas.match_stats import MatchStatsResponse
 from app.schemas.odds import OddsResponse
+from app.services.bulk_scrape import BulkScrapeJobConfig, BulkScrapeManager
 from app.services.match_stats import map_match_stats_payload
 from app.services.odds import map_odds_payload
 from app.services.odds_client import OddsAPIError, OddsClient, build_odds_client
+from app.services.storage import SnapshotStore, build_snapshot_store
 from app.services.stats_client import (
     MatchPageMetadata,
     MatchStatsClient,
@@ -244,6 +251,20 @@ def _get_match_stats_client() -> MatchStatsClient:
     return build_match_stats_client()
 
 
+@lru_cache()
+def _get_snapshot_store() -> SnapshotStore:
+    return build_snapshot_store()
+
+
+@lru_cache()
+def _get_bulk_scrape_manager() -> BulkScrapeManager:
+    return BulkScrapeManager(
+        snapshot_store=_get_snapshot_store(),
+        odds_client=_get_odds_client(),
+        match_stats_client=_get_match_stats_client(),
+    )
+
+
 def odds_client_dependency() -> OddsClient:
     return _get_odds_client()
 
@@ -252,10 +273,26 @@ def match_stats_client_dependency() -> MatchStatsClient:
     return _get_match_stats_client()
 
 
+def snapshot_store_dependency() -> SnapshotStore:
+    return _get_snapshot_store()
+
+
+def bulk_scrape_manager_dependency() -> BulkScrapeManager:
+    return _get_bulk_scrape_manager()
+
+
+@app.on_event("startup")
+async def startup_snapshot_store() -> None:
+    await _get_snapshot_store().initialize()
+    await _get_bulk_scrape_manager().start()
+
+
 @app.on_event("shutdown")
 async def shutdown_odds_client() -> None:
+    await _get_bulk_scrape_manager().shutdown()
     await _get_odds_client().aclose()
     await _get_match_stats_client().aclose()
+    await _get_snapshot_store().aclose()
 
 
 @app.exception_handler(OddsAPIError)
@@ -360,8 +397,31 @@ async def root() -> dict[str, str]:
 
 @app.get("/odds/{event_id}", response_model=OddsResponse)
 async def get_odds(
-    event_id: str, odds_client: OddsClient = Depends(odds_client_dependency)
+    event_id: str,
+    odds_client: OddsClient = Depends(odds_client_dependency),
+    snapshot_store: SnapshotStore = Depends(snapshot_store_dependency),
 ) -> OddsResponse:
+    cached_terminal_odds = await snapshot_store.get_latest_odds_snapshot_for_terminal_event(
+        event_id=event_id
+    )
+    if cached_terminal_odds is not None:
+        logger.info(
+            "odds_request_served_from_cache",
+            event_id=event_id,
+            reason="terminal_match_snapshot",
+        )
+        return cached_terminal_odds
+    if await snapshot_store.is_event_terminal(event_id=event_id):
+        logger.info(
+            "odds_request_not_scraped",
+            event_id=event_id,
+            reason="terminal_match_without_cached_odds",
+        )
+        raise HTTPException(
+            status_code=404,
+            detail="No cached odds snapshot found for terminal match.",
+        )
+
     url = settings.build_odds_url(event_id)
 
     with tracer.start_as_current_span(
@@ -413,14 +473,40 @@ async def get_odds(
             latency_ms=latency_ms,
         )
 
-    return map_odds_payload(event_id=event_id, payload=response_json)
+    odds_response = map_odds_payload(event_id=event_id, payload=response_json)
+    try:
+        await snapshot_store.save_odds_snapshot(
+            event_id=event_id,
+            response=odds_response,
+            upstream_payload=response_json,
+            correlation_id=get_correlation_id(),
+        )
+    except Exception:
+        logger.exception(
+            "odds_snapshot_store_failed",
+            event_id=event_id,
+        )
+
+    return odds_response
 
 
 @app.get("/match-stats/{event_id}", response_model=MatchStatsResponse)
 async def get_match_stats(
     event_id: str,
     match_stats_client: MatchStatsClient = Depends(match_stats_client_dependency),
+    snapshot_store: SnapshotStore = Depends(snapshot_store_dependency),
 ) -> MatchStatsResponse:
+    cached_terminal_stats = await snapshot_store.get_terminal_match_stats_snapshot(
+        event_id=event_id
+    )
+    if cached_terminal_stats is not None:
+        logger.info(
+            "match_stats_request_served_from_cache",
+            event_id=event_id,
+            reason="terminal_snapshot",
+        )
+        return cached_terminal_stats
+
     url = settings.build_match_stats_url(event_id)
     match_metadata = MatchPageMetadata()
 
@@ -492,7 +578,7 @@ async def get_match_stats(
             latency_ms=latency_ms,
         )
 
-    return map_match_stats_payload(
+    match_stats_response = map_match_stats_payload(
         event_id=event_id,
         feed_payloads=response_feeds,
         home_team=match_metadata.home_team,
@@ -503,6 +589,102 @@ async def get_match_stats(
         competition_stage=match_metadata.competition_stage,
         competition_path=match_metadata.competition_path,
     )
+    try:
+        await snapshot_store.save_match_stats_snapshot(
+            event_id=event_id,
+            response=match_stats_response,
+            feed_payloads=response_feeds,
+            correlation_id=get_correlation_id(),
+        )
+    except Exception:
+        logger.exception(
+            "match_stats_snapshot_store_failed",
+            event_id=event_id,
+        )
+
+    return match_stats_response
+
+
+@app.get("/storage/odds/{event_id}")
+async def list_odds_snapshots(
+    event_id: str,
+    limit: int = Query(default=25, ge=1, le=200),
+    snapshot_store: SnapshotStore = Depends(snapshot_store_dependency),
+) -> dict[str, object]:
+    snapshots = await snapshot_store.list_odds_snapshots(event_id=event_id, limit=limit)
+    return {"event_id": event_id, "count": len(snapshots), "snapshots": snapshots}
+
+
+@app.get("/storage/match-stats/{event_id}")
+async def list_match_stats_snapshots(
+    event_id: str,
+    limit: int = Query(default=25, ge=1, le=200),
+    snapshot_store: SnapshotStore = Depends(snapshot_store_dependency),
+) -> dict[str, object]:
+    snapshots = await snapshot_store.list_match_stats_snapshots(event_id=event_id, limit=limit)
+    return {"event_id": event_id, "count": len(snapshots), "snapshots": snapshots}
+
+
+@app.post("/bulk-scrape/jobs")
+async def create_bulk_scrape_job(
+    payload: BulkScrapeJobCreateRequest,
+    bulk_scrape_manager: BulkScrapeManager = Depends(bulk_scrape_manager_dependency),
+) -> dict[str, object]:
+    if not payload.include_stats and not payload.include_odds:
+        raise HTTPException(
+            status_code=422,
+            detail="At least one of include_stats/include_odds must be true.",
+        )
+
+    try:
+        job = await bulk_scrape_manager.create_job(
+            config=BulkScrapeJobConfig(
+                competition_path=payload.competition_path,
+                seasons=payload.seasons,
+                include_stats=payload.include_stats,
+                include_odds=payload.include_odds,
+                max_concurrency=payload.max_concurrency,
+            )
+        )
+        return job
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("bulk_scrape_job_create_failed", error=str(exc))
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to create bulk scrape job.",
+        ) from exc
+
+
+@app.get("/bulk-scrape/jobs", response_model=BulkScrapeJobListResponse)
+async def list_bulk_scrape_jobs(
+    limit: int = Query(default=20, ge=1, le=100),
+    bulk_scrape_manager: BulkScrapeManager = Depends(bulk_scrape_manager_dependency),
+) -> BulkScrapeJobListResponse:
+    jobs = await bulk_scrape_manager.list_jobs(limit=limit)
+    return BulkScrapeJobListResponse(total=len(jobs), jobs=jobs)
+
+
+@app.get("/bulk-scrape/jobs/{job_id}", response_model=BulkScrapeJobDetail)
+async def get_bulk_scrape_job(
+    job_id: int,
+    include_events: bool = Query(default=True),
+    event_limit: int = Query(default=500, ge=1, le=5000),
+    bulk_scrape_manager: BulkScrapeManager = Depends(bulk_scrape_manager_dependency),
+) -> BulkScrapeJobDetail:
+    job = await bulk_scrape_manager.get_job(
+        job_id=job_id,
+        include_events=include_events,
+        event_limit=event_limit,
+    )
+    if job is None:
+        raise HTTPException(status_code=404, detail="Bulk scrape job not found.")
+
+    if not include_events:
+        job["events"] = []
+
+    return BulkScrapeJobDetail(**job)
 
 
 # You can include routers here
