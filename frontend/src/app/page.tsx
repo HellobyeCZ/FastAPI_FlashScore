@@ -3,7 +3,6 @@
 import { useMemo, useState } from "react";
 import { clsx } from "clsx";
 import { EventSearchForm } from "@/components/EventSearchForm";
-import { LocaleSwitcher } from "@/components/LocaleSwitcher";
 import { MatchStatsTable } from "@/components/MatchStatsTable";
 import { OddsTable } from "@/components/OddsTable";
 import { BulkScrapePanel } from "@/components/BulkScrapePanel";
@@ -51,9 +50,7 @@ export default function HomePage() {
     const derived = dataUpdatedAt ? new Date(dataUpdatedAt) : undefined;
     const target = explicit ?? derived;
 
-    if (!target || Number.isNaN(target.getTime())) {
-      return undefined;
-    }
+    if (!target || Number.isNaN(target.getTime())) return undefined;
 
     return new Intl.DateTimeFormat(locale, {
       hour: "2-digit",
@@ -70,145 +67,119 @@ export default function HomePage() {
   };
 
   return (
-    <main className="space-y-8">
-      <header className="flex flex-col gap-6 rounded-3xl bg-[color:var(--color-brand-surface-alt)] p-6 shadow-md md:flex-row md:items-start md:justify-between">
-        <div className="space-y-3">
-          <h1 className="text-3xl font-extrabold text-[color:var(--color-text-high)] md:text-4xl">
-            {t("app.title")}
-          </h1>
-          <p className="max-w-2xl text-base text-[color:var(--color-text-muted)]">{t("app.description")}</p>
-        </div>
-        <LocaleSwitcher />
-      </header>
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold text-[var(--color-text-high)]">
+          {t("app.title")}
+        </h1>
+        <p className="mt-1 text-sm text-[var(--color-text-muted)]">{t("app.description")}</p>
+      </div>
 
-      <section className="rounded-3xl border border-[color:var(--color-brand-outline)] bg-[color:var(--color-brand-surface-alt)] p-2 shadow-sm">
-        <div role="tablist" aria-label="Data views" className="grid grid-cols-2 gap-2">
+      <div className="inline-flex rounded-xl border border-[var(--color-brand-outline)] bg-[var(--color-brand-surface-alt)] p-1">
+        {(["live", "saved"] as const).map((tab) => (
           <button
+            key={tab}
             type="button"
             role="tab"
-            aria-selected={activeTab === "live"}
-            onClick={() => setActiveTab("live")}
+            aria-selected={activeTab === tab}
+            onClick={() => setActiveTab(tab)}
             className={clsx(
-              "rounded-2xl px-4 py-2 text-sm font-semibold transition",
-              activeTab === "live"
-                ? "bg-[color:var(--color-brand-primary)] text-[color:var(--color-text-inverse)]"
-                : "bg-[color:var(--color-brand-surface)] text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text-high)]"
+              "rounded-lg px-5 py-2 text-sm font-medium transition",
+              activeTab === tab
+                ? "bg-[var(--color-brand-primary)] text-[var(--color-text-inverse)] shadow-sm"
+                : "text-[var(--color-text-muted)] hover:text-[var(--color-text-high)]"
             )}
           >
-            {t("tabs.live")}
+            {t(tab === "live" ? "tabs.live" : "tabs.saved")}
           </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === "saved"}
-            onClick={() => setActiveTab("saved")}
-            className={clsx(
-              "rounded-2xl px-4 py-2 text-sm font-semibold transition",
-              activeTab === "saved"
-                ? "bg-[color:var(--color-brand-primary)] text-[color:var(--color-text-inverse)]"
-                : "bg-[color:var(--color-brand-surface)] text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text-high)]"
-            )}
-          >
-            {t("tabs.saved")}
-          </button>
-        </div>
-      </section>
+        ))}
+      </div>
 
       {activeTab === "live" && (
-        <>
-          <section aria-label="Odds controls" className="space-y-4">
-            <EventSearchForm
-              initialEventId={eventId}
-              onSearch={setEventId}
-              isLoading={isLoading || (isFetching && !data)}
-            />
-            <div className="flex flex-col gap-4 rounded-3xl border border-[color:var(--color-brand-outline)] bg-[color:var(--color-brand-surface-alt)] p-4 shadow-sm md:flex-row md:items-center md:justify-between">
-              <div className="flex flex-wrap items-center gap-3 text-sm md:ml-auto">
-                {formattedUpdatedAt && (
-                  <span className="rounded-full bg-[color:var(--color-brand-surface)] px-3 py-1 text-[color:var(--color-text-muted)]">
-                    {t("timestamp.updated", { time: formattedUpdatedAt })}
-                  </span>
-                )}
-                {eventId && data && (
-                  <span className="rounded-full bg-[color:var(--color-brand-surface)] px-3 py-1 text-[color:var(--color-text-muted)]">
-                    {t("feedback.summary", { count: marketCount })}
-                  </span>
-                )}
-              </div>
+        <div className="space-y-6">
+          <EventSearchForm
+            initialEventId={eventId}
+            onSearch={setEventId}
+            isLoading={isLoading || (isFetching && !data)}
+          />
+
+          {(formattedUpdatedAt || (eventId && data)) && (
+            <div className="flex flex-wrap items-center gap-2">
+              {formattedUpdatedAt && (
+                <span className="rounded-full bg-[var(--color-brand-surface-alt)] border border-[var(--color-brand-outline)] px-3 py-1 text-xs text-[var(--color-text-muted)]">
+                  {t("timestamp.updated", { time: formattedUpdatedAt })}
+                </span>
+              )}
+              {eventId && data && (
+                <span className="rounded-full bg-[var(--color-brand-surface-alt)] border border-[var(--color-brand-outline)] px-3 py-1 text-xs text-[var(--color-text-muted)]">
+                  {t("feedback.summary", { count: marketCount })}
+                </span>
+              )}
             </div>
-          </section>
+          )}
 
           {eventId && (
             <section aria-live="polite" aria-busy={statsLoading || (statsFetching && !statsData)} className="space-y-4">
-              <h2 className="text-2xl font-bold text-[color:var(--color-text-high)]">{t("stats.title")}</h2>
-              {statsLoading && (
-                <div className="rounded-3xl border border-[color:var(--color-brand-outline)] bg-[color:var(--color-brand-surface-alt)] p-6 text-sm text-[color:var(--color-text-muted)]">
-                  {t("feedback.statsLoading")}
-                </div>
-              )}
-              {statsError && (
-                <div
-                  role="alert"
-                  className="rounded-3xl border border-[color:var(--color-danger)] bg-[color:var(--color-brand-surface-alt)] p-6 text-sm text-[color:var(--color-danger)]"
-                >
-                  {t("feedback.statsError")}
-                </div>
-              )}
+              <h2 className="text-lg font-semibold text-[var(--color-text-high)]">{t("stats.title")}</h2>
+              {statsLoading && <LoadingCard>{t("feedback.statsLoading")}</LoadingCard>}
+              {statsError && <ErrorCard>{t("feedback.statsError")}</ErrorCard>}
               {statsData && <MatchStatsTable summary={statsData} />}
             </section>
           )}
 
           <section aria-live="polite" aria-busy={isLoading} className="space-y-4">
-            {isLoading && (
-              <div className="rounded-3xl border border-[color:var(--color-brand-outline)] bg-[color:var(--color-brand-surface-alt)] p-6 text-sm text-[color:var(--color-text-muted)]">
-                {t("feedback.loading")}
-              </div>
-            )}
-            {error && (
-              <div
-                role="alert"
-                className="rounded-3xl border border-[color:var(--color-danger)] bg-[color:var(--color-brand-surface-alt)] p-6 text-sm text-[color:var(--color-danger)]"
-              >
-                {t("feedback.error")}
-              </div>
-            )}
+            {isLoading && <LoadingCard>{t("feedback.loading")}</LoadingCard>}
+            {error && <ErrorCard>{t("feedback.error")}</ErrorCard>}
             {data && <OddsTable summary={data} />}
           </section>
-        </>
+        </div>
       )}
 
       {activeTab === "saved" && (
-        <section aria-live="polite" aria-busy={savedLoading || savedFetching} className="space-y-4">
-          <h2 className="text-2xl font-bold text-[color:var(--color-text-high)]">{t("saved.title")}</h2>
-          <p className="text-sm text-[color:var(--color-text-muted)]">{t("saved.description")}</p>
+        <div className="space-y-6">
+          <div>
+            <h2 className="text-lg font-semibold text-[var(--color-text-high)]">{t("saved.title")}</h2>
+            <p className="mt-1 text-sm text-[var(--color-text-muted)]">{t("saved.description")}</p>
+          </div>
+
           <BulkScrapePanel />
 
-          {savedLoading && (
-            <div className="rounded-3xl border border-[color:var(--color-brand-outline)] bg-[color:var(--color-brand-surface-alt)] p-6 text-sm text-[color:var(--color-text-muted)]">
-              {t("saved.loading")}
-            </div>
-          )}
-
-          {savedError && (
-            <div
-              role="alert"
-              className="rounded-3xl border border-[color:var(--color-danger)] bg-[color:var(--color-brand-surface-alt)] p-6 text-sm text-[color:var(--color-danger)]"
-            >
-              {t("saved.error")}
-            </div>
-          )}
+          {savedLoading && <LoadingCard>{t("saved.loading")}</LoadingCard>}
+          {savedError && <ErrorCard>{t("saved.error")}</ErrorCard>}
 
           {savedMatches && savedMatches.length === 0 && (
-            <div className="rounded-3xl border border-dashed border-[color:var(--color-brand-outline)] bg-[color:var(--color-brand-surface-alt)] p-6 text-center text-sm text-[color:var(--color-text-muted)]">
-              {t("saved.empty")}
-            </div>
+            <EmptyCard>{t("saved.empty")}</EmptyCard>
           )}
 
           {savedMatches && savedMatches.length > 0 && (
             <ScrapedMatchesMenu matches={savedMatches} onOpenMatch={handleOpenSavedMatch} />
           )}
-        </section>
+        </div>
       )}
-    </main>
+    </div>
+  );
+}
+
+function LoadingCard({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="rounded-2xl border border-[var(--color-brand-outline)] bg-[var(--color-brand-surface-alt)] p-5 text-sm text-[var(--color-text-muted)]">
+      {children}
+    </div>
+  );
+}
+
+function ErrorCard({ children }: { children: React.ReactNode }) {
+  return (
+    <div role="alert" className="rounded-2xl border border-[var(--color-danger)] bg-[var(--color-brand-surface-alt)] p-5 text-sm text-[var(--color-danger)]">
+      {children}
+    </div>
+  );
+}
+
+function EmptyCard({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="rounded-2xl border border-dashed border-[var(--color-brand-outline)] bg-[var(--color-brand-surface-alt)] p-6 text-center text-sm text-[var(--color-text-muted)]">
+      {children}
+    </div>
   );
 }

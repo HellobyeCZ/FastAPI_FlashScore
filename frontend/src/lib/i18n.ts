@@ -7,7 +7,6 @@ export function isLocale(value: string): value is Locale {
 }
 
 const enMessages = {
-  "a11y.live": "Live updates are enabled.",
   "app.description": "Search an event and compare live bookmaker odds in one place.",
   "app.title": "FastAPI FlashScore Odds",
   "bulk.concurrencyLabel": "Max concurrency",
@@ -45,10 +44,17 @@ const enMessages = {
   "locale.cs": "Czech",
   "locale.en": "English",
   "locale.switcher": "Language",
-  "refresh.label": "Auto refresh",
-  "refresh.next": "Next update in {seconds}s",
-  "refresh.off": "Off",
-  "refresh.on": "On",
+  "models.comingSoon": "Coming soon",
+  "models.description": "Create, train, and monitor prediction models powered by your scraped match data.",
+  "models.feature.backtest": "Backtest strategies against historical seasons to validate edge before deployment.",
+  "models.feature.backtestTitle": "Backtesting",
+  "models.feature.liveTrack": "Monitor live prediction accuracy, calibration drift, and ROI in real time.",
+  "models.feature.liveTrackTitle": "Live Tracking",
+  "models.feature.train": "Train models on scraped odds and match statistics with configurable feature sets.",
+  "models.feature.trainTitle": "Model Training",
+  "models.title": "Prediction Models",
+  "nav.dashboard": "Dashboard",
+  "nav.models": "Models",
   "saved.description": "Browse all matches that were already scraped and stored.",
   "saved.empty": "No saved matches yet. Fetch odds or stats first.",
   "saved.error": "Unable to load saved matches right now.",
@@ -94,6 +100,10 @@ const enMessages = {
   "table.selection": "Selection",
   "tabs.live": "Live Fetch",
   "tabs.saved": "Saved Matches",
+  "theme.dark": "Dark",
+  "theme.label": "Theme",
+  "theme.light": "Light",
+  "theme.system": "System",
   "timestamp.updated": "Updated {time}"
 };
 
@@ -101,7 +111,6 @@ export type MessageKey = keyof typeof enMessages;
 type MessageCatalog = Record<MessageKey, string>;
 
 const csMessages: MessageCatalog = {
-  "a11y.live": "Zive aktualizace jsou zapnute.",
   "app.description": "Vyhledejte udalost a porovnejte zive kurzy bookmakeru na jednom miste.",
   "app.title": "FastAPI FlashScore kurzy",
   "bulk.concurrencyLabel": "Maximalni soubeznost",
@@ -139,10 +148,17 @@ const csMessages: MessageCatalog = {
   "locale.cs": "Cestina",
   "locale.en": "Anglictina",
   "locale.switcher": "Jazyk",
-  "refresh.label": "Automaticke obnovovani",
-  "refresh.next": "Dalsi aktualizace za {seconds}s",
-  "refresh.off": "Vypnuto",
-  "refresh.on": "Zapnuto",
+  "models.comingSoon": "Jiz brzy",
+  "models.description": "Vytvarejte, trenujte a sledujte prediktivni modely na zaklade stazenych dat o zapasech.",
+  "models.feature.backtest": "Overte strategie na historickych sezonach pred nasazenim.",
+  "models.feature.backtestTitle": "Backtesting",
+  "models.feature.liveTrack": "Sledujte presnost predikci, kalibraci a ROI v realnem case.",
+  "models.feature.liveTrackTitle": "Sledovani v realnem case",
+  "models.feature.train": "Trenujte modely na strzenych kurzech a statistikach zapasu s nastavitelnymi features.",
+  "models.feature.trainTitle": "Trenovani modelu",
+  "models.title": "Prediktivni modely",
+  "nav.dashboard": "Prehled",
+  "nav.models": "Modely",
   "saved.description": "Prohlednete vsechny zapasy, ktere uz byly stazeny a ulozeny.",
   "saved.empty": "Zatim nejsou ulozene zadne zapasy. Nejdrive nactete kurzy nebo statistiky.",
   "saved.error": "Ulozene zapasy se ted nepodarilo nacist.",
@@ -188,6 +204,10 @@ const csMessages: MessageCatalog = {
   "table.selection": "Vyber",
   "tabs.live": "Live data",
   "tabs.saved": "Ulozene zapasy",
+  "theme.dark": "Tmavy",
+  "theme.label": "Motiv",
+  "theme.light": "Svetly",
+  "theme.system": "System",
   "timestamp.updated": "Aktualizovano {time}"
 };
 
