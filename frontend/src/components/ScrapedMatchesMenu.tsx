@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState, useCallback } from "react";
 import type { ScrapedMatchSummary } from "@/types/scraped-matches";
 import { useLocale } from "@/contexts/LocaleContext";
 
@@ -266,6 +266,74 @@ function buildTree(matches: ScrapedMatchSummary[], unknownSeason: string): Sport
   return sports;
 }
 
+interface LazySeasonDetailsProps {
+  seasonNode: SeasonNode;
+  onOpenMatch: (eventId: string) => void;
+  locale: string;
+  unknown: string;
+}
+
+function LazySeasonDetails({ seasonNode, onOpenMatch, locale, unknown }: LazySeasonDetailsProps) {
+  const [expanded, setExpanded] = useState(false);
+  const { t } = useLocale();
+
+  const handleToggle = useCallback((e: React.ToggleEvent<HTMLDetailsElement>) => {
+    setExpanded(e.currentTarget.open);
+  }, []);
+
+  return (
+    <details
+      className="rounded-xl border border-[color:var(--color-brand-outline)] bg-[color:var(--color-brand-surface-alt)]"
+      onToggle={handleToggle}
+    >
+      <summary className="cursor-pointer list-none px-3 py-2">
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-sm font-medium text-[color:var(--color-text-high)]">{seasonNode.season}</span>
+          <span className="text-xs text-[color:var(--color-text-muted)]">
+            {t("saved.menu.matchesCount", { count: seasonNode.matches.length })}
+          </span>
+        </div>
+      </summary>
+
+      {expanded && (
+        <ul className="space-y-2 px-2 pb-2">
+          {seasonNode.matches.map((match) => {
+            const teams =
+              match.homeTeam && match.awayTeam
+                ? `${match.homeTeam} vs ${match.awayTeam}`
+                : match.eventName ?? unknown;
+            const kickoff = formatUtc(match.startTimeUtc, locale, unknown);
+            const status = match.status ? toTitleCase(match.status) : unknown;
+
+            return (
+              <li
+                key={match.eventId}
+                className="rounded-xl border border-[color:var(--color-brand-outline)] bg-[color:var(--color-brand-surface)] p-3"
+              >
+                <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                  <div className="space-y-1">
+                    <p className="text-sm font-semibold text-[color:var(--color-text-high)]">{teams}</p>
+                    <p className="text-xs text-[color:var(--color-text-muted)]">
+                      {kickoff} | {status} | {match.eventId}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onOpenMatch(match.eventId)}
+                    className="rounded-xl bg-[color:var(--color-brand-primary)] px-3 py-2 text-sm font-semibold text-[color:var(--color-text-inverse)] transition hover:bg-[color:var(--color-brand-accent)]"
+                  >
+                    {t("saved.table.open")}
+                  </button>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </details>
+  );
+}
+
 export function ScrapedMatchesMenu({ matches, onOpenMatch }: ScrapedMatchesMenuProps) {
   const { t, locale } = useLocale();
   const unknown = t("stats.meta.unknown");
@@ -317,53 +385,13 @@ export function ScrapedMatchesMenu({ matches, onOpenMatch }: ScrapedMatchesMenuP
 
                         <div className="space-y-2 px-2 pb-2">
                           {leagueNode.seasons.map((seasonNode) => (
-                            <details
+                            <LazySeasonDetails
                               key={`${sportNode.sport}:${countryNode.country}:${leagueNode.league}:${seasonNode.season}`}
-                              className="rounded-xl border border-[color:var(--color-brand-outline)] bg-[color:var(--color-brand-surface-alt)]"
-                            >
-                              <summary className="cursor-pointer list-none px-3 py-2">
-                                <div className="flex items-center justify-between gap-3">
-                                  <span className="text-sm font-medium text-[color:var(--color-text-high)]">{seasonNode.season}</span>
-                                  <span className="text-xs text-[color:var(--color-text-muted)]">
-                                    {t("saved.menu.matchesCount", { count: seasonNode.matches.length })}
-                                  </span>
-                                </div>
-                              </summary>
-
-                              <ul className="space-y-2 px-2 pb-2">
-                                {seasonNode.matches.map((match) => {
-                                  const teams =
-                                    match.homeTeam && match.awayTeam
-                                      ? `${match.homeTeam} vs ${match.awayTeam}`
-                                      : match.eventName ?? unknown;
-                                  const kickoff = formatUtc(match.startTimeUtc, locale, unknown);
-                                  const status = match.status ? toTitleCase(match.status) : unknown;
-
-                                  return (
-                                    <li
-                                      key={match.eventId}
-                                      className="rounded-xl border border-[color:var(--color-brand-outline)] bg-[color:var(--color-brand-surface)] p-3"
-                                    >
-                                      <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                                        <div className="space-y-1">
-                                          <p className="text-sm font-semibold text-[color:var(--color-text-high)]">{teams}</p>
-                                          <p className="text-xs text-[color:var(--color-text-muted)]">
-                                            {kickoff} | {status} | {match.eventId}
-                                          </p>
-                                        </div>
-                                        <button
-                                          type="button"
-                                          onClick={() => onOpenMatch(match.eventId)}
-                                          className="rounded-xl bg-[color:var(--color-brand-primary)] px-3 py-2 text-sm font-semibold text-[color:var(--color-text-inverse)] transition hover:bg-[color:var(--color-brand-accent)]"
-                                        >
-                                          {t("saved.table.open")}
-                                        </button>
-                                      </div>
-                                    </li>
-                                  );
-                                })}
-                              </ul>
-                            </details>
+                              seasonNode={seasonNode}
+                              onOpenMatch={onOpenMatch}
+                              locale={locale}
+                              unknown={unknown}
+                            />
                           ))}
                         </div>
                       </details>

@@ -61,6 +61,8 @@ class SnapshotStore:
         response_payload_json = self._dump_payload(self._model_to_payload(response))
         upstream_payload_json = self._dump_payload(upstream_payload)
 
+        event_name = response.event.event_name
+
         async with self._write_lock:
             await asyncio.to_thread(
                 self._insert_odds_snapshot_sync,
@@ -70,6 +72,12 @@ class SnapshotStore:
                 correlation_id,
                 response_payload_json,
                 upstream_payload_json,
+            )
+            await asyncio.to_thread(
+                self._upsert_odds_event_summary_sync,
+                event_id,
+                fetched_at,
+                event_name,
             )
 
     async def save_match_stats_snapshot(
@@ -86,6 +94,10 @@ class SnapshotStore:
         feed_payloads_json = self._dump_payload(feed_payloads)
         is_terminal = self._is_terminal_match_response(response)
 
+        event = response.event
+        start_time_str = event.start_time_utc.isoformat() if event.start_time_utc else None
+        event_name = f"{event.home_team} vs {event.away_team}" if event.home_team and event.away_team else None
+
         async with self._write_lock:
             await asyncio.to_thread(
                 self._insert_match_stats_snapshot_sync,
@@ -96,6 +108,23 @@ class SnapshotStore:
                 response_payload_json,
                 feed_payloads_json,
                 is_terminal,
+            )
+            await asyncio.to_thread(
+                self._upsert_stats_event_summary_sync,
+                event_id,
+                fetched_at,
+                event_name,
+                event.home_team,
+                event.away_team,
+                event.sport,
+                event.country,
+                event.competition,
+                event.competition_stage,
+                event.competition_path,
+                start_time_str,
+                event.status,
+                event.status_detail,
+                event.outcome,
             )
 
     async def list_odds_snapshots(self, *, event_id: str, limit: int = 25) -> List[Dict[str, Any]]:
@@ -287,6 +316,8 @@ class SnapshotStore:
                 column_sql="INTEGER NOT NULL DEFAULT 0",
             )
             self._ensure_bulk_scrape_tables(connection)
+            self._ensure_summary_table(connection)
+            self._backfill_event_summaries_if_needed(connection)
 
     def _insert_odds_snapshot_sync(
         self,
@@ -351,6 +382,95 @@ class SnapshotStore:
                     match_stats_payload_json,
                     feed_payloads_json,
                     1 if is_terminal else 0,
+                ),
+            )
+            connection.commit()
+
+    def _upsert_odds_event_summary_sync(
+        self,
+        event_id: str,
+        fetched_at: str,
+        event_name: Optional[str],
+    ) -> None:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO match_event_summaries (
+                    event_id, event_name,
+                    odds_snapshot_count, stats_snapshot_count,
+                    latest_odds_fetched_at, latest_stats_fetched_at,
+                    updated_at
+                ) VALUES (?1, ?2, 1, 0, ?3, NULL, ?4)
+                ON CONFLICT(event_id) DO UPDATE SET
+                    event_name = COALESCE(excluded.event_name, match_event_summaries.event_name),
+                    odds_snapshot_count = match_event_summaries.odds_snapshot_count + 1,
+                    latest_odds_fetched_at = CASE
+                        WHEN excluded.latest_odds_fetched_at > COALESCE(match_event_summaries.latest_odds_fetched_at, '')
+                        THEN excluded.latest_odds_fetched_at
+                        ELSE match_event_summaries.latest_odds_fetched_at
+                    END,
+                    updated_at = excluded.updated_at
+                """,
+                (event_id, event_name, fetched_at, now_iso),
+            )
+            connection.commit()
+
+    def _upsert_stats_event_summary_sync(
+        self,
+        event_id: str,
+        fetched_at: str,
+        event_name: Optional[str],
+        home_team: Optional[str],
+        away_team: Optional[str],
+        sport: Optional[str],
+        country: Optional[str],
+        competition: Optional[str],
+        competition_stage: Optional[str],
+        competition_path: Optional[str],
+        start_time_utc: Optional[str],
+        status: Optional[str],
+        status_detail: Optional[str],
+        outcome: Optional[str],
+    ) -> None:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO match_event_summaries (
+                    event_id, event_name, home_team, away_team,
+                    sport, country, competition, competition_stage,
+                    competition_path, start_time_utc, status, status_detail, outcome,
+                    odds_snapshot_count, stats_snapshot_count,
+                    latest_odds_fetched_at, latest_stats_fetched_at,
+                    updated_at
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 0, 1, NULL, ?14, ?15)
+                ON CONFLICT(event_id) DO UPDATE SET
+                    event_name = COALESCE(excluded.event_name, match_event_summaries.event_name),
+                    home_team = COALESCE(excluded.home_team, match_event_summaries.home_team),
+                    away_team = COALESCE(excluded.away_team, match_event_summaries.away_team),
+                    sport = COALESCE(excluded.sport, match_event_summaries.sport),
+                    country = COALESCE(excluded.country, match_event_summaries.country),
+                    competition = COALESCE(excluded.competition, match_event_summaries.competition),
+                    competition_stage = COALESCE(excluded.competition_stage, match_event_summaries.competition_stage),
+                    competition_path = COALESCE(excluded.competition_path, match_event_summaries.competition_path),
+                    start_time_utc = COALESCE(excluded.start_time_utc, match_event_summaries.start_time_utc),
+                    status = COALESCE(excluded.status, match_event_summaries.status),
+                    status_detail = COALESCE(excluded.status_detail, match_event_summaries.status_detail),
+                    outcome = COALESCE(excluded.outcome, match_event_summaries.outcome),
+                    stats_snapshot_count = match_event_summaries.stats_snapshot_count + 1,
+                    latest_stats_fetched_at = CASE
+                        WHEN excluded.latest_stats_fetched_at > COALESCE(match_event_summaries.latest_stats_fetched_at, '')
+                        THEN excluded.latest_stats_fetched_at
+                        ELSE match_event_summaries.latest_stats_fetched_at
+                    END,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    event_id, event_name, home_team, away_team,
+                    sport, country, competition, competition_stage,
+                    competition_path, start_time_utc, status, status_detail, outcome,
+                    fetched_at, now_iso,
                 ),
             )
             connection.commit()
@@ -500,15 +620,13 @@ class SnapshotStore:
                     j.finished_at,
                     j.last_error,
                     j.total_events,
-                    COUNT(e.id) AS total_count,
-                    SUM(CASE WHEN e.status = 'pending' THEN 1 ELSE 0 END) AS pending_count,
-                    SUM(CASE WHEN e.status = 'running' THEN 1 ELSE 0 END) AS running_count,
-                    SUM(CASE WHEN e.status = 'succeeded' THEN 1 ELSE 0 END) AS succeeded_count,
-                    SUM(CASE WHEN e.status = 'failed' THEN 1 ELSE 0 END) AS failed_count,
-                    SUM(CASE WHEN e.status = 'skipped' THEN 1 ELSE 0 END) AS skipped_count
+                    (SELECT COUNT(*) FROM scrape_job_events WHERE job_id = j.id) AS total_count,
+                    (SELECT COUNT(*) FROM scrape_job_events WHERE job_id = j.id AND status = 'pending') AS pending_count,
+                    (SELECT COUNT(*) FROM scrape_job_events WHERE job_id = j.id AND status = 'running') AS running_count,
+                    (SELECT COUNT(*) FROM scrape_job_events WHERE job_id = j.id AND status = 'succeeded') AS succeeded_count,
+                    (SELECT COUNT(*) FROM scrape_job_events WHERE job_id = j.id AND status = 'failed') AS failed_count,
+                    (SELECT COUNT(*) FROM scrape_job_events WHERE job_id = j.id AND status = 'skipped') AS skipped_count
                 FROM scrape_jobs j
-                LEFT JOIN scrape_job_events e ON e.job_id = j.id
-                GROUP BY j.id
                 ORDER BY j.id DESC
                 LIMIT ?
                 """,
@@ -982,6 +1100,119 @@ class SnapshotStore:
             """
             CREATE INDEX IF NOT EXISTS idx_scrape_job_events_job_status
             ON scrape_job_events(job_id, status, id ASC)
+            """
+        )
+        connection.commit()
+
+    @staticmethod
+    def _ensure_summary_table(connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS match_event_summaries (
+                event_id TEXT PRIMARY KEY,
+                event_name TEXT,
+                home_team TEXT,
+                away_team TEXT,
+                sport TEXT,
+                country TEXT,
+                competition TEXT,
+                competition_stage TEXT,
+                competition_path TEXT,
+                start_time_utc TEXT,
+                status TEXT,
+                status_detail TEXT,
+                outcome TEXT,
+                odds_snapshot_count INTEGER NOT NULL DEFAULT 0,
+                stats_snapshot_count INTEGER NOT NULL DEFAULT 0,
+                latest_odds_fetched_at TEXT,
+                latest_stats_fetched_at TEXT,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_match_event_summaries_updated
+            ON match_event_summaries(updated_at DESC)
+            """
+        )
+        connection.commit()
+
+    @staticmethod
+    def _backfill_event_summaries_if_needed(connection: sqlite3.Connection) -> None:
+        count = connection.execute(
+            "SELECT COUNT(*) FROM match_event_summaries"
+        ).fetchone()[0]
+        if count > 0:
+            return
+
+        has_data = connection.execute(
+            "SELECT 1 FROM odds_snapshots LIMIT 1"
+        ).fetchone()
+        if not has_data:
+            has_data = connection.execute(
+                "SELECT 1 FROM match_stats_snapshots LIMIT 1"
+            ).fetchone()
+        if not has_data:
+            return
+
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO match_event_summaries (
+                event_id, event_name, home_team, away_team,
+                sport, country, competition, competition_stage,
+                competition_path, start_time_utc, status, status_detail, outcome,
+                odds_snapshot_count, stats_snapshot_count,
+                latest_odds_fetched_at, latest_stats_fetched_at,
+                updated_at
+            )
+            WITH odds_agg AS (
+                SELECT event_id, COUNT(*) AS cnt, MAX(id) AS max_id, MAX(fetched_at) AS max_fetched
+                FROM odds_snapshots GROUP BY event_id
+            ),
+            stats_agg AS (
+                SELECT event_id, COUNT(*) AS cnt, MAX(id) AS max_id, MAX(fetched_at) AS max_fetched
+                FROM match_stats_snapshots GROUP BY event_id
+            ),
+            all_events AS (
+                SELECT event_id FROM odds_agg
+                UNION
+                SELECT event_id FROM stats_agg
+            )
+            SELECT
+                ae.event_id,
+                COALESCE(
+                    json_extract(o.odds_payload_json, '$.event.event_name'),
+                    json_extract(o.odds_payload_json, '$.event.name'),
+                    CASE
+                        WHEN json_extract(s.match_stats_payload_json, '$.event.home_team') IS NOT NULL
+                        THEN json_extract(s.match_stats_payload_json, '$.event.home_team')
+                             || ' vs '
+                             || json_extract(s.match_stats_payload_json, '$.event.away_team')
+                        ELSE NULL
+                    END
+                ),
+                json_extract(s.match_stats_payload_json, '$.event.home_team'),
+                json_extract(s.match_stats_payload_json, '$.event.away_team'),
+                json_extract(s.match_stats_payload_json, '$.event.sport'),
+                json_extract(s.match_stats_payload_json, '$.event.country'),
+                json_extract(s.match_stats_payload_json, '$.event.competition'),
+                json_extract(s.match_stats_payload_json, '$.event.competition_stage'),
+                json_extract(s.match_stats_payload_json, '$.event.competition_path'),
+                json_extract(s.match_stats_payload_json, '$.event.start_time_utc'),
+                json_extract(s.match_stats_payload_json, '$.event.status'),
+                json_extract(s.match_stats_payload_json, '$.event.status_detail'),
+                json_extract(s.match_stats_payload_json, '$.event.outcome'),
+                COALESCE(oa.cnt, 0),
+                COALESCE(sa.cnt, 0),
+                oa.max_fetched,
+                sa.max_fetched,
+                COALESCE(oa.max_fetched, sa.max_fetched)
+            FROM all_events ae
+            LEFT JOIN odds_agg oa ON ae.event_id = oa.event_id
+            LEFT JOIN stats_agg sa ON ae.event_id = sa.event_id
+            LEFT JOIN odds_snapshots o ON o.id = oa.max_id
+            LEFT JOIN match_stats_snapshots s ON s.id = sa.max_id
             """
         )
         connection.commit()
