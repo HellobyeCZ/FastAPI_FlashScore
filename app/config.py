@@ -62,6 +62,10 @@ class _SettingsFields:
         "data/flashscore_snapshots.sqlite3",
         description="Filesystem path for persistent snapshot storage.",
     )
+    database_url: str = Field(
+        "sqlite+aiosqlite:///./data/flashscore_snapshots.sqlite3",
+        description="SQLAlchemy async DB URL. Postgres in prod, SQLite for local dev only.",
+    )
 
     def build_odds_url(self, event_id: str) -> str:
         """Construct the odds endpoint URL for the provided event."""
