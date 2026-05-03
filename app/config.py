@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Dict, Type
+from typing import Any, Dict, Type
 from urllib.parse import urlencode
 
 from pydantic import Field, HttpUrl
@@ -92,7 +92,7 @@ class _SettingsFields:
         return f"{stats_feed_base}/df_st_1_{event_id}"
 
     @staticmethod
-    def _resolve_value(value):
+    def _resolve_value(value: Any) -> Any:
         """Resolve values when Pydantic FieldInfo descriptors leak into runtime."""
 
         default = getattr(value, "default", None)
