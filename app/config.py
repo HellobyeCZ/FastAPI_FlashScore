@@ -97,7 +97,13 @@ def _get_base_settings_class() -> Type[_SettingsFields]:
         SettingsBaseCls = None  # type: ignore[assignment]
     else:
         class SettingsBase(_SettingsFields, SettingsBaseCls):  # type: ignore[misc]
-            model_config = SettingsConfigDict(env_file=".env", env_prefix="APP_")
+            # `extra="ignore"` lets the shared root .env carry env vars consumed
+            # by docker-compose / Prisma / other services (POSTGRES_USER,
+            # REDIS_URL, OTEL_*, LOG_LEVEL, …) without each one needing to
+            # appear as an APP_-prefixed Setting field.
+            model_config = SettingsConfigDict(
+                env_file=".env", env_prefix="APP_", extra="ignore"
+            )
 
         return SettingsBase
 
