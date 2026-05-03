@@ -66,11 +66,11 @@ async def _redis_pool() -> ArqRedis:
     )
 
 
-@router.post("/jobs")
+@router.post("/jobs", response_model=BulkScrapeJob)
 async def create_bulk_scrape_job(
     payload: BulkScrapeJobCreateRequest,
     session: AsyncSession = Depends(get_session),
-) -> dict[str, object]:
+) -> BulkScrapeJob:
     if not payload.include_stats and not payload.include_odds:
         raise HTTPException(422, "At least one of include_stats/include_odds must be true.")
 
@@ -104,7 +104,9 @@ async def create_bulk_scrape_job(
     finally:
         await redis.close()
 
-    return {"id": job.id, "status": job.status}
+    # Return the full job schema so the frontend's normaliser (which expects
+    # competition_path, created_at, updated_at, etc.) accepts the response.
+    return _job_to_schema(job)
 
 
 @router.get("/jobs", response_model=BulkScrapeJobListResponse)
