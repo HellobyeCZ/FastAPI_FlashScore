@@ -47,3 +47,35 @@ async def test_circuit_breaker_opens_after_consecutive_5xx() -> None:
             await client.get_odds("e1")
         assert "circuit_open" in exc_info.value.code
     await client.aclose()
+
+
+async def test_breaker_threshold_counts_logical_calls_not_retries() -> None:
+    """Per-attempt vs per-call counting matters under retries.
+
+    With max_retries=3 (production default), a naive wrapping would let the
+    breaker count each retry attempt as a separate failure, opening after only
+    2 logical calls when the threshold is 5. This test pins down the contract:
+    the threshold counts LOGICAL calls. If this assertion ever flips, fix the
+    implementation, not the test.
+    """
+    client = OddsClient(
+        base_url="https://example.com",
+        max_retries=3,
+        cache_ttl=0,
+        breaker_failure_threshold=5,
+        breaker_reset_after_seconds=10,
+        backoff_factor=0.0,  # don't sleep between retries
+    )
+    with respx.mock:
+        respx.get("https://example.com").respond(status_code=500)
+        # 4 logical calls, each with up to 4 attempts (1 + 3 retries).
+        # If retries counted as separate failures, the breaker would open
+        # after the 2nd logical call.
+        for i in range(4):
+            with pytest.raises(OddsAPIError) as exc_info:
+                await client.get_odds(f"e{i}")
+            assert exc_info.value.code != "circuit_open", (
+                f"breaker opened prematurely on call {i + 1}/4 — retries are "
+                "incrementing the breaker counter; expected per-logical-call counting"
+            )
+    await client.aclose()
