@@ -5,8 +5,12 @@ import type { ScrapedMatchSummary } from "@/types/scraped-matches";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const MAX_LIMIT = 1000;
-const DEFAULT_LIMIT = 200;
+// The competition-browser tree on the dashboard groups every event by sport
+// → country → competition → season, so it needs the full set. With 52K rows
+// the JSON payload is ~12 MB — fine for a one-shot dashboard load and faster
+// than paginating client-side. Cap at 100K so a runaway dataset can't OOM.
+const MAX_LIMIT = 100_000;
+const DEFAULT_LIMIT = MAX_LIMIT;
 
 function parseLimit(value: string | null): number {
   if (!value) return DEFAULT_LIMIT;
