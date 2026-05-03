@@ -1,3 +1,4 @@
+import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@prisma/client";
 
 // Lazily instantiated so Next.js can statically collect API routes at build
@@ -11,10 +12,14 @@ const globalForPrisma = globalThis as unknown as {
 
 export function getPrisma(): PrismaClient {
   if (globalForPrisma.prisma) return globalForPrisma.prisma;
-  if (!process.env.DATABASE_URL) {
+  const url = process.env.DATABASE_URL;
+  if (!url) {
     throw new Error("Missing DATABASE_URL environment variable for Prisma.");
   }
-  const client = new PrismaClient({ log: ["error"] });
+  // Prisma 7's client engine requires an adapter; @prisma/adapter-pg gives
+  // us a native pg-based driver matching our Postgres deployment.
+  const adapter = new PrismaPg({ connectionString: url });
+  const client = new PrismaClient({ adapter, log: ["error"] });
   if (process.env.NODE_ENV !== "production") {
     globalForPrisma.prisma = client;
   }

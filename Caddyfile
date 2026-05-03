@@ -3,12 +3,8 @@
 }
 
 :80 {
-    # FastAPI routes are mounted at /, not /api/. Strip the /api prefix
-    # before forwarding so /api/health → api:8000/health.
-    handle_path /api/* {
-        reverse_proxy api:8000
-    }
-    handle {
-        reverse_proxy frontend:3000
-    }
+    # Everything goes to the Next.js frontend. The frontend's own /api/*
+    # routes either read Postgres directly (e.g. /api/scraped-matches)
+    # or proxy to the FastAPI backend internally via ODDS_BACKEND_BASE_URL.
+    reverse_proxy frontend:3000
 }

@@ -72,6 +72,9 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
       NEXT_PUBLIC_API_BASE_URL: http://localhost/api
+      # Used by frontend's own /api/* route handlers to proxy to FastAPI
+      # over the compose network (server-side fetch, not visible to browser).
+      ODDS_BACKEND_BASE_URL: http://api:8000
     expose:
       - "3000"
 
