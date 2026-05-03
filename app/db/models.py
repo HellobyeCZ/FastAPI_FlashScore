@@ -35,7 +35,9 @@ class Base(DeclarativeBase):
 class OddsSnapshot(Base):
     __tablename__ = "odds_snapshots"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"), primary_key=True
+    )
     event_id: Mapped[str] = mapped_column(String, nullable=False)
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     source: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -49,7 +51,9 @@ class OddsSnapshot(Base):
 class MatchStatsSnapshot(Base):
     __tablename__ = "match_stats_snapshots"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"), primary_key=True
+    )
     event_id: Mapped[str] = mapped_column(String, nullable=False)
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     source: Mapped[str | None] = mapped_column(String, nullable=True)
