@@ -32,31 +32,16 @@ class _SettingsFields:
         description="Geo IP subdivision code parameter for the odds endpoint.",
     )
     default_headers: Dict[str, str] = Field(
-        default_factory=lambda: {
-            "Accept": "*/*",
-            "Sec-Fetch-Site": "cross-site",
-            "Origin": "https://www.livesport.cz",
-            "Sec-Fetch-Dest": "empty",
-            "Accept-Language": "cs-CZ,cs;q=0.9",
-            "Sec-Fetch-Mode": "cors",
-            "User-Agent": (
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                "AppleWebKit/605.1.15 (KHTML, like Gecko) "
-                "Version/18.3.1 Safari/605.1.15"
-            ),
-            "Accept-Encoding": "gzip, deflate, br",
-            "Referer": "https://www.livesport.cz/",
-            "Priority": "u=3, i",
-        },
-        description="Default headers sent to the odds endpoint.",
+        ...,
+        description="Default headers sent to the odds endpoint. Must be provided via APP_DEFAULT_HEADERS.",
     )
     stats_feed_base: HttpUrl = Field(
         "https://2.flashscore.ninja/2/x/feed",
         description="Base URL for Flashscore match statistics feed.",
     )
     stats_feed_sign: str = Field(
-        "SW9D1eZo",
-        description="Value for x-fsign header required by Flashscore feed.",
+        ...,
+        description="x-fsign header value (rotates upstream — must come from env).",
     )
     storage_db_path: str = Field(
         "data/flashscore_snapshots.sqlite3",

@@ -72,18 +72,12 @@ class FlashscoreDiscoveryClient:
         settings = get_settings()
         stats_feed_base = settings._resolve_value(settings.stats_feed_base)
         stats_feed_sign = settings._resolve_value(settings.stats_feed_sign)
+        default_headers = settings._resolve_value(settings.default_headers)
 
         self._client = httpx.AsyncClient(
             timeout=timeout,
             follow_redirects=True,
-            headers={
-                "User-Agent": (
-                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                    "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3.1 Safari/605.1.15"
-                ),
-                "Accept-Language": "en-US,en;q=0.9",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            },
+            headers=default_headers,
         )
         self._stats_feed_base = str(stats_feed_base).rstrip("/")
         self._stats_feed_sign = str(stats_feed_sign)
