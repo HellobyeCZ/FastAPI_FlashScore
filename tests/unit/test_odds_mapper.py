@@ -15,6 +15,11 @@ from app.services.odds import map_odds_payload
 
 FIXTURES_DIR = Path(__file__).parent.parent / "fixtures" / "odds"
 
+# Fields excluded from golden comparison because they vary per run (wall-clock
+# timestamps, build/version stamps). Add new entries here when the mapper grows
+# new volatile output — do NOT regenerate the fixtures to bake the new value in.
+VOLATILE_FIELDS = {"retrieved_at"}
+
 
 def _fixture_event_ids() -> list[str]:
     return sorted(
@@ -35,8 +40,8 @@ def test_map_odds_payload_matches_golden(event_id: str) -> None:
     result = map_odds_payload(event_id=event_id, payload=upstream)
     actual = json.loads(result.model_dump_json())
 
-    # `retrieved_at` is a wall-clock timestamp; ignore it.
-    actual.pop("retrieved_at", None)
-    expected.pop("retrieved_at", None)
+    for field in VOLATILE_FIELDS:
+        actual.pop(field, None)
+        expected.pop(field, None)
 
     assert actual == expected
