@@ -10,17 +10,9 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple, Type, TypeVar
 from app.config import get_settings
 from app.schemas.match_stats import MatchStatsResponse
 from app.schemas.odds import OddsResponse
+from app.services._terminality import TERMINAL_MATCH_STATUSES as _TERMINAL_MATCH_STATUSES
 
 ModelT = TypeVar("ModelT")
-
-_TERMINAL_MATCH_STATUSES = {
-    "finished",
-    "abandoned",
-    "cancelled",
-    "awarded",
-    "walkover",
-    "forfeit",
-}
 
 
 class SnapshotStore:

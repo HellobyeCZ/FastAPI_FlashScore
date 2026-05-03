@@ -17,15 +17,7 @@ from app.db.models import (
 )
 from app.schemas.match_stats import MatchStatsResponse
 from app.schemas.odds import OddsResponse
-
-_TERMINAL_STATUSES = {
-    "finished",
-    "abandoned",
-    "cancelled",
-    "awarded",
-    "walkover",
-    "forfeit",
-}
+from app.services._terminality import TERMINAL_MATCH_STATUSES
 
 
 class SnapshotRepo:
@@ -39,6 +31,19 @@ class SnapshotRepo:
     ) -> None:
         self._sessions = session_factory
         self._blobs = blob_store
+
+    # ----- lifecycle no-ops --------------------------------------------------
+    # Task 13's main.py wiring calls .initialize() / .aclose() on the legacy
+    # SnapshotStore at startup/shutdown. SnapshotRepo doesn't need either
+    # (the engine owns its pool, sessions are per-request), but keeping the
+    # methods means the swap in Task 13 is a one-liner instead of changing
+    # the lifecycle code too.
+
+    async def initialize(self) -> None:
+        return None
+
+    async def aclose(self) -> None:
+        return None
 
     async def save_odds_snapshot(
         self,
@@ -83,7 +88,7 @@ class SnapshotRepo:
             key=f"{event_id}/{fetched_at.isoformat()}",
             payload=feed_bytes,
         )
-        is_terminal = (response.event.status or "").lower() in _TERMINAL_STATUSES
+        is_terminal = (response.event.status or "").lower() in TERMINAL_MATCH_STATUSES
         async with self._sessions() as session:
             session.add(
                 MatchStatsRow(
