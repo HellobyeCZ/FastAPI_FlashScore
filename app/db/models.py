@@ -2,6 +2,13 @@
 
 Prisma is the source of truth for the schema. These models exist so the Python
 side can read/write the same Postgres database with type safety.
+
+Forward reference: this file mirrors the POST-Task-7 reconciled Prisma schema.
+The current Prisma schema only defines two of the five tables here, and uses
+`upstream_payload_json` / `feed_payloads_json` rather than `upstream_blob_url`
+/ `feed_payloads_blob_url`. Task 7 reconciles Prisma to add the missing tables;
+Task 9 renames the JSON-text columns to blob-URL columns when migrating data
+from SQLite to Postgres + the local blob store.
 """
 from __future__ import annotations
 

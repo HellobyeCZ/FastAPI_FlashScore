@@ -14,6 +14,8 @@ from sqlalchemy.ext.asyncio import (
 from app.config import get_settings
 
 
+# Engine + session factory are process-globals via @lru_cache. Task 13 will move
+# them onto FastAPI's lifespan so engine.dispose() is called on shutdown.
 @lru_cache
 def get_engine() -> AsyncEngine:
     settings = get_settings()
@@ -27,7 +29,16 @@ def get_session_factory() -> async_sessionmaker[AsyncSession]:
 
 
 async def get_session() -> AsyncIterator[AsyncSession]:
-    """FastAPI dependency yielding an AsyncSession."""
+    """FastAPI dependency yielding an AsyncSession.
+
+    Contract: callers commit explicitly. On any exception inside the request
+    handler, the session is rolled back before the connection returns to the
+    pool, so a failed request can't leak an open transaction.
+    """
     factory = get_session_factory()
     async with factory() as session:
-        yield session
+        try:
+            yield session
+        except Exception:
+            await session.rollback()
+            raise
