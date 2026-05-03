@@ -51,6 +51,11 @@ PG_URL = os.environ.get(
 )
 BATCH_SIZE = 1000
 
+# Hosts the migration is willing to TRUNCATE without an explicit override.
+# Anything else (e.g. a remote VPS Postgres) is treated as production and
+# refused — set ALLOW_REMOTE=1 in env to override after eyes-on-screen.
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "postgres"}
+
 
 def _utc(s: str | None) -> datetime | None:
     """Parse a stored ISO-8601 timestamp into a tz-aware UTC datetime, or None."""
@@ -240,10 +245,28 @@ async def _migrate_simple_table(
     return inserted
 
 
+def _assert_local_target(url: str) -> None:
+    """Refuse to run against anything but localhost/postgres unless ALLOW_REMOTE=1."""
+    from urllib.parse import urlparse
+
+    host = urlparse(url.replace("postgresql+asyncpg", "postgresql")).hostname
+    if host in _LOCAL_HOSTS:
+        return
+    if os.environ.get("ALLOW_REMOTE") == "1":
+        print(f"WARNING: target host {host!r} is not local; ALLOW_REMOTE=1, proceeding.")
+        return
+    sys.exit(
+        f"Refusing to run against non-local Postgres host {host!r}. "
+        "This script truncates tables; running it against production would be catastrophic. "
+        "Set ALLOW_REMOTE=1 to override after triple-checking."
+    )
+
+
 async def main() -> None:
     if not SQLITE_PATH.exists():
         sys.exit(f"SQLite DB not found at {SQLITE_PATH}.")
 
+    _assert_local_target(PG_URL)
     engine = create_async_engine(PG_URL)
 
     async with engine.connect() as conn:
