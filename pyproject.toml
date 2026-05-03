@@ -49,6 +49,8 @@ ignore = ["S101"]  # asserts allowed in tests
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S"]
+# FastAPI's Depends()/Query() pattern requires function calls in argument defaults.
+"app/api/**" = ["B008"]
 
 [tool.mypy]
 python_version = "3.12"
