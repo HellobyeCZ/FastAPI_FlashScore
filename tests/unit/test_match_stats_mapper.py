@@ -1,4 +1,17 @@
-"""Golden-file regression tests for app.services.match_stats.map_match_stats_payload."""
+"""Golden-file regression tests for app.services.match_stats.map_match_stats_payload.
+
+Coverage caveat: the mapper takes 7 metadata kwargs (`home_team`, `away_team`,
+`sport`, `country`, `competition`, `competition_stage`, `competition_path`)
+that it passes through unchanged to the output `event` block. Because these
+goldens replay the captured `expected.event.*` values BACK as the kwargs,
+those 7 fields are tautologically equal — drift in pass-through behavior is
+NOT detected by this test net. What IS detected: every feed-derived field
+(status, status_detail, outcome, start_time_utc, periods, sections, stats,
+top players, score totals) and the entire FlashScore feed-format parser.
+That's the load-bearing logic and the most likely regression source under
+later refactors. Capturing metadata into a sidecar fixture is a follow-up
+if pass-through coverage is ever needed.
+"""
 from __future__ import annotations
 
 import json
@@ -7,6 +20,7 @@ from pathlib import Path
 import pytest
 
 from app.services.match_stats import map_match_stats_payload
+from tests.unit._golden_diff import assert_golden_match
 
 FIXTURES_DIR = Path(__file__).parent.parent / "fixtures" / "match_stats"
 
@@ -55,4 +69,4 @@ def test_map_match_stats_payload_matches_golden(event_id: str) -> None:
         actual.pop(field, None)
         expected.pop(field, None)
 
-    assert actual == expected
+    assert_golden_match(actual, expected)

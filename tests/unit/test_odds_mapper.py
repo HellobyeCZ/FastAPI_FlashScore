@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from app.services.odds import map_odds_payload
+from tests.unit._golden_diff import assert_golden_match
 
 FIXTURES_DIR = Path(__file__).parent.parent / "fixtures" / "odds"
 
@@ -44,4 +45,4 @@ def test_map_odds_payload_matches_golden(event_id: str) -> None:
         actual.pop(field, None)
         expected.pop(field, None)
 
-    assert actual == expected
+    assert_golden_match(actual, expected)
