@@ -51,22 +51,8 @@ except ImportError:  # pragma: no cover - optional dependency guard
     TracerProvider = None  # type: ignore[assignment]
     BatchSpanProcessor = None  # type: ignore[assignment]
 
-try:
-    from azure.monitor.opentelemetry.exporter import (
-        AzureMonitorLogExporter,
-        AzureMonitorMetricExporter,
-        AzureMonitorTraceExporter,
-    )
-    from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler, set_logger_provider
-    from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
-except ImportError:  # pragma: no cover - optional dependency guard
-    AzureMonitorLogExporter = None
-    AzureMonitorMetricExporter = None
-    AzureMonitorTraceExporter = None
-    LoggerProvider = None
-    LoggingHandler = None
-    set_logger_provider = None
-    BatchLogRecordProcessor = None
+# Azure Monitor exporter removed — observability now flows through OTLP env vars.
+# See app/observability.py (Task 13) for the OTLP wiring.
 
 
 _OPENTELEMETRY_AVAILABLE = all(
@@ -175,66 +161,19 @@ _telemetry_instrumented = False
 
 
 def _configure_telemetry(app: FastAPI) -> None:
-    """Initialise OpenTelemetry exporters and instrumentation."""
-
+    """Initialise OpenTelemetry instrumentation. OTLP exporter is configured via env vars."""
     telemetry_logger = structlog.get_logger("telemetry")
-
     if not _OPENTELEMETRY_AVAILABLE:
         telemetry_logger.info("telemetry_disabled", reason="opentelemetry_not_installed")
         return
 
     global _telemetry_instrumented
     if not _telemetry_instrumented:
-        # Instrument FastAPI and HTTPX to automatically create spans.
         FastAPIInstrumentor.instrument_app(app, excluded_urls="/health")  # type: ignore[union-attr]
         HTTPXClientInstrumentor().instrument()  # type: ignore[union-attr]
         _telemetry_instrumented = True
 
-    connection_string = os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING")
-    if not connection_string:
-        telemetry_logger.info("azure_monitor_disabled", reason="missing_connection_string")
-        return
-
-    if not all(
-        (
-            AzureMonitorTraceExporter,
-            AzureMonitorMetricExporter,
-            AzureMonitorLogExporter,
-            LoggerProvider,
-            LoggingHandler,
-            set_logger_provider,
-            BatchLogRecordProcessor,
-        )
-    ):
-        telemetry_logger.warning(
-            "azure_monitor_unavailable",
-            reason="azure-monitor-opentelemetry-exporter not installed",
-        )
-        return
-
-    resource = Resource.create({"service.name": "fastapi-flashscore"})
-
-    tracer_provider = TracerProvider(resource=resource)
-    trace.set_tracer_provider(tracer_provider)
-    tracer_provider.add_span_processor(
-        BatchSpanProcessor(AzureMonitorTraceExporter(connection_string=connection_string))
-    )
-
-    metric_exporter = AzureMonitorMetricExporter(connection_string=connection_string)
-    metric_reader = PeriodicExportingMetricReader(metric_exporter)
-    metrics_provider = MeterProvider(resource=resource, metric_readers=[metric_reader])
-    metrics.set_meter_provider(metrics_provider)
-
-    log_exporter = AzureMonitorLogExporter(connection_string=connection_string)
-    logger_provider = LoggerProvider(resource=resource)
-    logger_provider.add_log_record_processor(BatchLogRecordProcessor(log_exporter))
-    set_logger_provider(logger_provider)
-
-    root_logger = logging.getLogger()
-    if not any(isinstance(handler, LoggingHandler) for handler in root_logger.handlers):
-        root_logger.addHandler(LoggingHandler(level=logging.NOTSET, logger_provider=logger_provider))
-
-    telemetry_logger.info("azure_monitor_configured")
+    telemetry_logger.info("telemetry_configured", exporter="otlp_via_env")
 
 
 app = FastAPI(title="FastAPI Project", version="0.1.0")
