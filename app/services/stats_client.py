@@ -8,6 +8,9 @@ from html import unescape
 from typing import Dict, Optional, Tuple
 
 import httpx
+from aiolimiter import AsyncLimiter
+from purgatory import AsyncCircuitBreakerFactory
+from purgatory.domain.model import OpenedState
 
 from app.config import get_settings
 
@@ -81,6 +84,9 @@ class MatchStatsClient:
         backoff_factor: float = 0.5,
         max_backoff: float = 8.0,
         cache_ttl: float = 30.0,
+        rate_limit_per_second: float = 5.0,
+        breaker_failure_threshold: int = 5,
+        breaker_reset_after_seconds: float = 30.0,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._feed_sign = feed_sign
@@ -93,6 +99,11 @@ class MatchStatsClient:
         self._metadata_cache: Dict[str, CachedMatchMetadata] = {}
         self._cache_lock = asyncio.Lock()
         self._client = httpx.AsyncClient(timeout=self._timeout)
+        self._limiter = AsyncLimiter(max_rate=rate_limit_per_second, time_period=1.0)
+        self._breaker_factory = AsyncCircuitBreakerFactory(
+            default_threshold=breaker_failure_threshold,
+            default_ttl=breaker_reset_after_seconds,
+        )
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -102,6 +113,19 @@ class MatchStatsClient:
         if cached is not None:
             return cached
 
+        async with self._limiter:
+            breaker = await self._breaker_factory.get_breaker("stats_upstream")
+            try:
+                async with breaker:
+                    return await self._fetch_match_stats_feeds(event_id)
+            except OpenedState as exc:
+                raise StatsAPIError(
+                    message="Upstream circuit breaker is open.",
+                    status_code=503,
+                    code="circuit_open",
+                ) from exc
+
+    async def _fetch_match_stats_feeds(self, event_id: str) -> Dict[str, str]:
         feeds: Dict[str, str] = {}
         dc_payload = await self._fetch_feed(f"dc_1_{event_id}", required=False)
         if dc_payload:
@@ -132,6 +156,16 @@ class MatchStatsClient:
         if cached is not None:
             return cached
 
+        async with self._limiter:
+            breaker = await self._breaker_factory.get_breaker("stats_upstream")
+            try:
+                async with breaker:
+                    return await self._fetch_match_metadata(event_id)
+            except OpenedState:
+                # Metadata is best-effort; degrade gracefully on open breaker.
+                return MatchPageMetadata()
+
+    async def _fetch_match_metadata(self, event_id: str) -> MatchPageMetadata:
         url = f"https://www.flashscore.com/match/{event_id}/"
         headers = {
             "User-Agent": (

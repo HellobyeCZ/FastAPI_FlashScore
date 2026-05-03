@@ -4,6 +4,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
 import httpx
+from aiolimiter import AsyncLimiter
+from purgatory import AsyncCircuitBreakerFactory
+from purgatory.domain.model import OpenedState
 
 
 RETRYABLE_STATUS_CODES = {408, 425, 429, 500, 502, 503, 504}
@@ -67,6 +70,9 @@ class OddsClient:
         backoff_factor: float = 0.5,
         max_backoff: float = 8.0,
         cache_ttl: float = 30.0,
+        rate_limit_per_second: float = 5.0,
+        breaker_failure_threshold: int = 5,
+        breaker_reset_after_seconds: float = 30.0,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._headers = headers or {}
@@ -79,6 +85,11 @@ class OddsClient:
         self._cache: Dict[str, CachedOdds] = {}
         self._cache_lock = asyncio.Lock()
         self._client = httpx.AsyncClient(timeout=self._timeout)
+        self._limiter = AsyncLimiter(max_rate=rate_limit_per_second, time_period=1.0)
+        self._breaker_factory = AsyncCircuitBreakerFactory(
+            default_threshold=breaker_failure_threshold,
+            default_ttl=breaker_reset_after_seconds,
+        )
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -88,6 +99,19 @@ class OddsClient:
         if cached is not None:
             return cached
 
+        async with self._limiter:
+            breaker = await self._breaker_factory.get_breaker("odds_upstream")
+            try:
+                async with breaker:
+                    return await self._request_with_retries(event_id)
+            except OpenedState as exc:
+                raise OddsAPIError(
+                    message="Upstream circuit breaker is open.",
+                    status_code=503,
+                    code="circuit_open",
+                ) from exc
+
+    async def _request_with_retries(self, event_id: str) -> Any:
         last_error: Optional[Exception] = None
 
         for attempt in range(self._max_retries + 1):
