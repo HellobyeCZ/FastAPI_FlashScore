@@ -3,6 +3,7 @@ import { prisma } from "@/server/prisma";
 import type { ScrapedMatchSummary } from "@/types/scraped-matches";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 type JsonObject = Record<string, unknown>;
 
