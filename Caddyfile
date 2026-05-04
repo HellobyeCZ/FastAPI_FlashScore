@@ -1,0 +1,10 @@
+{
+    # email your-email@example.com  # uncomment when wiring TLS
+}
+
+:80 {
+    # Everything goes to the Next.js frontend. The frontend's own /api/*
+    # routes either read Postgres directly (e.g. /api/scraped-matches)
+    # or proxy to the FastAPI backend internally via ODDS_BACKEND_BASE_URL.
+    reverse_proxy frontend:3000
+}

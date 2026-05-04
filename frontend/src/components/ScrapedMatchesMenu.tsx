@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { memo, useCallback, useMemo, useState } from "react";
 import type { ScrapedMatchSummary } from "@/types/scraped-matches";
 import { useLocale } from "@/contexts/LocaleContext";
 
@@ -227,8 +227,15 @@ function buildTree(matches: ScrapedMatchSummary[], unknownSeason: string): Sport
 
         const sortedSeasonKeys = Array.from(seasons.keys()).sort(sortSeasonsDesc);
         for (const season of sortedSeasonKeys) {
+          // Sort by kickoff time, newest first. Matches with no kickoff
+          // fall to the bottom (treated as -Infinity).
+          const tsOf = (m: ScrapedMatchSummary): number => {
+            if (!m.startTimeUtc) return Number.NEGATIVE_INFINITY;
+            const t = new Date(m.startTimeUtc).getTime();
+            return Number.isNaN(t) ? Number.NEGATIVE_INFINITY : t;
+          };
           const seasonMatches = [...(seasons.get(season) as ScrapedMatchSummary[])].sort(
-            (left, right) => new Date(right.lastFetchedAt).getTime() - new Date(left.lastFetchedAt).getTime()
+            (left, right) => tsOf(right) - tsOf(left)
           );
           leagueCount += seasonMatches.length;
           seasonNodes.push({
@@ -266,6 +273,77 @@ function buildTree(matches: ScrapedMatchSummary[], unknownSeason: string): Sport
   return sports;
 }
 
+// Lazy-mount disclosure: children only render once the user opens the row,
+// and stay mounted thereafter. With ~52K matches the deeply nested tree was
+// generating a giant DOM upfront — even collapsed `<details>` materialised
+// every descendant. Tracking open state in React (instead of relying on the
+// browser's native `<details>` open) lets us skip rendering subtrees entirely
+// until they're actually needed.
+function Disclosure({
+  summary,
+  defaultOpen = false,
+  className,
+  children,
+}: {
+  summary: React.ReactNode;
+  defaultOpen?: boolean;
+  className?: string;
+  children: () => React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  const [hasOpened, setHasOpened] = useState(defaultOpen);
+  const onToggle = useCallback((event: React.SyntheticEvent<HTMLDetailsElement>) => {
+    const next = event.currentTarget.open;
+    setOpen(next);
+    if (next) setHasOpened(true);
+  }, []);
+  return (
+    <details open={open} onToggle={onToggle} className={className}>
+      <summary className="cursor-pointer list-none">{summary}</summary>
+      {hasOpened ? children() : null}
+    </details>
+  );
+}
+
+const MatchRow = memo(function MatchRow({
+  match,
+  onOpenMatch,
+  locale,
+  unknown,
+}: {
+  match: ScrapedMatchSummary;
+  onOpenMatch: (eventId: string) => void;
+  locale: string;
+  unknown: string;
+}) {
+  const { t } = useLocale();
+  const teams =
+    match.homeTeam && match.awayTeam
+      ? `${match.homeTeam} vs ${match.awayTeam}`
+      : match.eventName ?? unknown;
+  const kickoff = formatUtc(match.startTimeUtc, locale, unknown);
+  const status = match.status ? toTitleCase(match.status) : unknown;
+  return (
+    <li className="rounded-xl border border-[color:var(--color-brand-outline)] bg-[color:var(--color-brand-surface)] p-3">
+      <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+        <div className="space-y-1">
+          <p className="text-sm font-semibold text-[color:var(--color-text-high)]">{teams}</p>
+          <p className="text-xs text-[color:var(--color-text-muted)]">
+            {kickoff} | {status} | {match.eventId}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => onOpenMatch(match.eventId)}
+          className="rounded-xl bg-[color:var(--color-brand-primary)] px-3 py-2 text-sm font-semibold text-[color:var(--color-text-inverse)] transition hover:bg-[color:var(--color-brand-accent)]"
+        >
+          {t("saved.table.open")}
+        </button>
+      </div>
+    </li>
+  );
+});
+
 export function ScrapedMatchesMenu({ matches, onOpenMatch }: ScrapedMatchesMenuProps) {
   const { t, locale } = useLocale();
   const unknown = t("stats.meta.unknown");
@@ -278,101 +356,89 @@ export function ScrapedMatchesMenu({ matches, onOpenMatch }: ScrapedMatchesMenuP
       <h3 className="text-lg font-semibold text-[color:var(--color-text-high)]">{t("saved.menu.title")}</h3>
       <div className="space-y-3 rounded-3xl border border-[color:var(--color-brand-outline)] bg-[color:var(--color-brand-surface-alt)] p-4 shadow-sm">
         {tree.map((sportNode) => (
-          <details key={sportNode.sport} open className="rounded-2xl border border-[color:var(--color-brand-outline)] bg-[color:var(--color-brand-surface)]">
-            <summary className="cursor-pointer list-none px-4 py-3">
-              <div className="flex items-center justify-between gap-3">
+          <Disclosure
+            key={sportNode.sport}
+            className="rounded-2xl border border-[color:var(--color-brand-outline)] bg-[color:var(--color-brand-surface)]"
+            summary={
+              <div className="flex items-center justify-between gap-3 px-4 py-3">
                 <span className="text-sm font-semibold text-[color:var(--color-text-high)]">{sportNode.sport}</span>
                 <span className="text-xs text-[color:var(--color-text-muted)]">
                   {t("saved.menu.matchesCount", { count: sportNode.totalMatches })}
                 </span>
               </div>
-            </summary>
-
-            <div className="space-y-2 px-3 pb-3">
-              {sportNode.countries.map((countryNode) => (
-                <details key={`${sportNode.sport}:${countryNode.country}`} className="rounded-xl border border-[color:var(--color-brand-outline)] bg-[color:var(--color-brand-surface-alt)]">
-                  <summary className="cursor-pointer list-none px-3 py-2">
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="text-sm font-medium text-[color:var(--color-text-high)]">{countryNode.country}</span>
-                      <span className="text-xs text-[color:var(--color-text-muted)]">
-                        {t("saved.menu.matchesCount", { count: countryNode.totalMatches })}
-                      </span>
-                    </div>
-                  </summary>
-
-                  <div className="space-y-2 px-2 pb-2">
-                    {countryNode.leagues.map((leagueNode) => (
-                      <details
-                        key={`${sportNode.sport}:${countryNode.country}:${leagueNode.league}`}
-                        className="rounded-xl border border-[color:var(--color-brand-outline)] bg-[color:var(--color-brand-surface)]"
-                      >
-                        <summary className="cursor-pointer list-none px-3 py-2">
-                          <div className="flex items-center justify-between gap-3">
-                            <span className="text-sm font-medium text-[color:var(--color-text-high)]">{leagueNode.league}</span>
-                            <span className="text-xs text-[color:var(--color-text-muted)]">
-                              {t("saved.menu.seasonsCount", { count: leagueNode.seasons.length })}
-                            </span>
-                          </div>
-                        </summary>
-
-                        <div className="space-y-2 px-2 pb-2">
-                          {leagueNode.seasons.map((seasonNode) => (
-                            <details
-                              key={`${sportNode.sport}:${countryNode.country}:${leagueNode.league}:${seasonNode.season}`}
-                              className="rounded-xl border border-[color:var(--color-brand-outline)] bg-[color:var(--color-brand-surface-alt)]"
-                            >
-                              <summary className="cursor-pointer list-none px-3 py-2">
-                                <div className="flex items-center justify-between gap-3">
-                                  <span className="text-sm font-medium text-[color:var(--color-text-high)]">{seasonNode.season}</span>
-                                  <span className="text-xs text-[color:var(--color-text-muted)]">
-                                    {t("saved.menu.matchesCount", { count: seasonNode.matches.length })}
-                                  </span>
-                                </div>
-                              </summary>
-
-                              <ul className="space-y-2 px-2 pb-2">
-                                {seasonNode.matches.map((match) => {
-                                  const teams =
-                                    match.homeTeam && match.awayTeam
-                                      ? `${match.homeTeam} vs ${match.awayTeam}`
-                                      : match.eventName ?? unknown;
-                                  const kickoff = formatUtc(match.startTimeUtc, locale, unknown);
-                                  const status = match.status ? toTitleCase(match.status) : unknown;
-
-                                  return (
-                                    <li
-                                      key={match.eventId}
-                                      className="rounded-xl border border-[color:var(--color-brand-outline)] bg-[color:var(--color-brand-surface)] p-3"
-                                    >
-                                      <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                                        <div className="space-y-1">
-                                          <p className="text-sm font-semibold text-[color:var(--color-text-high)]">{teams}</p>
-                                          <p className="text-xs text-[color:var(--color-text-muted)]">
-                                            {kickoff} | {status} | {match.eventId}
-                                          </p>
-                                        </div>
-                                        <button
-                                          type="button"
-                                          onClick={() => onOpenMatch(match.eventId)}
-                                          className="rounded-xl bg-[color:var(--color-brand-primary)] px-3 py-2 text-sm font-semibold text-[color:var(--color-text-inverse)] transition hover:bg-[color:var(--color-brand-accent)]"
-                                        >
-                                          {t("saved.table.open")}
-                                        </button>
+            }
+          >
+            {() => (
+              <div className="space-y-2 px-3 pb-3">
+                {sportNode.countries.map((countryNode) => (
+                  <Disclosure
+                    key={`${sportNode.sport}:${countryNode.country}`}
+                    className="rounded-xl border border-[color:var(--color-brand-outline)] bg-[color:var(--color-brand-surface-alt)]"
+                    summary={
+                      <div className="flex items-center justify-between gap-3 px-3 py-2">
+                        <span className="text-sm font-medium text-[color:var(--color-text-high)]">{countryNode.country}</span>
+                        <span className="text-xs text-[color:var(--color-text-muted)]">
+                          {t("saved.menu.matchesCount", { count: countryNode.totalMatches })}
+                        </span>
+                      </div>
+                    }
+                  >
+                    {() => (
+                      <div className="space-y-2 px-2 pb-2">
+                        {countryNode.leagues.map((leagueNode) => (
+                          <Disclosure
+                            key={`${sportNode.sport}:${countryNode.country}:${leagueNode.league}`}
+                            className="rounded-xl border border-[color:var(--color-brand-outline)] bg-[color:var(--color-brand-surface)]"
+                            summary={
+                              <div className="flex items-center justify-between gap-3 px-3 py-2">
+                                <span className="text-sm font-medium text-[color:var(--color-text-high)]">{leagueNode.league}</span>
+                                <span className="text-xs text-[color:var(--color-text-muted)]">
+                                  {t("saved.menu.seasonsCount", { count: leagueNode.seasons.length })}
+                                </span>
+                              </div>
+                            }
+                          >
+                            {() => (
+                              <div className="space-y-2 px-2 pb-2">
+                                {leagueNode.seasons.map((seasonNode) => (
+                                  <Disclosure
+                                    key={`${sportNode.sport}:${countryNode.country}:${leagueNode.league}:${seasonNode.season}`}
+                                    className="rounded-xl border border-[color:var(--color-brand-outline)] bg-[color:var(--color-brand-surface-alt)]"
+                                    summary={
+                                      <div className="flex items-center justify-between gap-3 px-3 py-2">
+                                        <span className="text-sm font-medium text-[color:var(--color-text-high)]">{seasonNode.season}</span>
+                                        <span className="text-xs text-[color:var(--color-text-muted)]">
+                                          {t("saved.menu.matchesCount", { count: seasonNode.matches.length })}
+                                        </span>
                                       </div>
-                                    </li>
-                                  );
-                                })}
-                              </ul>
-                            </details>
-                          ))}
-                        </div>
-                      </details>
-                    ))}
-                  </div>
-                </details>
-              ))}
-            </div>
-          </details>
+                                    }
+                                  >
+                                    {() => (
+                                      <ul className="space-y-2 px-2 pb-2">
+                                        {seasonNode.matches.map((match) => (
+                                          <MatchRow
+                                            key={match.eventId}
+                                            match={match}
+                                            onOpenMatch={onOpenMatch}
+                                            locale={locale}
+                                            unknown={unknown}
+                                          />
+                                        ))}
+                                      </ul>
+                                    )}
+                                  </Disclosure>
+                                ))}
+                              </div>
+                            )}
+                          </Disclosure>
+                        ))}
+                      </div>
+                    )}
+                  </Disclosure>
+                ))}
+              </div>
+            )}
+          </Disclosure>
         ))}
       </div>
     </div>

@@ -1,3 +1,9 @@
+# macOS
+.DS_Store
+
+# Local Claude Code settings
+.claude/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -141,6 +147,15 @@ dmypy.json
 
 # Cython debug symbols
 cython_debug/
+
+# Ruff
+.ruff_cache/
+
+# uv lockfile (DO want to commit it)
+!uv.lock
+
+# Snapshot blob store (gigantic, content-addressed)
+data/blobs/
 
 .python_packages
 # Node / Next.js artefacts

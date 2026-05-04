@@ -1,213 +1,103 @@
 # FastAPI FlashScore
 
-This repository exposes a FastAPI service that proxies FlashScore odds data and now includes a modern web dashboard for exploring markets in real time.
+A FlashScore odds and match-stats scraper, deployed as a Docker Compose stack:
 
-## Backend (FastAPI)
+- **FastAPI** backend with rate-limited / circuit-breaker-protected upstream clients.
+- **Arq + Redis** worker for bulk competition+season scrape jobs.
+- **Postgres** for snapshot rows + scrape job state.
+- **Filesystem blob store** for raw upstream JSON payloads (gzipped, content-addressed).
+- **Next.js 14** dashboard for browsing scraped data.
+- **Caddy** reverse proxy in front of both apps.
 
-1. **Create a virtual environment**
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows use `venv\\Scripts\\activate`
-   ```
-2. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
-3. **Run the API locally**
-   ```bash
-   uvicorn src:app --reload
-   ```
-
-   The API will be available at `http://localhost:8000`.
-
-## Persistent Snapshot Database
-
-The backend now stores every successful fetch of:
-
-- `/odds/{event_id}` into `odds_snapshots`
-- `/match-stats/{event_id}` into `match_stats_snapshots`
-- Match-stats snapshots include `is_terminal` flag (`1` for completed/final state, `0` otherwise).
-
-When `is_terminal=1` exists for an event, backend scraping is short-circuited:
-
-- `/match-stats/{event_id}` is served from the newest terminal snapshot in DB.
-- `/odds/{event_id}` is served from DB (latest saved odds) instead of scraping upstream again.
-
-Schema management is Prisma-based (in `frontend/prisma/schema.prisma`), while FastAPI writes snapshots directly to the same SQLite database.
-
-1. Configure Prisma DB URL:
-   ```bash
-   cd frontend
-   cp .env.example .env
-   ```
-2. Apply schema/migrations:
-   ```bash
-   npm run prisma:deploy
-   npm run prisma:generate
-   ```
-
-Prisma 7 note: datasource URLs are configured in `frontend/prisma.config.ts` (not inside `schema.prisma`).
-
-Storage path is configured in FastAPI via `APP_STORAGE_DB_PATH` (default: `data/flashscore_snapshots.sqlite3`), and should point to the same SQLite file as Prisma `DATABASE_URL`.
-
-Useful inspection endpoints:
-
-- `GET /storage/odds/{event_id}?limit=25`
-- `GET /storage/match-stats/{event_id}?limit=25`
-
-## Frontend (Next.js)
-
-The `frontend/` workspace contains a responsive, accessible dashboard powered by Next.js, React Query, and Playwright end-to-end tests.
-
-1. **Install Node.js dependencies**
-   ```bash
-   cd frontend
-   npm install
-   ```
-2. **Start the development server**
-   ```bash
-   npm run dev
-   ```
-   The web application will be available at `http://localhost:3000` and expects the FastAPI server to be running on `http://localhost:8000` by default.
-3. **Run end-to-end tests**
-   ```bash
-   npm run test:e2e
-   ```
-
-   The tests use Playwright and automatically stub the FastAPI odds endpoint, so they can run without a live backend.
-
-## Design & Accessibility
-
-- Shared design tokens ensure consistent typography, colour, and spacing aligned with the target brand palette.
-- The UI is responsive across mobile and desktop breakpoints, with WCAG AA-focused focus states, contrast, and keyboard navigation.
-- Localization currently supports English (`en`) and Czech (`cs`) with a runtime language switcher.
-# FastAPI FlashScore API
-
-This project exposes FlashScore odds data through a FastAPI application that can run as an Azure Functions HTTP-triggered endpoint or as a standalone ASGI service. The repository contains everything you need to develop locally, configure environment variables, and deploy to Azure.
-
-## Setup
-
-1. **Create a virtual environment:**
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows use `venv\Scripts\activate`
-   ```
-
-2. **Install dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-## Running the application
-
-### Azure Functions Core Tools (recommended)
-The project is configured as an Azure Functions app via `function_app.py`. When developing or debugging, use Azure Functions Core Tools to emulate the Functions runtime locally:
+## Quick start
 
 ```bash
-func start
+cp .env.example .env
+# Fill in APP_STATS_FEED_SIGN with a current x-fsign value from FlashScore.
+docker compose up -d
 ```
 
-The local Functions host will proxy requests to the FastAPI application defined in `src.py`. By default the HTTP trigger listens on `http://localhost:7071`.
+Then:
 
-### Direct FastAPI server (for quick iteration)
-For lightweight testing of the FastAPI app without the Functions host, run `uvicorn` directly against the ASGI application instance:
+- API: <http://localhost/api/health>, <http://localhost/api/bulk-scrape/jobs>
+- Dashboard: <http://localhost/>
+
+For dev with code hot-reload:
 
 ```bash
-uvicorn src:app --reload
+cp docker-compose.override.yml.example docker-compose.override.yml
+docker compose up
 ```
 
-This command serves the API on `http://localhost:8000` with hot-reload enabled.
-
-## Environment configuration
-
-The odds integration depends on several environment variables so that requests can be tuned without editing code. Configure the following keys before running locally or deploying to Azure:
-
-| Variable | Description | Example |
-| --- | --- | --- |
-| `ODDS_API_BASE_URL` | Base URL for the FlashScore odds endpoint. | `https://global.ds.lsapp.eu/odds/pq_graphql` |
-| `ODDS_API_HEADERS` | JSON string containing additional HTTP headers forwarded to the upstream API. | `{"Accept": "*/*", "User-Agent": "Mozilla/5.0"}` |
-| `ODDS_API_TIMEOUT_SECONDS` | Timeout (seconds) for outbound HTTP requests. | `10` |
-| `ODDS_API_PROJECT_ID` | Optional project identifier appended to requests. | `1` |
-| `ODDS_API_GEO_CODE` | Optional GEO/IP code values (e.g., `CZ`, `CZ10`). | `CZ` |
-
-### Local development
-
-1. Create a `local.settings.json` file (excluded from source control) with the `Values` section populated:
-   ```json
-   {
-     "IsEncrypted": false,
-     "Values": {
-       "AzureWebJobsStorage": "UseDevelopmentStorage=true",
-       "FUNCTIONS_WORKER_RUNTIME": "python",
-       "ODDS_API_BASE_URL": "https://global.ds.lsapp.eu/odds/pq_graphql",
-       "ODDS_API_HEADERS": "{\"Accept\": \"*/*\", \"User-Agent\": \"Mozilla/5.0\"}",
-       "ODDS_API_TIMEOUT_SECONDS": "10"
-     }
-   }
-   ```
-2. When running with `uvicorn`, you can alternatively export variables in your shell (`export ODDS_API_BASE_URL=...`) or store them in a `.env` file and load via a tool such as [`python-dotenv`](https://pypi.org/project/python-dotenv/).
-
-### Azure deployment
-
-In the Azure portal or via the Azure CLI, add each variable as an **Application Setting** on your Function App. Azure Functions automatically maps application settings to environment variables at runtime:
+## Local Python development (against compose-only Postgres + Redis)
 
 ```bash
-az functionapp config appsettings set \
-  --name <function-app-name> \
-  --resource-group <resource-group> \
-  --settings ODDS_API_BASE_URL=https://global.ds.lsapp.eu/odds/pq_graphql \
-             ODDS_API_TIMEOUT_SECONDS=10
+docker compose up -d postgres redis
+uv sync
+# Edit .env: swap `postgres` → `localhost` and `redis` → `localhost` in the URLs
+uv run uvicorn app.main:app --reload --port 8000
+uv run arq app.workers.arq_settings.WorkerSettings   # second terminal
 ```
 
-For complex header payloads, consider storing `ODDS_API_HEADERS` as a base64-encoded JSON string or move sensitive values to Azure Key Vault and reference them with `@Microsoft.KeyVault(...)` syntax in application settings.
+## Frontend
 
-## Deployment workflows
-
-### Publish from Azure Functions Core Tools
-
-1. Sign in to Azure: `az login`.
-2. Ensure you have a Function App provisioned (`az functionapp create ...`).
-3. Deploy the code from your local workspace:
-   ```bash
-   func azure functionapp publish <function-app-name>
-   ```
-4. Monitor deployment output for packaging or dependency warnings.
-
-### Continuous deployment (CI/CD)
-
-For automated deployments, configure a pipeline (e.g., GitHub Actions, Azure Pipelines) that:
-
-1. Installs Python and Azure Functions Core Tools.
-2. Restores dependencies (`pip install -r requirements.txt`).
-3. Runs tests and static analysis.
-4. Packages the Function app and deploys using `func azure functionapp publish` or the `azure/functions-action` GitHub Action.
-
-A minimal GitHub Actions workflow might include:
-
-```yaml
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-      - name: Publish to Azure Functions
-        uses: Azure/functions-action@v1
-        with:
-          app-name: ${{ secrets.AZURE_FUNCTIONAPP_NAME }}
-          publish-profile: ${{ secrets.AZURE_FUNCTIONAPP_PUBLISH_PROFILE }}
+```bash
+cd frontend
+npm install
+npm run dev                # :3000
+npm run test:e2e           # Playwright, no backend needed
+npm run prisma:migrate     # create a new migration after schema edits
 ```
 
-## Troubleshooting Azure runtime issues
+Prisma schema lives at `frontend/prisma/schema.prisma`; SQLAlchemy mirrors it in `app/db/models.py`. Both must agree.
 
-- **`ModuleNotFoundError` during startup**: Ensure all dependencies are listed in `requirements.txt` and were installed during deployment. For Linux Consumption plans, avoid platform-specific wheels.
-- **Environment variables missing at runtime**: Verify application settings in the Azure portal. Remember to restart the Function App after updating settings.
-- **Timeouts or `HTTP 500` from upstream odds API**: Increase `ODDS_API_TIMEOUT_SECONDS`, double-check base URL and headers, and ensure the Function App has outbound network access (consider VNET integration or firewall rules if required).
-- **Cold start latency**: Consumption plans experience cold starts. Consider enabling the Premium plan or a warmup trigger if low-latency responses are critical.
-- **`[host] Error indexing method` logs**: Usually indicates a mismatch between the Functions runtime version and your Python version. Confirm `FUNCTIONS_WORKER_RUNTIME=python` and that you are targeting a supported Python version (3.11 or earlier depending on your runtime stack).
+## Scraper credentials
 
-With these steps and references, you can confidently develop, configure, and operate the FastAPI FlashScore API both locally and in Azure.
+The two required env vars (no defaults; app refuses to start without them):
+
+| Variable | What it is | Where to get it |
+|---|---|---|
+| `APP_STATS_FEED_SIGN` | `x-fsign` header value FlashScore expects on the stats feed. Rotates upstream. | Inspect a live browser session against livesport.cz / flashscore.com. |
+| `APP_DEFAULT_HEADERS` | JSON object of HTTP headers forwarded to upstream. UA, Accept-Language, Origin, Referer. | Mirror a real browser's request headers. |
+
+## Tests
+
+```bash
+uv run pytest          # 48 passing + 1 skipped integration
+uv run mypy app
+uv run ruff check app tests scripts
+```
+
+The mapper tests (`tests/unit/test_*_mapper.py`) are golden-file regressions over 40 captured production payloads — they lock down the parsing logic against accidental changes during refactors.
+
+## Architecture overview
+
+```
+Browser
+   │
+   ▼ http://localhost/
+┌───────┐     /api/*      ┌─────────┐
+│ Caddy │────────────────▶│ FastAPI │  app.main:app
+│       │                 └────┬────┘
+│       │     /                │
+│       │     ┌──────────┐     │   ┌──────────┐
+│       │────▶│ Next.js  │     │   │ Postgres │
+└───────┘     └─────┬────┘     │   │ snapshots│
+                    │          │   │ + jobs   │
+                    │ Prisma   │   └──────────┘
+                    └──────────┴──┐    ▲
+                                  │    │
+                                  │    │ enqueue
+                                  ▼    │
+                              ┌──────────┐
+                              │   Arq    │
+                              │  worker  │
+                              └────┬─────┘
+                                   │
+                                   ▼
+                       data/blobs/{ns}/{event}/{ts}.json.gz
+```
+
+## Plan
+
+The full implementation plan that produced this stack lives at [`docs/superpowers/plans/2026-05-03-vps-migration-and-hardening.md`](docs/superpowers/plans/2026-05-03-vps-migration-and-hardening.md).

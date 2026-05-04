@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Dict, Type
+from typing import Any, Dict, Type
 from urllib.parse import urlencode
 
 from pydantic import Field, HttpUrl
@@ -32,35 +32,24 @@ class _SettingsFields:
         description="Geo IP subdivision code parameter for the odds endpoint.",
     )
     default_headers: Dict[str, str] = Field(
-        default_factory=lambda: {
-            "Accept": "*/*",
-            "Sec-Fetch-Site": "cross-site",
-            "Origin": "https://www.livesport.cz",
-            "Sec-Fetch-Dest": "empty",
-            "Accept-Language": "cs-CZ,cs;q=0.9",
-            "Sec-Fetch-Mode": "cors",
-            "User-Agent": (
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                "AppleWebKit/605.1.15 (KHTML, like Gecko) "
-                "Version/18.3.1 Safari/605.1.15"
-            ),
-            "Accept-Encoding": "gzip, deflate, br",
-            "Referer": "https://www.livesport.cz/",
-            "Priority": "u=3, i",
-        },
-        description="Default headers sent to the odds endpoint.",
+        ...,
+        description="Default headers sent to the odds endpoint. Must be provided via APP_DEFAULT_HEADERS.",
     )
     stats_feed_base: HttpUrl = Field(
         "https://2.flashscore.ninja/2/x/feed",
         description="Base URL for Flashscore match statistics feed.",
     )
     stats_feed_sign: str = Field(
-        "SW9D1eZo",
-        description="Value for x-fsign header required by Flashscore feed.",
+        ...,
+        description="x-fsign header value (rotates upstream — must come from env).",
     )
     storage_db_path: str = Field(
         "data/flashscore_snapshots.sqlite3",
         description="Filesystem path for persistent snapshot storage.",
+    )
+    database_url: str = Field(
+        "sqlite+aiosqlite:///./data/flashscore_snapshots.sqlite3",
+        description="SQLAlchemy async DB URL. Postgres in prod, SQLite for local dev only.",
     )
 
     def build_odds_url(self, event_id: str) -> str:
@@ -88,7 +77,7 @@ class _SettingsFields:
         return f"{stats_feed_base}/df_st_1_{event_id}"
 
     @staticmethod
-    def _resolve_value(value):
+    def _resolve_value(value: Any) -> Any:
         """Resolve values when Pydantic FieldInfo descriptors leak into runtime."""
 
         default = getattr(value, "default", None)
@@ -108,7 +97,13 @@ def _get_base_settings_class() -> Type[_SettingsFields]:
         SettingsBaseCls = None  # type: ignore[assignment]
     else:
         class SettingsBase(_SettingsFields, SettingsBaseCls):  # type: ignore[misc]
-            model_config = SettingsConfigDict(env_file=".env", env_prefix="APP_")
+            # `extra="ignore"` lets the shared root .env carry env vars consumed
+            # by docker-compose / Prisma / other services (POSTGRES_USER,
+            # REDIS_URL, OTEL_*, LOG_LEVEL, …) without each one needing to
+            # appear as an APP_-prefixed Setting field.
+            model_config = SettingsConfigDict(
+                env_file=".env", env_prefix="APP_", extra="ignore"
+            )
 
         return SettingsBase
 

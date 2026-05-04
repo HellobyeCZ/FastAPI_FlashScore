@@ -3,209 +3,108 @@ import { prisma } from "@/server/prisma";
 import type { ScrapedMatchSummary } from "@/types/scraped-matches";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-type JsonObject = Record<string, unknown>;
+// The competition-browser tree on the dashboard groups every event by sport
+// → country → competition → season, so it needs the full set. With 52K rows
+// the JSON payload is ~12 MB — fine for a one-shot dashboard load and faster
+// than paginating client-side. Cap at 100K so a runaway dataset can't OOM.
+const MAX_LIMIT = 100_000;
+const DEFAULT_LIMIT = MAX_LIMIT;
 
-function isObject(value: unknown): value is JsonObject {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+function parseLimit(value: string | null): number {
+  if (!value) return DEFAULT_LIMIT;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_LIMIT;
+  return Math.min(parsed, MAX_LIMIT);
 }
 
-function asString(value: unknown): string | undefined {
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    return trimmed.length > 0 ? trimmed : undefined;
-  }
-  return undefined;
+function parseOffset(value: string | null): number {
+  if (!value) return 0;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 0) return 0;
+  return parsed;
 }
 
-function parseObjectPayload(payload: string): JsonObject | undefined {
+function buildFallbackName(row: {
+  eventName: string | null;
+  homeTeam: string | null;
+  awayTeam: string | null;
+  eventId: string;
+}): string {
+  if (row.eventName) return row.eventName;
+  if (row.homeTeam && row.awayTeam) return `${row.homeTeam} vs ${row.awayTeam}`;
+  return `Event ${row.eventId}`;
+}
+
+function pickLastFetched(
+  oddsAt: Date | null,
+  statsAt: Date | null,
+  fallback: Date,
+): string {
+  const candidates = [oddsAt, statsAt, fallback].filter(
+    (d): d is Date => d instanceof Date,
+  );
+  const newest = candidates.reduce(
+    (acc, d) => (d.getTime() > acc.getTime() ? d : acc),
+    candidates[0] ?? new Date(0),
+  );
+  return newest.toISOString();
+}
+
+export async function GET(request: Request) {
   try {
-    const parsed = JSON.parse(payload) as unknown;
-    return isObject(parsed) ? parsed : undefined;
-  } catch {
-    return undefined;
-  }
-}
+    const url = new URL(request.url);
+    const limit = parseLimit(url.searchParams.get("limit"));
+    const offset = parseOffset(url.searchParams.get("offset"));
 
-function extractOddsEventName(payload: string): string | undefined {
-  const parsed = parseObjectPayload(payload);
-  if (!parsed) {
-    return undefined;
-  }
+    // MatchEventSummary is a pre-aggregated index of all events with their
+    // metadata, snapshot counts, and latest fetch timestamps. Reading from it
+    // is O(limit) regardless of how many snapshots exist (52K events at the
+    // time of writing), unlike the previous implementation that fetched
+    // every event's full payload and grouped in memory (heap-OOM risk).
 
-  const event = isObject(parsed.event) ? parsed.event : undefined;
-  return asString(event?.event_name) ?? asString(event?.name);
-}
-
-function extractMatchMetadata(payload: string): Partial<ScrapedMatchSummary> {
-  const parsed = parseObjectPayload(payload);
-  if (!parsed) {
-    return {};
-  }
-
-  const event = isObject(parsed.event) ? parsed.event : undefined;
-  if (!event) {
-    return {};
-  }
-
-  return {
-    homeTeam: asString(event.home_team),
-    awayTeam: asString(event.away_team),
-    sport: asString(event.sport),
-    country: asString(event.country),
-    competition: asString(event.competition),
-    competitionStage: asString(event.competition_stage),
-    competitionPath: asString(event.competition_path),
-    startTimeUtc: asString(event.start_time_utc),
-    status: asString(event.status),
-    statusDetail: asString(event.status_detail),
-    outcome: asString(event.outcome)
-  };
-}
-
-function toIso(value: Date | null): string | undefined {
-  return value ? value.toISOString() : undefined;
-}
-
-function updateLastFetched(item: ScrapedMatchSummary, candidate: string | undefined): void {
-  if (!candidate) {
-    return;
-  }
-
-  if (!item.lastFetchedAt || new Date(candidate).getTime() > new Date(item.lastFetchedAt).getTime()) {
-    item.lastFetchedAt = candidate;
-  }
-}
-
-function buildFallbackName(item: ScrapedMatchSummary): string {
-  if (item.homeTeam && item.awayTeam) {
-    return `${item.homeTeam} vs ${item.awayTeam}`;
-  }
-  return `Event ${item.eventId}`;
-}
-
-function byLastFetchedDesc(a: ScrapedMatchSummary, b: ScrapedMatchSummary): number {
-  return new Date(b.lastFetchedAt).getTime() - new Date(a.lastFetchedAt).getTime();
-}
-
-export async function GET() {
-  try {
-    const [oddsCounts, statsCounts, latestOddsRows, latestStatsRows] = await Promise.all([
-      prisma.oddsSnapshot.groupBy({
-        by: ["eventId"],
-        _count: { _all: true },
-        _max: { fetchedAt: true }
+    const [total, rows] = await Promise.all([
+      prisma.matchEventSummary.count(),
+      prisma.matchEventSummary.findMany({
+        orderBy: [{ updatedAt: "desc" }, { eventId: "asc" }],
+        take: limit,
+        skip: offset,
       }),
-      prisma.matchStatsSnapshot.groupBy({
-        by: ["eventId"],
-        _count: { _all: true },
-        _max: { fetchedAt: true }
-      }),
-      prisma.oddsSnapshot.findMany({
-        distinct: ["eventId"],
-        orderBy: [{ eventId: "asc" }, { fetchedAt: "desc" }, { id: "desc" }],
-        select: {
-          eventId: true,
-          fetchedAt: true,
-          oddsPayloadJson: true
-        }
-      }),
-      prisma.matchStatsSnapshot.findMany({
-        distinct: ["eventId"],
-        orderBy: [{ eventId: "asc" }, { fetchedAt: "desc" }, { id: "desc" }],
-        select: {
-          eventId: true,
-          fetchedAt: true,
-          matchStatsPayloadJson: true
-        }
-      })
     ]);
 
-    const byEvent = new Map<string, ScrapedMatchSummary>();
+    const matches: ScrapedMatchSummary[] = rows.map((row) => ({
+      eventId: row.eventId,
+      eventName: buildFallbackName(row),
+      homeTeam: row.homeTeam ?? undefined,
+      awayTeam: row.awayTeam ?? undefined,
+      sport: row.sport ?? undefined,
+      country: row.country ?? undefined,
+      competition: row.competition ?? undefined,
+      competitionStage: row.competitionStage ?? undefined,
+      competitionPath: row.competitionPath ?? undefined,
+      startTimeUtc: row.startTimeUtc?.toISOString(),
+      status: row.status ?? undefined,
+      statusDetail: row.statusDetail ?? undefined,
+      outcome: row.outcome ?? undefined,
+      oddsSnapshotCount: row.oddsSnapshotCount,
+      statsSnapshotCount: row.statsSnapshotCount,
+      latestOddsFetchedAt: row.latestOddsFetchedAt?.toISOString(),
+      latestStatsFetchedAt: row.latestStatsFetchedAt?.toISOString(),
+      lastFetchedAt: pickLastFetched(
+        row.latestOddsFetchedAt,
+        row.latestStatsFetchedAt,
+        row.updatedAt,
+      ),
+    }));
 
-    const getOrCreate = (eventId: string): ScrapedMatchSummary => {
-      const existing = byEvent.get(eventId);
-      if (existing) {
-        return existing;
-      }
-
-      const created: ScrapedMatchSummary = {
-        eventId,
-        lastFetchedAt: new Date(0).toISOString(),
-        statsSnapshotCount: 0,
-        oddsSnapshotCount: 0
-      };
-      byEvent.set(eventId, created);
-      return created;
-    };
-
-    for (const row of oddsCounts) {
-      const item = getOrCreate(row.eventId);
-      item.oddsSnapshotCount = row._count._all;
-      item.latestOddsFetchedAt = toIso(row._max.fetchedAt);
-      updateLastFetched(item, item.latestOddsFetchedAt);
-    }
-
-    for (const row of statsCounts) {
-      const item = getOrCreate(row.eventId);
-      item.statsSnapshotCount = row._count._all;
-      item.latestStatsFetchedAt = toIso(row._max.fetchedAt);
-      updateLastFetched(item, item.latestStatsFetchedAt);
-    }
-
-    for (const row of latestOddsRows) {
-      const item = getOrCreate(row.eventId);
-      const eventName = extractOddsEventName(row.oddsPayloadJson);
-      if (eventName && !item.eventName) {
-        item.eventName = eventName;
-      }
-      updateLastFetched(item, row.fetchedAt.toISOString());
-    }
-
-    for (const row of latestStatsRows) {
-      const item = getOrCreate(row.eventId);
-      const metadata = extractMatchMetadata(row.matchStatsPayloadJson);
-      Object.assign(item, {
-        homeTeam: metadata.homeTeam ?? item.homeTeam,
-        awayTeam: metadata.awayTeam ?? item.awayTeam,
-        sport: metadata.sport ?? item.sport,
-        country: metadata.country ?? item.country,
-        competition: metadata.competition ?? item.competition,
-        competitionStage: metadata.competitionStage ?? item.competitionStage,
-        competitionPath: metadata.competitionPath ?? item.competitionPath,
-        startTimeUtc: metadata.startTimeUtc ?? item.startTimeUtc,
-        status: metadata.status ?? item.status,
-        statusDetail: metadata.statusDetail ?? item.statusDetail,
-        outcome: metadata.outcome ?? item.outcome
-      });
-
-      if (!item.eventName && metadata.homeTeam && metadata.awayTeam) {
-        item.eventName = `${metadata.homeTeam} vs ${metadata.awayTeam}`;
-      }
-      updateLastFetched(item, row.fetchedAt.toISOString());
-    }
-
-    const matches = Array.from(byEvent.values())
-      .map((item) => ({
-        ...item,
-        eventName: item.eventName ?? buildFallbackName(item)
-      }))
-      .sort(byLastFetchedDesc);
-
-    return NextResponse.json({
-      total: matches.length,
-      matches
-    });
+    return NextResponse.json({ total, matches, limit, offset });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to load scraped matches.";
+    const message =
+      error instanceof Error ? error.message : "Failed to load scraped matches.";
     return NextResponse.json(
-      {
-        error: {
-          code: "scraped_matches_load_failed",
-          message
-        }
-      },
-      { status: 500 }
+      { error: { code: "scraped_matches_load_failed", message } },
+      { status: 500 },
     );
   }
 }

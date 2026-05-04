@@ -3,31 +3,110 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
 }
 
+// All DateTime fields use @db.Timestamptz(6) to match SQLAlchemy's
+// `DateTime(timezone=True)` columns in app/db/models.py — without it,
+// Prisma generates naive TIMESTAMP and FastAPI loses timezone info on read.
+//
+// Both `*_payload_json` (response cache) and `*_blob_url` (raw upstream)
+// columns coexist on purpose: the JSON response is the cheap read path for
+// the terminal-snapshot short-circuit; the blob holds the original upstream
+// payload for re-mapping if the parser changes. Don't merge them in a
+// post-migration cleanup task — they serve different roles.
+//
+// `updatedAt` columns are NOT marked `@updatedAt`. The Python writer in
+// app/services/snapshot_repo.py sets them explicitly; auto-bumping on the
+// Prisma side would diverge between the two clients. Keep manual.
+
 model OddsSnapshot {
-  id                  Int      @id @default(autoincrement())
-  eventId             String   @map("event_id")
-  fetchedAt           DateTime @map("fetched_at")
-  source              String?
-  correlationId       String?  @map("correlation_id")
-  oddsPayloadJson     String   @map("odds_payload_json")
-  upstreamPayloadJson String   @map("upstream_payload_json")
+  id              BigInt   @id @default(autoincrement())
+  eventId         String   @map("event_id")
+  fetchedAt       DateTime @map("fetched_at") @db.Timestamptz(6)
+  source          String?
+  correlationId   String?  @map("correlation_id")
+  oddsPayloadJson String   @map("odds_payload_json")
+  upstreamBlobUrl String   @map("upstream_blob_url")
 
   @@index([eventId, fetchedAt], map: "idx_odds_snapshots_event_fetched")
   @@map("odds_snapshots")
 }
 
 model MatchStatsSnapshot {
-  id                   Int      @id @default(autoincrement())
-  eventId              String   @map("event_id")
-  fetchedAt            DateTime @map("fetched_at")
-  source               String?
-  correlationId        String?  @map("correlation_id")
-  matchStatsPayloadJson String  @map("match_stats_payload_json")
-  feedPayloadsJson     String   @map("feed_payloads_json")
+  id                    BigInt   @id @default(autoincrement())
+  eventId               String   @map("event_id")
+  fetchedAt             DateTime @map("fetched_at") @db.Timestamptz(6)
+  source                String?
+  correlationId         String?  @map("correlation_id")
+  matchStatsPayloadJson String   @map("match_stats_payload_json")
+  feedPayloadsBlobUrl   String   @map("feed_payloads_blob_url")
+  isTerminal            Boolean  @default(false) @map("is_terminal")
 
   @@index([eventId, fetchedAt], map: "idx_match_stats_snapshots_event_fetched")
   @@map("match_stats_snapshots")
+}
+
+model ScrapeJob {
+  id              BigInt           @id @default(autoincrement())
+  competitionPath String           @map("competition_path")
+  seasons         Int
+  includeStats    Boolean          @default(true) @map("include_stats")
+  includeOdds     Boolean          @default(true) @map("include_odds")
+  maxConcurrency  Int              @default(4) @map("max_concurrency")
+  status          String
+  createdAt       DateTime         @map("created_at") @db.Timestamptz(6)
+  startedAt       DateTime?        @map("started_at") @db.Timestamptz(6)
+  updatedAt       DateTime         @map("updated_at") @db.Timestamptz(6)
+  finishedAt      DateTime?        @map("finished_at") @db.Timestamptz(6)
+  lastError       String?          @map("last_error")
+  totalEvents     Int              @default(0) @map("total_events")
+  events          ScrapeJobEvent[]
+
+  @@index([status, id(sort: Desc)], map: "idx_scrape_jobs_status")
+  @@map("scrape_jobs")
+}
+
+model ScrapeJobEvent {
+  id            BigInt    @id @default(autoincrement())
+  jobId         BigInt    @map("job_id")
+  eventId       String    @map("event_id")
+  seasonPath    String?   @map("season_path")
+  status        String
+  attempts      Int       @default(0)
+  skippedReason String?   @map("skipped_reason")
+  lastError     String?   @map("last_error")
+  createdAt     DateTime  @map("created_at") @db.Timestamptz(6)
+  startedAt     DateTime? @map("started_at") @db.Timestamptz(6)
+  updatedAt     DateTime  @map("updated_at") @db.Timestamptz(6)
+  finishedAt    DateTime? @map("finished_at") @db.Timestamptz(6)
+  job           ScrapeJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([jobId, eventId], map: "uq_scrape_job_events_job_event")
+  @@index([jobId, status, id], map: "idx_scrape_job_events_job_status")
+  @@map("scrape_job_events")
+}
+
+model MatchEventSummary {
+  eventId              String    @id @map("event_id")
+  eventName            String?   @map("event_name")
+  homeTeam             String?   @map("home_team")
+  awayTeam             String?   @map("away_team")
+  sport                String?
+  country              String?
+  competition          String?
+  competitionStage     String?   @map("competition_stage")
+  competitionPath      String?   @map("competition_path")
+  startTimeUtc         DateTime? @map("start_time_utc") @db.Timestamptz(6)
+  status               String?
+  statusDetail         String?   @map("status_detail")
+  outcome              String?
+  oddsSnapshotCount    Int       @default(0) @map("odds_snapshot_count")
+  statsSnapshotCount   Int       @default(0) @map("stats_snapshot_count")
+  latestOddsFetchedAt  DateTime? @map("latest_odds_fetched_at") @db.Timestamptz(6)
+  latestStatsFetchedAt DateTime? @map("latest_stats_fetched_at") @db.Timestamptz(6)
+  updatedAt            DateTime  @map("updated_at") @db.Timestamptz(6)
+
+  @@index([updatedAt(sort: Desc)], map: "idx_match_event_summaries_updated")
+  @@map("match_event_summaries")
 }

@@ -1,0 +1,78 @@
+[project]
+name = "fastapi-flashscore"
+version = "0.2.0"
+description = "FlashScore odds and match-stats scraper."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "httpx>=0.27",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.5",
+    "structlog>=24.4",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "asyncpg>=0.30",
+    "alembic>=1.14",
+    "arq>=0.26",
+    "redis>=5.2",
+    "aiolimiter>=1.2",
+    "purgatory>=3.0",
+    "opentelemetry-sdk>=1.28",
+    "opentelemetry-instrumentation-fastapi>=0.49b0",
+    "opentelemetry-instrumentation-httpx>=0.49b0",
+    "opentelemetry-exporter-otlp-proto-http>=1.28",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3,<10",
+    "pytest-asyncio>=0.24,<2",
+    "pytest-cov>=6.0",
+    "respx>=0.21",
+    "ruff>=0.7",
+    "mypy>=1.13",
+    "types-redis",
+    "deepdiff>=9.0.0",
+    "aiosqlite>=0.20",
+]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "ASYNC", "S", "PT", "RET", "SIM"]
+ignore = ["S101"]  # asserts allowed in tests
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S"]
+# FastAPI's Depends()/Query() pattern requires function calls in argument defaults.
+"app/api/**" = ["B008"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+# Legacy modules deleted/restructured by later tasks (5, 13, 14). Don't gate
+# Task 1 on cleaning them up — they're going away.
+exclude = [
+    "^src\\.py$",
+    "^app/services/storage\\.py$",
+    "^app/services/bulk_scrape\\.py$",
+]
+
+[[tool.mypy.overrides]]
+module = ["arq.*", "purgatory.*", "aiolimiter.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+# Fail collection if a parametrize() expands to zero cases — protects golden-file
+# tests against accidental fixture-directory renames silently passing CI.
+empty_parameter_set_mark = "fail_at_collect"
