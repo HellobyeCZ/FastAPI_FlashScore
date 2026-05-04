@@ -118,15 +118,18 @@ async def run_bulk_scrape_job(
                 include_odds=include_odds,
             )
 
-        finished = datetime.now(UTC)
-        # Status reflects discovery + dispatch only. Per-event success/failure is
-        # tracked on scrape_job_events; the API aggregates counters from there.
+        # Don't auto-finalize: child scrape_event tasks are still queued in
+        # Redis and will run for minutes/hours after this returns. Marking
+        # the job 'completed' here would contradict the counters
+        # (e.g. "Completed 0/181 (pending 181)"). Leave it 'running'; the
+        # scrape_job_events counters tell the real story. A future fan-in
+        # via Arq's on_job_end can flip to completed/completed_with_errors
+        # once all children finish.
+        now = datetime.now(UTC)
         await _update_job(
             job_id,
-            status="completed",
             total_events=len(events),
-            finished_at=finished,
-            updated_at=finished,
+            updated_at=now,
         )
         return {"discovered": len(events)}
     except Exception as exc:

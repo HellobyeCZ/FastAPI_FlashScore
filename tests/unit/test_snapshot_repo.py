@@ -1,7 +1,7 @@
 """Unit tests for SnapshotRepo. Uses tmp_path blob store + in-memory SQLite for speed."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -44,8 +44,15 @@ async def test_save_odds_snapshot_persists_row_and_blob(repo: SnapshotRepo) -> N
 
 
 async def test_terminal_short_circuit(repo: SnapshotRepo) -> None:
+    # Kickoff well in the past so is_terminal_event accepts the snapshot.
+    past_kickoff = datetime.now(timezone.utc) - timedelta(days=1)
     response = MatchStatsResponse(
-        event=MatchStatsEvent(event_id="ABCD1234", status="finished", periods=[]),
+        event=MatchStatsEvent(
+            event_id="ABCD1234",
+            status="finished",
+            start_time_utc=past_kickoff,
+            periods=[],
+        ),
         retrieved_at=datetime.now(timezone.utc),
         source="test",
     )
@@ -58,3 +65,26 @@ async def test_terminal_short_circuit(repo: SnapshotRepo) -> None:
     cached = await repo.get_terminal_match_stats_snapshot(event_id="ABCD1234")
     assert cached is not None
     assert cached.event.event_id == "ABCD1234"
+
+
+async def test_future_fixture_not_terminal(repo: SnapshotRepo) -> None:
+    """Even if upstream says 'finished', a future kickoff stays non-terminal."""
+    future_kickoff = datetime.now(timezone.utc) + timedelta(days=7)
+    response = MatchStatsResponse(
+        event=MatchStatsEvent(
+            event_id="FUTURE99",
+            status="finished",
+            start_time_utc=future_kickoff,
+            periods=[],
+        ),
+        retrieved_at=datetime.now(timezone.utc),
+        source="test",
+    )
+    await repo.save_match_stats_snapshot(
+        event_id="FUTURE99",
+        response=response,
+        feed_payloads={"a": "b"},
+        correlation_id=None,
+    )
+    assert await repo.is_event_terminal(event_id="FUTURE99") is False
+    assert await repo.get_terminal_match_stats_snapshot(event_id="FUTURE99") is None

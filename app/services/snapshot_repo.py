@@ -5,7 +5,7 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -265,26 +265,24 @@ class SnapshotRepo:
         event_id: str,
         fetched_at: datetime,
     ) -> None:
-        """Upsert match_event_summaries from an odds save.
+        """Bump odds counters on an existing summary row.
 
-        Odds payloads carry no team/competition metadata, so we only insert a
-        skeleton row (lets the event appear in the Competition Browser) and
-        bump counters. A subsequent stats save fills in the real metadata.
+        Odds payloads carry no team/competition metadata, so inserting a row
+        from this path would create a ghost entry in the Competition Browser
+        ("UNKNOWN SPORT / UNKNOWN COUNTRY / Unknown league"). We only UPDATE.
+        Stats saves are the sole creators of summary rows; if a stats save
+        hasn't happened yet for this event the odds counter is silently
+        dropped — the next stats save will create the row, and a backfill
+        recomputes counters from snapshots if needed.
         """
-        stmt = pg_insert(MatchEventSummary).values(
-            event_id=event_id,
-            odds_snapshot_count=1,
-            stats_snapshot_count=0,
-            latest_odds_fetched_at=fetched_at,
-            updated_at=fetched_at,
-        )
-        stmt = stmt.on_conflict_do_update(
-            index_elements=["event_id"],
-            set_={
-                "odds_snapshot_count": MatchEventSummary.odds_snapshot_count + 1,
-                "latest_odds_fetched_at": stmt.excluded.latest_odds_fetched_at,
-                "updated_at": stmt.excluded.updated_at,
-            },
+        stmt = (
+            update(MatchEventSummary)
+            .where(MatchEventSummary.event_id == event_id)
+            .values(
+                odds_snapshot_count=MatchEventSummary.odds_snapshot_count + 1,
+                latest_odds_fetched_at=fetched_at,
+                updated_at=fetched_at,
+            )
         )
         await session.execute(stmt)
 
