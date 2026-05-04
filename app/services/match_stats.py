@@ -149,6 +149,19 @@ def _extract_match_metadata(
     record = _parse_record(first_record)
     status_detail = (record.get("DM") or record.get("DT") or "").strip() or None
 
+    start_time_utc = _parse_unix_timestamp(record.get("DC"))
+    status = _normalize_status(record.get("DS"))
+    outcome = _normalize_outcome(record.get("DJ"))
+
+    # Upstream sometimes returns status='finished' for matches whose kickoff
+    # is still in the future (likely a default in their feed). Override based
+    # on time so the UI/Competition Browser don't mislabel scheduled fixtures.
+    if start_time_utc is not None:
+        now = datetime.now(timezone.utc)
+        if start_time_utc > now and status == "finished":
+            status = "scheduled"
+            outcome = None
+
     return {
         "home_team": home_team,
         "away_team": away_team,
@@ -157,10 +170,10 @@ def _extract_match_metadata(
         "competition": competition,
         "competition_stage": competition_stage,
         "competition_path": competition_path,
-        "start_time_utc": _parse_unix_timestamp(record.get("DC")),
-        "status": _normalize_status(record.get("DS")),
+        "start_time_utc": start_time_utc,
+        "status": status,
         "status_detail": status_detail,
-        "outcome": _normalize_outcome(record.get("DJ")),
+        "outcome": outcome,
     }
 
 

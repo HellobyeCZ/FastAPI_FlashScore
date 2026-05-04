@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from arq import create_pool
 from arq.connections import ArqRedis, RedisSettings
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.engine import get_session
@@ -27,7 +27,10 @@ def _iso(value: datetime | None) -> str | None:
     return value.isoformat() if value is not None else None
 
 
-def _job_to_schema(row: ScrapeJob) -> BulkScrapeJob:
+def _job_to_schema(
+    row: ScrapeJob, counters: dict[str, int] | None = None
+) -> BulkScrapeJob:
+    counters = counters or {}
     return BulkScrapeJob(
         id=row.id,
         competition_path=row.competition_path,
@@ -42,7 +45,32 @@ def _job_to_schema(row: ScrapeJob) -> BulkScrapeJob:
         finished_at=_iso(row.finished_at),
         last_error=row.last_error,
         total_events=row.total_events,
+        pending_events=counters.get("pending", 0),
+        running_events=counters.get("running", 0),
+        succeeded_events=counters.get("succeeded", 0),
+        failed_events=counters.get("failed", 0),
+        skipped_events=counters.get("skipped", 0),
     )
+
+
+async def _counters_for_jobs(
+    session: AsyncSession, job_ids: list[int]
+) -> dict[int, dict[str, int]]:
+    if not job_ids:
+        return {}
+    stmt = (
+        select(
+            ScrapeJobEvent.job_id,
+            ScrapeJobEvent.status,
+            func.count().label("n"),
+        )
+        .where(ScrapeJobEvent.job_id.in_(job_ids))
+        .group_by(ScrapeJobEvent.job_id, ScrapeJobEvent.status)
+    )
+    result: dict[int, dict[str, int]] = {jid: {} for jid in job_ids}
+    for job_id, status, n in (await session.execute(stmt)).all():
+        result[job_id][status] = n
+    return result
 
 
 def _event_to_schema(row: ScrapeJobEvent) -> BulkScrapeJobEvent:
@@ -106,6 +134,7 @@ async def create_bulk_scrape_job(
 
     # Return the full job schema so the frontend's normaliser (which expects
     # competition_path, created_at, updated_at, etc.) accepts the response.
+    # Counters are 0 — the worker hasn't started yet.
     return _job_to_schema(job)
 
 
@@ -117,9 +146,10 @@ async def list_bulk_scrape_jobs(
     rows = (
         await session.execute(select(ScrapeJob).order_by(ScrapeJob.id.desc()).limit(limit))
     ).scalars().all()
+    counters = await _counters_for_jobs(session, [r.id for r in rows])
     return BulkScrapeJobListResponse(
         total=len(rows),
-        jobs=[_job_to_schema(r) for r in rows],
+        jobs=[_job_to_schema(r, counters.get(r.id)) for r in rows],
     )
 
 
@@ -144,5 +174,6 @@ async def get_bulk_scrape_job(
             )
         ).scalars().all()
         events = [_event_to_schema(e) for e in rows]
-    base = _job_to_schema(job)
+    counters = await _counters_for_jobs(session, [job_id])
+    base = _job_to_schema(job, counters.get(job_id))
     return BulkScrapeJobDetail(**base.model_dump(), events=events)

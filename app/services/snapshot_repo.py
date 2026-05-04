@@ -2,13 +2,15 @@
 from __future__ import annotations
 
 import json
-from datetime import timezone
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.db.blob_store import BlobStore
+from app.db.models import MatchEventSummary
 from app.db.models import (
     MatchStatsSnapshot as MatchStatsRow,
 )
@@ -17,7 +19,7 @@ from app.db.models import (
 )
 from app.schemas.match_stats import MatchStatsResponse
 from app.schemas.odds import OddsResponse
-from app.services._terminality import TERMINAL_MATCH_STATUSES
+from app.services._terminality import is_terminal_event
 
 
 class SnapshotRepo:
@@ -71,6 +73,9 @@ class SnapshotRepo:
                     upstream_blob_url=blob_url,
                 )
             )
+            await self._upsert_summary_odds(
+                session, event_id=event_id, fetched_at=fetched_at
+            )
             await session.commit()
 
     async def save_match_stats_snapshot(
@@ -88,7 +93,10 @@ class SnapshotRepo:
             key=f"{event_id}/{fetched_at.isoformat()}",
             payload=feed_bytes,
         )
-        is_terminal = (response.event.status or "").lower() in TERMINAL_MATCH_STATUSES
+        is_terminal = is_terminal_event(
+            status=response.event.status,
+            start_time_utc=response.event.start_time_utc,
+        )
         async with self._sessions() as session:
             session.add(
                 MatchStatsRow(
@@ -100,6 +108,9 @@ class SnapshotRepo:
                     feed_payloads_blob_url=blob_url,
                     is_terminal=is_terminal,
                 )
+            )
+            await self._upsert_summary_stats(
+                session, event_id=event_id, response=response, fetched_at=fetched_at
             )
             await session.commit()
 
@@ -182,6 +193,100 @@ class SnapshotRepo:
         if row is None:
             return None
         return OddsResponse.model_validate_json(row.odds_payload_json)
+
+    async def _upsert_summary_stats(
+        self,
+        session: AsyncSession,
+        *,
+        event_id: str,
+        response: MatchStatsResponse,
+        fetched_at: datetime,
+    ) -> None:
+        """Upsert match_event_summaries with metadata + counters from a stats save.
+
+        Stats payloads are richer than odds (team names, kickoff, status, …),
+        so they always overwrite the metadata columns. Counters use SQL
+        increments to stay correct under concurrent saves.
+        """
+        ev = response.event
+        values = {
+            "event_id": event_id,
+            "event_name": (
+                f"{ev.home_team} vs {ev.away_team}"
+                if ev.home_team and ev.away_team
+                else None
+            ),
+            "home_team": ev.home_team,
+            "away_team": ev.away_team,
+            "sport": ev.sport,
+            "country": ev.country,
+            "competition": ev.competition,
+            "competition_stage": ev.competition_stage,
+            "competition_path": ev.competition_path,
+            "start_time_utc": ev.start_time_utc,
+            "status": ev.status,
+            "status_detail": ev.status_detail,
+            "outcome": ev.outcome,
+            "stats_snapshot_count": 1,
+            "odds_snapshot_count": 0,
+            "latest_stats_fetched_at": fetched_at,
+            "latest_odds_fetched_at": None,
+            "updated_at": fetched_at,
+        }
+        stmt = pg_insert(MatchEventSummary).values(**values)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["event_id"],
+            set_={
+                "event_name": stmt.excluded.event_name,
+                "home_team": stmt.excluded.home_team,
+                "away_team": stmt.excluded.away_team,
+                "sport": stmt.excluded.sport,
+                "country": stmt.excluded.country,
+                "competition": stmt.excluded.competition,
+                "competition_stage": stmt.excluded.competition_stage,
+                "competition_path": stmt.excluded.competition_path,
+                "start_time_utc": stmt.excluded.start_time_utc,
+                "status": stmt.excluded.status,
+                "status_detail": stmt.excluded.status_detail,
+                "outcome": stmt.excluded.outcome,
+                "stats_snapshot_count": (
+                    MatchEventSummary.stats_snapshot_count + 1
+                ),
+                "latest_stats_fetched_at": stmt.excluded.latest_stats_fetched_at,
+                "updated_at": stmt.excluded.updated_at,
+            },
+        )
+        await session.execute(stmt)
+
+    async def _upsert_summary_odds(
+        self,
+        session: AsyncSession,
+        *,
+        event_id: str,
+        fetched_at: datetime,
+    ) -> None:
+        """Upsert match_event_summaries from an odds save.
+
+        Odds payloads carry no team/competition metadata, so we only insert a
+        skeleton row (lets the event appear in the Competition Browser) and
+        bump counters. A subsequent stats save fills in the real metadata.
+        """
+        stmt = pg_insert(MatchEventSummary).values(
+            event_id=event_id,
+            odds_snapshot_count=1,
+            stats_snapshot_count=0,
+            latest_odds_fetched_at=fetched_at,
+            updated_at=fetched_at,
+        )
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["event_id"],
+            set_={
+                "odds_snapshot_count": MatchEventSummary.odds_snapshot_count + 1,
+                "latest_odds_fetched_at": stmt.excluded.latest_odds_fetched_at,
+                "updated_at": stmt.excluded.updated_at,
+            },
+        )
+        await session.execute(stmt)
 
     async def is_event_terminal(self, *, event_id: str) -> bool:
         async with self._sessions() as session:
