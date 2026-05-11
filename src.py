@@ -801,6 +801,28 @@ async def picks_upcoming(
     }
 
 
+@app.get("/picks/history")
+async def picks_history(
+    status: Optional[str] = Query(default=None, description="pending|settled|voided"),
+    limit: int = Query(default=200, ge=1, le=5000),
+) -> dict:
+    """Return paper_bets rows for the dashboard. Filterable by status."""
+    from app.ml.paper_trade import fetch_paper_bets
+
+    rows = fetch_paper_bets(status=status, limit=limit)
+    return {"count": len(rows), "rows": rows}
+
+
+@app.get("/picks/summary")
+async def picks_summary() -> dict:
+    """Aggregate paper_bets stats: totals, per-model and per-market
+    breakdowns, settled time-series for the cumulative P&L / CLV
+    dashboard chart."""
+    from app.ml.paper_trade import fetch_summary
+
+    return fetch_summary()
+
+
 # You can include routers here
 # from app.routers import items_router
 # app.include_router(items_router.router, prefix="/items", tags=["items"])
