@@ -43,9 +43,9 @@ def connect(*, read_only: bool = False) -> sqlite3.Connection:
         conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=60.0)
     else:
         conn = sqlite3.connect(path, timeout=60.0)
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA synchronous=NORMAL;")
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL;")
-    conn.execute("PRAGMA synchronous=NORMAL;")
     conn.execute("PRAGMA temp_store=MEMORY;")
     conn.execute("PRAGMA cache_size=-200000;")  # ~200 MB page cache
     return conn
