@@ -41,3 +41,56 @@ def test_empty_group_by_is_valid():
     # No group_by means a single global row.
     req = StatsRequest(group_by=())
     assert req.group_by == ()
+
+
+def test_aggregate_no_filters_no_group_returns_one_row(fixture_db):
+    from app.ml.labels import backfill_labels
+    backfill_labels(sport="football", scope=TEST_SCOPE, rebuild=True)
+    # Record a couple of synthetic picks and settle them.
+    picks = [
+        PickInput(
+            event_id="evt001", model="logistic", market="1X2_FT",
+            selection="home", bet_ts=_now_iso(),
+            price_at_recommendation=1.8, model_prob=0.55,
+            devigged_prob=0.5, edge=0.05, kelly_full=0.10,
+        ),
+    ]
+    record_picks(picks)
+    from app.ml.closing_odds import backfill_closing_odds
+    backfill_closing_odds(sport="football", scope=TEST_SCOPE, rebuild=True)
+    settle_pending_bets()
+
+    rows = aggregate(StatsRequest())
+    assert len(rows) == 1
+    assert rows[0]["n"] == 1
+    assert rows[0]["wins"] in (0, 1)
+
+
+def test_aggregate_group_by_model(fixture_db):
+    from app.ml.labels import backfill_labels
+    backfill_labels(sport="football", scope=TEST_SCOPE, rebuild=True)
+    picks = [
+        PickInput(
+            event_id="evt001", model="logistic", market="1X2_FT",
+            selection="home", bet_ts=_now_iso(),
+            price_at_recommendation=1.8, model_prob=0.55,
+            devigged_prob=0.5, edge=0.05, kelly_full=0.10,
+        ),
+        PickInput(
+            event_id="evt001", model="dixon_coles", market="1X2_FT",
+            selection="home", bet_ts=_now_iso(),
+            price_at_recommendation=1.8, model_prob=0.60,
+            devigged_prob=0.5, edge=0.10, kelly_full=0.20,
+        ),
+    ]
+    record_picks(picks)
+    from app.ml.closing_odds import backfill_closing_odds
+    backfill_closing_odds(sport="football", scope=TEST_SCOPE, rebuild=True)
+    settle_pending_bets()
+
+    rows = aggregate(StatsRequest(group_by=("model",)))
+    by_model = {r["model"]: r for r in rows}
+    assert "logistic" in by_model
+    assert "dixon_coles" in by_model
+    assert by_model["logistic"]["n"] == 1
+    assert by_model["dixon_coles"]["n"] == 1
