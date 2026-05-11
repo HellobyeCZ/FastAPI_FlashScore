@@ -31,3 +31,49 @@ model MatchStatsSnapshot {
   @@index([eventId, fetchedAt], map: "idx_match_stats_snapshots_event_fetched")
   @@map("match_stats_snapshots")
 }
+
+model UpcomingFixture {
+  eventId                String   @id @map("event_id")
+  competitionPath        String   @map("competition_path")
+  sport                  String?
+  country                String?
+  competition            String?
+  homeTeamRaw            String?  @map("home_team_raw")
+  awayTeamRaw            String?  @map("away_team_raw")
+  startTimeUtc           String   @map("start_time_utc")
+  roundLabel             String?  @map("round_label")
+  discoveredAt           String   @map("discovered_at")
+  lastRefreshedAt        String   @map("last_refreshed_at")
+  lastOddsSnapshotAt     String?  @map("last_odds_snapshot_at")
+  liveOddsSnapshotCount  Int      @default(0) @map("live_odds_snapshot_count")
+
+  @@index([startTimeUtc, competitionPath], map: "idx_upcoming_fixtures_kickoff")
+  @@map("upcoming_fixtures")
+}
+
+model UpcomingDiscoveryRun {
+  id              Int     @id @default(autoincrement())
+  competitionPath String  @map("competition_path")
+  ranAt           String  @map("ran_at")
+  fixturesFound   Int     @default(0) @map("fixtures_found")
+  status          String
+  error           String?
+
+  @@index([competitionPath, ranAt(sort: Desc)], map: "idx_upcoming_discovery_runs_path_time")
+  @@map("upcoming_discovery_runs")
+}
+
+model LiveOddsSnapshot {
+  id            Int    @id @default(autoincrement())
+  eventId       String @map("event_id")
+  fetchedAt     String @map("fetched_at")
+  bookmaker     String?
+  market        String
+  selectionKey  String @map("selection_key")
+  decimalPrice  Float  @map("decimal_price")
+  openingPrice  Float? @map("opening_price")
+
+  @@index([eventId, fetchedAt], map: "idx_live_odds_snapshots_event_time")
+  @@index([eventId, market, selectionKey, fetchedAt], map: "idx_live_odds_snapshots_event_selection")
+  @@map("live_odds_snapshots")
+}

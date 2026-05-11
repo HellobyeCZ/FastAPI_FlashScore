@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sqlite3
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -262,6 +263,82 @@ class SnapshotStore:
         await self.initialize()
         return await asyncio.to_thread(self._list_resumable_bulk_scrape_job_ids_sync)
 
+    async def list_bulk_scrape_competition_paths(self) -> List[str]:
+        await self.initialize()
+        return await asyncio.to_thread(self._list_bulk_scrape_competition_paths_sync)
+
+    async def upsert_upcoming_fixtures(
+        self,
+        *,
+        competition_path: str,
+        fixtures: Iterable[Dict[str, Any]],
+    ) -> int:
+        await self.initialize()
+        fixtures_list = list(fixtures)
+        async with self._write_lock:
+            return await asyncio.to_thread(
+                self._upsert_upcoming_fixtures_sync,
+                competition_path,
+                fixtures_list,
+            )
+
+    async def record_upcoming_discovery_run(
+        self,
+        *,
+        competition_path: str,
+        fixtures_found: int,
+        status: str,
+        error: Optional[str] = None,
+    ) -> None:
+        await self.initialize()
+        async with self._write_lock:
+            await asyncio.to_thread(
+                self._record_upcoming_discovery_run_sync,
+                competition_path,
+                fixtures_found,
+                status,
+                error,
+            )
+
+    async def list_upcoming_fixtures_for_snapshot(
+        self,
+        *,
+        window_start_utc: str,
+        window_end_utc: str,
+    ) -> List[Dict[str, Any]]:
+        await self.initialize()
+        return await asyncio.to_thread(
+            self._list_upcoming_fixtures_for_snapshot_sync,
+            window_start_utc,
+            window_end_utc,
+        )
+
+    async def save_live_odds_snapshot_rows(
+        self,
+        *,
+        event_id: str,
+        fetched_at: str,
+        rows: Iterable[Tuple[Optional[str], str, str, float, Optional[float]]],
+    ) -> int:
+        """Persist compact live odds rows.
+
+        Each row: ``(bookmaker, market, selection_key, decimal_price, opening_price)``.
+        ``opening_price`` may be ``None`` when the upstream payload does not
+        expose it for a given selection.
+        """
+
+        await self.initialize()
+        rows_list = list(rows)
+        if not rows_list:
+            return 0
+        async with self._write_lock:
+            return await asyncio.to_thread(
+                self._save_live_odds_snapshot_rows_sync,
+                event_id,
+                fetched_at,
+                rows_list,
+            )
+
     def _initialize_sync(self) -> None:
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as connection:
@@ -287,6 +364,7 @@ class SnapshotStore:
                 column_sql="INTEGER NOT NULL DEFAULT 0",
             )
             self._ensure_bulk_scrape_tables(connection)
+            self._ensure_upcoming_tables(connection)
 
     def _insert_odds_snapshot_sync(
         self,
@@ -831,6 +909,155 @@ class SnapshotStore:
             ).fetchall()
         return [int(row["id"]) for row in rows]
 
+    def _list_bulk_scrape_competition_paths_sync(self) -> List[str]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT DISTINCT competition_path
+                FROM scrape_jobs
+                WHERE competition_path IS NOT NULL
+                  AND TRIM(competition_path) != ''
+                ORDER BY competition_path
+                """,
+            ).fetchall()
+        return [str(row["competition_path"]).strip() for row in rows]
+
+    def _upsert_upcoming_fixtures_sync(
+        self,
+        competition_path: str,
+        fixtures: List[Dict[str, Any]],
+    ) -> int:
+        if not fixtures:
+            return 0
+        now_iso = datetime.now(timezone.utc).isoformat()
+        with self._connect() as connection:
+            connection.executemany(
+                """
+                INSERT INTO upcoming_fixtures (
+                    event_id,
+                    competition_path,
+                    sport,
+                    country,
+                    competition,
+                    home_team_raw,
+                    away_team_raw,
+                    start_time_utc,
+                    round_label,
+                    discovered_at,
+                    last_refreshed_at,
+                    last_odds_snapshot_at,
+                    live_odds_snapshot_count
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0)
+                ON CONFLICT(event_id) DO UPDATE SET
+                    competition_path = excluded.competition_path,
+                    sport = COALESCE(excluded.sport, upcoming_fixtures.sport),
+                    country = COALESCE(excluded.country, upcoming_fixtures.country),
+                    competition = COALESCE(excluded.competition, upcoming_fixtures.competition),
+                    home_team_raw = COALESCE(excluded.home_team_raw, upcoming_fixtures.home_team_raw),
+                    away_team_raw = COALESCE(excluded.away_team_raw, upcoming_fixtures.away_team_raw),
+                    start_time_utc = excluded.start_time_utc,
+                    round_label = COALESCE(excluded.round_label, upcoming_fixtures.round_label),
+                    last_refreshed_at = excluded.last_refreshed_at
+                """,
+                [
+                    (
+                        str(fx["event_id"]),
+                        competition_path,
+                        fx.get("sport"),
+                        fx.get("country"),
+                        fx.get("competition"),
+                        fx.get("home_team_raw"),
+                        fx.get("away_team_raw"),
+                        str(fx["start_time_utc"]),
+                        fx.get("round_label"),
+                        now_iso,
+                        now_iso,
+                    )
+                    for fx in fixtures
+                    if fx.get("event_id") and fx.get("start_time_utc")
+                ],
+            )
+            connection.commit()
+        return len(fixtures)
+
+    def _record_upcoming_discovery_run_sync(
+        self,
+        competition_path: str,
+        fixtures_found: int,
+        status: str,
+        error: Optional[str],
+    ) -> None:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO upcoming_discovery_runs (
+                    competition_path, ran_at, fixtures_found, status, error
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (competition_path, now_iso, fixtures_found, status, error),
+            )
+            connection.commit()
+
+    def _list_upcoming_fixtures_for_snapshot_sync(
+        self,
+        window_start_utc: str,
+        window_end_utc: str,
+    ) -> List[Dict[str, Any]]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT
+                    event_id,
+                    competition_path,
+                    sport,
+                    country,
+                    competition,
+                    home_team_raw,
+                    away_team_raw,
+                    start_time_utc,
+                    round_label,
+                    last_odds_snapshot_at,
+                    live_odds_snapshot_count
+                FROM upcoming_fixtures
+                WHERE start_time_utc >= ?
+                  AND start_time_utc <= ?
+                ORDER BY start_time_utc ASC
+                """,
+                (window_start_utc, window_end_utc),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def _save_live_odds_snapshot_rows_sync(
+        self,
+        event_id: str,
+        fetched_at: str,
+        rows: List[Tuple[Optional[str], str, str, float, Optional[float]]],
+    ) -> int:
+        with self._connect() as connection:
+            connection.executemany(
+                """
+                INSERT INTO live_odds_snapshots (
+                    event_id, fetched_at, bookmaker, market, selection_key, decimal_price, opening_price
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (event_id, fetched_at, bookmaker, market, selection_key, decimal_price, opening_price)
+                    for bookmaker, market, selection_key, decimal_price, opening_price in rows
+                ],
+            )
+            connection.execute(
+                """
+                UPDATE upcoming_fixtures
+                SET last_odds_snapshot_at = ?,
+                    live_odds_snapshot_count = live_odds_snapshot_count + 1
+                WHERE event_id = ?
+                """,
+                (fetched_at, event_id),
+            )
+            connection.commit()
+        return len(rows)
+
     def _resolve_latest_match_stats_snapshot_sync(
         self,
         event_id: str,
@@ -928,6 +1155,85 @@ class SnapshotStore:
             return
         connection.execute(
             f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_sql}"
+        )
+        connection.commit()
+
+    @staticmethod
+    def _ensure_upcoming_tables(connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS upcoming_fixtures (
+                event_id TEXT PRIMARY KEY,
+                competition_path TEXT NOT NULL,
+                sport TEXT,
+                country TEXT,
+                competition TEXT,
+                home_team_raw TEXT,
+                away_team_raw TEXT,
+                start_time_utc TEXT NOT NULL,
+                round_label TEXT,
+                discovered_at TEXT NOT NULL,
+                last_refreshed_at TEXT NOT NULL,
+                last_odds_snapshot_at TEXT,
+                live_odds_snapshot_count INTEGER NOT NULL DEFAULT 0
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_upcoming_fixtures_kickoff
+            ON upcoming_fixtures(start_time_utc, competition_path)
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS upcoming_discovery_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                competition_path TEXT NOT NULL,
+                ran_at TEXT NOT NULL,
+                fixtures_found INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL,
+                error TEXT
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_upcoming_discovery_runs_path_time
+            ON upcoming_discovery_runs(competition_path, ran_at DESC)
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS live_odds_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id TEXT NOT NULL,
+                fetched_at TEXT NOT NULL,
+                bookmaker TEXT,
+                market TEXT NOT NULL,
+                selection_key TEXT NOT NULL,
+                decimal_price REAL NOT NULL,
+                opening_price REAL
+            )
+            """
+        )
+        SnapshotStore._ensure_column(
+            connection,
+            table_name="live_odds_snapshots",
+            column_name="opening_price",
+            column_sql="REAL",
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_live_odds_snapshots_event_time
+            ON live_odds_snapshots(event_id, fetched_at)
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_live_odds_snapshots_event_selection
+            ON live_odds_snapshots(event_id, market, selection_key, fetched_at)
+            """
         )
         connection.commit()
 
@@ -1069,5 +1375,8 @@ class SnapshotStore:
 
 def build_snapshot_store() -> SnapshotStore:
     settings = get_settings()
-    db_path = settings._resolve_value(settings.storage_db_path)
+    db_path = os.environ.get(
+        "APP_STORAGE_DB_PATH",
+        str(settings._resolve_value(settings.storage_db_path)),
+    )
     return SnapshotStore(db_path=str(db_path))

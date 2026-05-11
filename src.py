@@ -19,7 +19,12 @@ from app.schemas.bulk_scrape import (
 )
 from app.schemas.match_stats import MatchStatsResponse
 from app.schemas.odds import OddsResponse
-from app.services.bulk_scrape import BulkScrapeJobConfig, BulkScrapeManager
+from app.services.bulk_scrape import (
+    BulkScrapeJobConfig,
+    BulkScrapeManager,
+    LiveOddsScheduler,
+    build_live_odds_scheduler_from_settings,
+)
 from app.services.match_stats import map_match_stats_payload
 from app.services.odds import map_odds_payload
 from app.services.odds_client import OddsAPIError, OddsClient, build_odds_client
@@ -265,6 +270,14 @@ def _get_bulk_scrape_manager() -> BulkScrapeManager:
     )
 
 
+@lru_cache()
+def _get_live_odds_scheduler() -> LiveOddsScheduler:
+    return build_live_odds_scheduler_from_settings(
+        snapshot_store=_get_snapshot_store(),
+        odds_client=_get_odds_client(),
+    )
+
+
 def odds_client_dependency() -> OddsClient:
     return _get_odds_client()
 
@@ -285,10 +298,12 @@ def bulk_scrape_manager_dependency() -> BulkScrapeManager:
 async def startup_snapshot_store() -> None:
     await _get_snapshot_store().initialize()
     await _get_bulk_scrape_manager().start()
+    await _get_live_odds_scheduler().start()
 
 
 @app.on_event("shutdown")
 async def shutdown_odds_client() -> None:
+    await _get_live_odds_scheduler().shutdown()
     await _get_bulk_scrape_manager().shutdown()
     await _get_odds_client().aclose()
     await _get_match_stats_client().aclose()
