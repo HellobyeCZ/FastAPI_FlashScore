@@ -342,6 +342,95 @@ class TrainedHGB:
             return pickle.load(f)
 
 
+def collect_events_for_dixon_coles(
+    *,
+    sport: str = "football",
+    scope: Sequence[Tuple[str, str]] = FOOTBALL_PHASE1_SCOPE,
+    min_kickoff: Optional[str] = None,
+    max_kickoff: Optional[str] = None,
+) -> List[Dict[str, object]]:
+    """Pull (event_id, teams, scores, xG, start_time) rows for every
+    terminal football event in scope, sorted chronologically. xG is
+    extracted from the stats payload's 'Expected goals (xG)' stat in
+    period 'Match', returned as None when absent."""
+    import json
+    placeholders = ",".join("(?, ?)" for _ in scope) if scope else ""
+    params: List[str] = [sport]
+    where_parts = ["m.sport = ?", "s.is_terminal = 1"]
+    if scope:
+        where_parts.append(f"(m.country, m.competition) IN (VALUES {placeholders})")
+        for c, comp in scope:
+            params.extend([c, comp])
+    if min_kickoff:
+        where_parts.append("m.start_time_utc >= ?")
+        params.append(min_kickoff)
+    if max_kickoff:
+        where_parts.append("m.start_time_utc < ?")
+        params.append(max_kickoff)
+
+    with ml_db.connect(read_only=True) as conn:
+        rows = conn.execute(
+            f"""
+            SELECT s.event_id, s.match_stats_payload_json,
+                   m.start_time_utc
+            FROM match_stats_snapshots s
+            JOIN match_event_summaries m USING(event_id)
+            JOIN bet_labels b USING(event_id)
+            WHERE {' AND '.join(where_parts)}
+            ORDER BY m.start_time_utc ASC, s.event_id ASC
+            """,
+            params,
+        ).fetchall()
+
+    out: List[Dict[str, object]] = []
+    for row in rows:
+        try:
+            payload = json.loads(row["match_stats_payload_json"])
+        except (TypeError, ValueError):
+            continue
+        event = payload.get("event") if isinstance(payload, dict) else None
+        if not isinstance(event, dict):
+            continue
+        home = event.get("home_team")
+        away = event.get("away_team")
+        if not home or not away:
+            continue
+        home_score = away_score = None
+        home_xg = away_xg = None
+        for period in event.get("periods") or ():
+            if (period.get("name") or "").strip().lower() != "match":
+                continue
+            for category in period.get("categories") or ():
+                cat = (category.get("name") or "").strip().lower()
+                for stat in category.get("stats") or ():
+                    label = (stat.get("label") or "").lower()
+                    if cat == "score" and "final score" in label:
+                        try:
+                            home_score = int(stat["home"])
+                            away_score = int(stat["away"])
+                        except (KeyError, TypeError, ValueError):
+                            pass
+                    elif "expected goals" in label and "xg" in label:
+                        try:
+                            home_xg = float(stat["home"])
+                            away_xg = float(stat["away"])
+                        except (KeyError, TypeError, ValueError):
+                            pass
+        if home_score is None or away_score is None:
+            continue
+        out.append({
+            "event_id": row["event_id"],
+            "start_time_utc": row["start_time_utc"],
+            "home_team": home,
+            "away_team": away,
+            "home_score": home_score,
+            "away_score": away_score,
+            "home_xg": home_xg,
+            "away_xg": away_xg,
+        })
+    return out
+
+
 def train_hgb(
     train: FeatureMatrix,
     *,
