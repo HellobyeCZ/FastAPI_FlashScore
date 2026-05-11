@@ -127,3 +127,74 @@ def test_aggregate_min_n_filters_all_rows_does_not_raise(fixture_db):
 
     rows = aggregate(StatsRequest(min_n_per_group=2))
     assert rows == []
+
+
+def test_edge_bucket_grouping(fixture_db):
+    from app.ml.labels import backfill_labels
+    from app.ml.closing_odds import backfill_closing_odds
+    backfill_labels(sport="football", scope=TEST_SCOPE, rebuild=True)
+    picks = [
+        PickInput(
+            event_id="evt001", model="logistic", market="1X2_FT",
+            selection="home", bet_ts=_now_iso(),
+            price_at_recommendation=1.8, model_prob=0.51,
+            devigged_prob=0.5, edge=0.01, kelly_full=0.10,
+        ),
+        PickInput(
+            event_id="evt002", model="logistic", market="1X2_FT",
+            selection="draw", bet_ts=_now_iso(),
+            price_at_recommendation=3.5, model_prob=0.40,
+            devigged_prob=0.30, edge=0.10, kelly_full=0.15,
+        ),
+    ]
+    record_picks(picks)
+    backfill_closing_odds(sport="football", scope=TEST_SCOPE, rebuild=True)
+    settle_pending_bets()
+
+    rows = aggregate(StatsRequest(group_by=("edge_bucket",)))
+    buckets = {r["edge_bucket"] for r in rows}
+    assert "0-2" in buckets
+    assert "5-10" in buckets or "10-15" in buckets
+
+
+def test_date_filter(fixture_db):
+    from app.ml.labels import backfill_labels
+    from app.ml.closing_odds import backfill_closing_odds
+    backfill_labels(sport="football", scope=TEST_SCOPE, rebuild=True)
+    picks = [
+        PickInput(
+            event_id="evt001", model="logistic", market="1X2_FT",
+            selection="home", bet_ts=_now_iso(),
+            price_at_recommendation=1.8, model_prob=0.55,
+            devigged_prob=0.5, edge=0.05, kelly_full=0.10,
+        ),
+    ]
+    record_picks(picks)
+    backfill_closing_odds(sport="football", scope=TEST_SCOPE, rebuild=True)
+    settle_pending_bets()
+
+    # Filter that excludes everything.
+    rows = aggregate(StatsRequest(
+        filters=StatsFilter(date_from="2099-01-01T00:00:00Z"),
+    ))
+    assert len(rows) == 0 or rows[0]["n"] == 0
+
+
+def test_min_n_per_group_drops_small_buckets(fixture_db):
+    from app.ml.labels import backfill_labels
+    from app.ml.closing_odds import backfill_closing_odds
+    backfill_labels(sport="football", scope=TEST_SCOPE, rebuild=True)
+    picks = [
+        PickInput(
+            event_id="evt001", model="logistic", market="1X2_FT",
+            selection="home", bet_ts=_now_iso(),
+            price_at_recommendation=1.8, model_prob=0.55,
+            devigged_prob=0.5, edge=0.05, kelly_full=0.10,
+        ),
+    ]
+    record_picks(picks)
+    backfill_closing_odds(sport="football", scope=TEST_SCOPE, rebuild=True)
+    settle_pending_bets()
+
+    rows = aggregate(StatsRequest(group_by=("model",), min_n_per_group=5))
+    assert len(rows) == 0
