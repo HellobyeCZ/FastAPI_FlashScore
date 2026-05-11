@@ -92,11 +92,15 @@ def test_pre_match_elo_is_independent_of_as_of_ts(backfilled):
     assert before["away_elo"] == long_after["away_elo"]
 
 
-def test_market_prob_is_null_before_odds_snapshot(backfilled):
+def test_market_prob_is_null_well_before_kickoff(backfilled):
+    """For a terminal event, the archive's odds snapshot is treated as
+    known at min(fetched_at, kickoff − 5min). Calling with as_of well
+    before that effective cutoff must produce NULL market probs."""
     target_id = "evt004"
     target_kickoff = datetime(2024, 1, 22, 15, 0, tzinfo=timezone.utc)
-    # Odds were fetched 24h before kickoff. Calling 48h before kickoff
-    # must produce NULL market probs (the snapshot was not yet captured).
+    # The fixture stores fetched_at = kickoff − 24h, so the effective_ts
+    # is kickoff − 24h. Calling 48h before kickoff is strictly before
+    # that — expect NULL.
     too_early = target_kickoff - timedelta(hours=48)
     features = get_features(target_id, _iso(too_early))
     assert features is not None
@@ -104,16 +108,63 @@ def test_market_prob_is_null_before_odds_snapshot(backfilled):
     assert features["market_prob_draw"] is None
     assert features["market_prob_away"] is None
 
-    # Calling 1h before kickoff (after odds capture) must populate them.
+    # Calling 1h before kickoff (after effective_ts) populates them.
     just_before = target_kickoff - timedelta(hours=1)
     features = get_features(target_id, _iso(just_before))
     assert features is not None
     assert features["market_prob_home"] is not None
     assert features["market_prob_draw"] is not None
     assert features["market_prob_away"] is not None
-    # Probs should sum to ~1.0 after devigging.
     s = features["market_prob_home"] + features["market_prob_draw"] + features["market_prob_away"]
     assert 0.99 <= s <= 1.01
+
+
+def test_archive_after_kickoff_still_yields_closing_line_at_buffer_edge(backfilled_post_kickoff):
+    """If the archive captured odds *after* kickoff for a terminal event
+    (the bulk-scrape window case), the prices are still the closing
+    line. The effective timestamp is kickoff − 5min — so a feature
+    query at kickoff − 5min populates market probs even though
+    fetched_at is 48h after kickoff. This is the key correction over
+    naively using fetched_at as the cutoff."""
+    target_id, target_kickoff = backfilled_post_kickoff
+    at_edge = target_kickoff - timedelta(minutes=5)
+    features = get_features(target_id, _iso(at_edge))
+    assert features is not None
+    assert features["market_prob_home"] is not None
+    assert features["market_prob_draw"] is not None
+    assert features["market_prob_away"] is not None
+    s = features["market_prob_home"] + features["market_prob_draw"] + features["market_prob_away"]
+    assert 0.99 <= s <= 1.01
+
+    # Crucially: with the old fetched_at-only logic, this query would
+    # have returned NULL (fetched_at is 48h in the future relative to
+    # as_of_ts). The new logic correctly recognises the prices as
+    # closing-line and available at kickoff − 5min.
+
+
+def test_archive_after_kickoff_buffer_edge_is_load_bearing(backfilled_post_kickoff):
+    """The 5-minute buffer is load-bearing — features at kickoff − 6min
+    must NOT include closing-line probs because effective_ts is
+    kickoff − 5min, which is *later* than 6min before kickoff. At
+    kickoff − 5min the line is exactly available; at kickoff − 4min
+    (inside the buffer) the line is still available (we passed the
+    effective cutoff)."""
+    target_id, target_kickoff = backfilled_post_kickoff
+
+    # 6 minutes before kickoff: effective_ts (kickoff − 5min) is after
+    # as_of_ts → NULL.
+    too_early = target_kickoff - timedelta(minutes=6)
+    features = get_features(target_id, _iso(too_early))
+    assert features is not None
+    assert features["market_prob_home"] is None
+    assert features["market_prob_draw"] is None
+    assert features["market_prob_away"] is None
+
+    # At exactly kickoff − 5min the line becomes available.
+    at_buffer_edge = target_kickoff - timedelta(minutes=5)
+    features = get_features(target_id, _iso(at_buffer_edge))
+    assert features is not None
+    assert features["market_prob_home"] is not None
 
 
 def test_identical_inputs_yield_identical_outputs(backfilled):

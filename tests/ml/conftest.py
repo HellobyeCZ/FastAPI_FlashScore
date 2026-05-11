@@ -15,6 +15,9 @@ from typing import Dict, List, Tuple
 
 import pytest
 
+# Re-export for tests that need to construct timestamps.
+__all__ = ["fixture_db", "fixture_db_post_kickoff", "backfilled_post_kickoff"]
+
 
 HOME_TEAM = "Alpha FC"
 AWAY_TEAM = "Beta United"
@@ -101,10 +104,16 @@ def _odds_upstream(home_pid: str, away_pid: str, home_price: float, draw_price: 
     }
 
 
-@pytest.fixture
-def fixture_db(tmp_path, monkeypatch):
-    """Create an isolated SQLite DB, seed it with synthetic events, and
-    return ``(db_path, events)``."""
+def _build_fixture_db(
+    tmp_path,
+    monkeypatch,
+    *,
+    odds_fetched_offset: timedelta = timedelta(hours=-24),
+):
+    """Build a hermetic SQLite DB at ``tmp_path``. ``odds_fetched_offset`` is
+    added to each event's kickoff to derive its odds ``fetched_at``. Default
+    is 24h before kickoff (the normal forward-scrape case); pass a positive
+    delta to simulate the bulk-scrape-after-kickoff case."""
     db_file = tmp_path / "fixture.sqlite3"
     monkeypatch.setenv("APP_STORAGE_DB_PATH", str(db_file))
     # Reset the module-level "tables initialized" flag so each test gets a
@@ -175,8 +184,7 @@ def fixture_db(tmp_path, monkeypatch):
     ]
     for evt_id, home, away, hs, as_, ko in events:
         stats = _stats_payload(evt_id, home, away, hs, as_, ko)
-        # Odds fetched 24h before kickoff (closing) for every event.
-        fetched_at = (ko - timedelta(hours=24)).isoformat().replace("+00:00", "Z")
+        fetched_at = (ko + odds_fetched_offset).isoformat().replace("+00:00", "Z")
         # Simple participant IDs based on team name (deterministic).
         home_pid = f"pid_{home.replace(' ', '_')}"
         away_pid = f"pid_{away.replace(' ', '_')}"
@@ -202,3 +210,36 @@ def fixture_db(tmp_path, monkeypatch):
     conn.commit()
     conn.close()
     return {"path": str(db_file), "events": events}
+
+
+@pytest.fixture
+def fixture_db(tmp_path, monkeypatch):
+    """Default fixture: odds fetched 24h before kickoff."""
+    return _build_fixture_db(tmp_path, monkeypatch)
+
+
+@pytest.fixture
+def fixture_db_post_kickoff(tmp_path, monkeypatch):
+    """Bulk-scrape-after-kickoff fixture: odds fetched 48h AFTER kickoff.
+    Used to assert that the closing-line semantics treat the prices as
+    known at kickoff − 5min regardless of fetched_at."""
+    return _build_fixture_db(
+        tmp_path, monkeypatch, odds_fetched_offset=timedelta(hours=48),
+    )
+
+
+@pytest.fixture
+def backfilled_post_kickoff(fixture_db_post_kickoff):
+    """Backfill labels + closing_odds + Elo on the post-kickoff fixture,
+    and return ``(target_event_id, target_kickoff_dt)``."""
+    from app.ml.closing_odds import backfill_closing_odds
+    from app.ml.elo import EloConfig, backfill_elo
+    from app.ml.labels import backfill_labels
+
+    scope = (("TESTLAND", "Test League"),)
+    backfill_labels(sport="football", scope=scope, rebuild=True)
+    backfill_closing_odds(sport="football", scope=scope, rebuild=True)
+    backfill_elo(config=EloConfig(sport="football"), scope=scope, rebuild=True)
+    target_id = "evt004"
+    target_kickoff = datetime(2024, 1, 22, 15, 0, tzinfo=timezone.utc)
+    return target_id, target_kickoff

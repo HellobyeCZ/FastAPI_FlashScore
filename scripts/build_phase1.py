@@ -75,16 +75,13 @@ def _print_distribution_report(rebuild: bool) -> None:
             print(f"  {row['team']:<24}elo={int(row['elo'])}  ({row['competition']})")
 
     print()
-    print("=== worked example: get_features for a PL match ===")
-    print("    as_of_ts chosen as max(odds_fetched_at, kickoff-1h) so the")
-    print("    market_prob_* features are populated. In a real backtest")
-    print("    you'd pass the bet time directly; if it predates the")
-    print("    captured odds snapshot, market_prob_* would be NULL.")
+    print("=== worked example: get_features at the closing-line moment ===")
+    print("    as_of_ts = kickoff − 5min. The archive's odds row IS the")
+    print("    closing line, and the feature builder treats it as known")
+    print("    at min(fetched_at, kickoff − 5min). So even if the scraper")
+    print("    captured prices after kickoff, the closing-line features")
+    print("    are correctly available at this moment.")
     with ml_db.connect(read_only=True) as conn:
-        # Pick a PL match where the archived odds were captured before
-        # kickoff — so the demo shows populated market probabilities. The
-        # bulk-scrape window captured most events shortly after kickoff,
-        # so we relax to "max(fetched_at, kickoff-1h)" below.
         row = conn.execute(
             """
             SELECT b.event_id, b.start_time_utc, o.fetched_at
@@ -103,15 +100,9 @@ def _print_distribution_report(rebuild: bool) -> None:
         if ts.endswith("Z"):
             ts = ts[:-1] + "+00:00"
         kickoff = datetime.fromisoformat(ts)
-        before_kickoff = (kickoff - timedelta(hours=1))
-        fetched_at = row["fetched_at"]
-        if fetched_at.endswith("Z"):
-            fetched_at = fetched_at[:-1] + "+00:00"
-        fetched_at_dt = datetime.fromisoformat(fetched_at)
-        as_of_dt = max(before_kickoff, fetched_at_dt)
+        as_of_dt = kickoff - timedelta(minutes=5)
         as_of = as_of_dt.isoformat().replace("+00:00", "Z")
         print(f"    kickoff={kickoff.isoformat()}")
-        print(f"    fetched_at={fetched_at_dt.isoformat()}")
         print(f"    as_of={as_of}")
         features = get_features(row["event_id"], as_of)
         if features:

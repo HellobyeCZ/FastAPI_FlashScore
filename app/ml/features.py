@@ -23,13 +23,22 @@ The feature builder does not call any HTTP — all inputs come from
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.ml import db as ml_db
 
 
 DEFAULT_FORM_WINDOW = 5
+
+# Buffer subtracted from kickoff when reasoning about the "effective"
+# timestamp at which the archive's closing-line odds became known. The
+# spot-check (scripts.spot_check_closing) confirmed the archived prices
+# are the latest pre-kickoff snapshot FlashScore stores. Five minutes
+# matches the common research convention for "closing line" — Pinnacle
+# and most academic CLV papers reference a 5-min-pre-kickoff snapshot
+# rather than literally at kickoff.
+CLOSING_LINE_BUFFER = timedelta(minutes=5)
 
 
 def _parse_iso(ts: str) -> datetime:
@@ -124,7 +133,52 @@ def _pre_match_elo(conn, event_id: str, team: str) -> Optional[float]:
     return float(row["pre_elo"]) if row else None
 
 
-def _market_probs(
+def _odds_effective_timestamp(
+    conn,
+    event_id: str,
+    fetched_at: str,
+) -> str:
+    """Return the timestamp at which the archived odds row should be
+    treated as *known*, for point-in-time feature purposes.
+
+    The archived odds_snapshots row per event represents FlashScore's
+    latest-pre-kickoff snapshot (verified by ``scripts.spot_check_closing``).
+    The scraper's ``fetched_at`` is when *we* captured it, which can be
+    after kickoff for the bulk-scrape window. So:
+
+      - If the event is **terminal** (match is in the past), the prices'
+        informational content is the closing line — known just before
+        kickoff. We use ``min(fetched_at, kickoff − CLOSING_LINE_BUFFER)``.
+      - If the event is **non-terminal** (live/upcoming), the same odds
+        row might be a still-moving live line and using it earlier than
+        ``fetched_at`` would leak. We stick to ``fetched_at`` strictly.
+    """
+    summary = conn.execute(
+        """
+        SELECT start_time_utc, status
+        FROM match_event_summaries
+        WHERE event_id = ?
+        """,
+        (event_id,),
+    ).fetchone()
+    if summary is None:
+        return fetched_at
+    status = (summary["status"] or "").strip().lower()
+    if status != "finished":
+        return fetched_at
+    kickoff_raw = summary["start_time_utc"]
+    if not kickoff_raw:
+        return fetched_at
+    try:
+        kickoff_dt = _parse_iso(kickoff_raw)
+        fetched_dt = _parse_iso(fetched_at)
+    except (ValueError, TypeError):
+        return fetched_at
+    effective_dt = min(fetched_dt, kickoff_dt - CLOSING_LINE_BUFFER)
+    return effective_dt.isoformat().replace("+00:00", "Z")
+
+
+def _market_probs_at_or_before(
     conn,
     event_id: str,
     as_of_ts: str,
@@ -133,17 +187,16 @@ def _market_probs(
 ) -> Tuple[Optional[float], Optional[float], Optional[float]]:
     """Return ``(home_prob, draw_prob, away_prob)`` from closing-line
     devigged probabilities averaged across bookmakers, **only** if the
-    archive's odds snapshot was captured at or before ``as_of_ts``.
+    archive's odds snapshot was effectively known at or before ``as_of_ts``.
 
-    Maps ``selection_key`` to home/draw/away by joining against the
-    upstream payload's ``eventParticipantId``: the entry whose ID
-    matches the home team's participant becomes home; the remaining
-    non-DRAW selection is away; ``DRAW`` is the draw. We don't have the
-    participant→team mapping stored explicitly, so we use the
-    convention validated in Phase 0 / the spot-check: of the two
-    non-DRAW selection_keys, the one appearing *first* in
-    ``odds_snapshots.upstream_payload_json``'s 1X2 market is the home
-    team's selection.
+    "Effectively known" uses ``_odds_effective_timestamp`` — for terminal
+    events the closing-line snapshot is treated as known at
+    ``min(fetched_at, kickoff − 5min)``, for live/upcoming events the
+    strict ``fetched_at`` boundary applies.
+
+    Maps ``selection_key`` to home/draw/away via the upstream payload's
+    ``eventParticipantId``: the first non-DRAW participant in the 1X2
+    market is the home team (Phase 0 convention).
     """
     odds_row = conn.execute(
         "SELECT fetched_at, upstream_payload_json FROM odds_snapshots WHERE event_id = ? ORDER BY id DESC LIMIT 1",
@@ -151,7 +204,8 @@ def _market_probs(
     ).fetchone()
     if odds_row is None:
         return None, None, None
-    if odds_row["fetched_at"] > as_of_ts:
+    effective_ts = _odds_effective_timestamp(conn, event_id, odds_row["fetched_at"])
+    if effective_ts > as_of_ts:
         return None, None, None
 
     # Resolve the home-side selection_key from the upstream payload —
@@ -241,7 +295,7 @@ def get_features(
         away_rest = _team_days_rest(conn, away, as_of_ts, event_id) if away else None
         home_elo = _pre_match_elo(conn, event_id, home) if home else None
         away_elo = _pre_match_elo(conn, event_id, away) if away else None
-        mp_h, mp_d, mp_a = _market_probs(conn, event_id, as_of_ts, home, away)
+        mp_h, mp_d, mp_a = _market_probs_at_or_before(conn, event_id, as_of_ts, home, away)
 
         home_ppg = home_form.points / home_form.matches if home_form.matches else None
         away_ppg = away_form.points / away_form.matches if away_form.matches else None
