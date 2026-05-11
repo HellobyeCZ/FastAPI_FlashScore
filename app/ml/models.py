@@ -93,3 +93,42 @@ def get(name: str) -> ModelFn:
 
 def names() -> tuple:
     return tuple(sorted(_REGISTRY))
+
+
+# ---------------------------------------------------------------------------
+# Logistic-model adapter (Phase 3a)
+# ---------------------------------------------------------------------------
+
+def make_logistic_model_fn(trained, *, calibrated: bool) -> ModelFn:
+    """Wrap a :class:`app.ml.training.TrainedLogistic` as a ``ModelFn`` the
+    backtester can consume. ``calibrated`` selects between the raw and
+    isotonic-calibrated probabilities.
+
+    The backtester passes a feature dict and a market context; we extract
+    the LOGISTIC_FEATURE_COLUMNS in fixed order. Any missing feature
+    falls back to the uniform 1/3 prior so the bet is naturally
+    edge-less and skipped.
+    """
+    # Late import to avoid pulling sklearn at module import time.
+    from app.ml.training import LOGISTIC_FEATURE_COLUMNS
+    import numpy as _np
+
+    def _fn(features, market) -> Dict[str, float]:
+        row = []
+        for col in LOGISTIC_FEATURE_COLUMNS:
+            v = features.get(col)
+            if v is None:
+                return {"home": 1 / 3, "draw": 1 / 3, "away": 1 / 3}
+            try:
+                row.append(float(v))
+            except (TypeError, ValueError):
+                return {"home": 1 / 3, "draw": 1 / 3, "away": 1 / 3}
+        X = _np.asarray([row], dtype=float)
+        probs = (
+            trained.predict_proba_calibrated(X)[0]
+            if calibrated else trained.predict_proba(X)[0]
+        )
+        return {"home": float(probs[0]), "draw": float(probs[1]), "away": float(probs[2])}
+
+    _fn.__name__ = f"logistic_{'calibrated' if calibrated else 'uncalibrated'}"
+    return _fn

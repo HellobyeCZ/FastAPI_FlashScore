@@ -45,32 +45,32 @@ def _iso(dt: datetime) -> str:
 
 
 def test_form_excludes_target_event_even_when_as_of_after_kickoff(backfilled):
-    # evt004 is at base+21d (2024-01-22). evt005 (the only later one) is
-    # at base+28d. If we call get_features(evt004) with as_of *after*
-    # evt004's kickoff but before evt005, the target's own result must
-    # not leak into form.
+    # evt004 (HOME_TEAM vs AWAY_TEAM) is at base+21d. HOME_TEAM's matches
+    # before evt004's kickoff: warm01 (W vs THIRD), warm03 (D vs THIRD,
+    # HOME_TEAM was away), evt001 (W vs AWAY), evt003 (W vs THIRD,
+    # HOME_TEAM was away). That's 4 prior matches. The default form
+    # window is 5, so including evt004 itself would yield 5; excluding
+    # it leaves exactly 4 — the leakage signal we test for.
     target_id = "evt004"
     target_kickoff = datetime(2024, 1, 22, 15, 0, tzinfo=timezone.utc)
     as_of_after_target = target_kickoff + timedelta(days=1)
     features = get_features(target_id, _iso(as_of_after_target))
     assert features is not None
-    # evt004 result is HOME_TEAM lost 1-2 (away win). HOME_TEAM has played
-    # evt001 (won), evt003 (won), evt004 (lost). Excluding evt004 leaves
-    # exactly 2 matches in form. With evt004 included it would be 3.
-    assert features["home_form_matches"] == 2
-    # Two wins, two times 3 points each = 6 points / 2 matches = 3.0 PPG.
-    assert features["home_form_ppg"] == 3.0
+    assert features["home_form_matches"] == 4
+    # 3 wins (warm01, evt001, evt003) + 1 draw (warm03) = 10 pts / 4 = 2.5 PPG.
+    assert features["home_form_ppg"] == 2.5
 
 
 def test_form_only_sees_strictly_earlier_matches(backfilled):
     target_id = "evt004"
     target_kickoff = datetime(2024, 1, 22, 15, 0, tzinfo=timezone.utc)
-    # Before evt004, HOME_TEAM has played evt001 (home win) and evt003 (away win) = 2 matches, 6 pts.
+    # At kickoff − 1s, HOME_TEAM has played warm01 (W), warm03 (D),
+    # evt001 (W), evt003 (W) = 4 prior matches, 10 pts, 2.5 PPG.
     one_sec_before = target_kickoff - timedelta(seconds=1)
     features = get_features(target_id, _iso(one_sec_before))
     assert features is not None
-    assert features["home_form_matches"] == 2
-    assert features["home_form_ppg"] == 3.0
+    assert features["home_form_matches"] == 4
+    assert features["home_form_ppg"] == 2.5
 
     # If we go back to before any match, form should be empty.
     way_before = datetime(2020, 1, 1, tzinfo=timezone.utc)

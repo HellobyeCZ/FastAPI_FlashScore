@@ -175,12 +175,23 @@ def _build_fixture_db(
     )
 
     base = datetime(2024, 1, 1, 15, 0, tzinfo=timezone.utc)
+    # First three events warm up each team's history so the later events
+    # have non-NULL form/days_rest features (build_feature_matrix drops
+    # rows where any feature is NULL — strict behaviour we want in
+    # production, accommodated in the fixture by seeding warm-up
+    # matches). The five "real" events that follow span all three
+    # outcome classes (home, draw, away) so a 3-class model can fit.
     events: List[Tuple[str, str, str, int, int, datetime]] = [
-        ("evt001", HOME_TEAM, AWAY_TEAM, 2, 1, base),
-        ("evt002", AWAY_TEAM, THIRD_TEAM, 0, 0, base + timedelta(days=7)),
-        ("evt003", THIRD_TEAM, HOME_TEAM, 1, 3, base + timedelta(days=14)),
-        ("evt004", HOME_TEAM, AWAY_TEAM, 1, 2, base + timedelta(days=21)),  # target event
-        ("evt005", AWAY_TEAM, HOME_TEAM, 3, 0, base + timedelta(days=28)),  # AFTER target
+        # Warm-up — every team plays once.
+        ("warm01", HOME_TEAM, THIRD_TEAM, 1, 0, base - timedelta(days=21)),  # home win
+        ("warm02", AWAY_TEAM, THIRD_TEAM, 2, 1, base - timedelta(days=14)),  # home win
+        ("warm03", THIRD_TEAM, HOME_TEAM, 1, 1, base - timedelta(days=7)),   # draw
+        # Real events used by the tests.
+        ("evt001", HOME_TEAM, AWAY_TEAM, 2, 1, base),                         # home win
+        ("evt002", AWAY_TEAM, THIRD_TEAM, 0, 0, base + timedelta(days=7)),    # draw
+        ("evt003", THIRD_TEAM, HOME_TEAM, 1, 3, base + timedelta(days=14)),   # away win
+        ("evt004", HOME_TEAM, AWAY_TEAM, 1, 2, base + timedelta(days=21)),    # target — away win
+        ("evt005", AWAY_TEAM, HOME_TEAM, 3, 0, base + timedelta(days=28)),    # AFTER target — home win
     ]
     for evt_id, home, away, hs, as_, ko in events:
         stats = _stats_payload(evt_id, home, away, hs, as_, ko)

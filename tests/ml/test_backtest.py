@@ -83,8 +83,8 @@ def test_every_event_yields_three_bets_when_forced(backfilled_full):
         min_edge=0.0,
         force_bets=True,
     )
-    # 5 fixture events × 3 selections each.
-    assert report.total_bets == 5 * 3
+    # 8 fixture events × 3 selections each (3 warm-ups + 5 real events).
+    assert report.total_bets == 8 * 3
 
 
 def test_baseline_with_default_min_edge_places_no_bets(backfilled_full):
