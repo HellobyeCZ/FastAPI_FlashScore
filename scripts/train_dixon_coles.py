@@ -218,6 +218,17 @@ def main() -> int:
     }
     (out_dir / "rates_snapshot.json").write_text(json.dumps(persisted_rates))
 
+    # Per-team latest rates after each team's last settled match. Used
+    # at serve time to predict upcoming fixtures whose event_id wasn't
+    # in the training set.
+    from app.ml.dixon_coles import final_team_rates
+    team_latest = {
+        team: {"attack": rates.attack, "defense": rates.defense,
+               "matches_seen": rates.matches_seen}
+        for team, rates in final_team_rates(events, cfg).items()
+    }
+    (out_dir / "team_latest_rates.json").write_text(json.dumps(team_latest))
+
     metrics = {
         "model": "dixon_coles",
         "config": {

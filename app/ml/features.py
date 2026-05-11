@@ -122,6 +122,10 @@ def _team_days_rest(
 
 
 def _pre_match_elo(conn, event_id: str, team: str) -> Optional[float]:
+    """Return the team's pre-match Elo for ``event_id`` if the event was
+    in the training set. For unseen (upcoming) events, fall back to the
+    team's latest post-match Elo — which IS their pre-match Elo for
+    their next game by definition."""
     row = conn.execute(
         """
         SELECT pre_elo
@@ -130,7 +134,19 @@ def _pre_match_elo(conn, event_id: str, team: str) -> Optional[float]:
         """,
         (event_id, team),
     ).fetchone()
-    return float(row["pre_elo"]) if row else None
+    if row is not None:
+        return float(row["pre_elo"])
+    fallback = conn.execute(
+        """
+        SELECT post_elo
+        FROM team_elo_history
+        WHERE team = ?
+        ORDER BY start_time_utc DESC
+        LIMIT 1
+        """,
+        (team,),
+    ).fetchone()
+    return float(fallback["post_elo"]) if fallback else None
 
 
 def _odds_effective_timestamp(
@@ -285,7 +301,21 @@ def get_features(
             (event_id,),
         ).fetchone()
         if label is None:
-            return None
+            # Upcoming-fixture fallback: synthesise a label-like row from
+            # upcoming_fixtures so features can still be built for events
+            # not yet in bet_labels.
+            fx = conn.execute(
+                """
+                SELECT event_id, sport, competition, start_time_utc,
+                       home_team_raw AS home_team, away_team_raw AS away_team
+                FROM upcoming_fixtures
+                WHERE event_id = ?
+                """,
+                (event_id,),
+            ).fetchone()
+            if fx is None:
+                return None
+            label = fx
         home = label["home_team"]
         away = label["away_team"]
 

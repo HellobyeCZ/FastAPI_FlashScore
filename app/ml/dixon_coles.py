@@ -91,6 +91,28 @@ def _dc_tau(home_goals: int, away_goals: int, lam_h: float, lam_a: float, rho: f
     return 1.0
 
 
+def _score_grid(
+    lam_home: float,
+    lam_away: float,
+    *,
+    cfg: DCConfig = DCConfig(),
+) -> np.ndarray:
+    """Return the renormalised joint score PMF up to (cfg.max_goals,
+    cfg.max_goals). Cell [h, a] is P(home_goals=h, away_goals=a)."""
+    k = cfg.max_goals + 1
+    pmf_h = _poisson_pmf_vec(lam_home, k)
+    pmf_a = _poisson_pmf_vec(lam_away, k)
+    grid = np.outer(pmf_h, pmf_a)
+    for h in (0, 1):
+        for a in (0, 1):
+            grid[h, a] *= _dc_tau(h, a, lam_home, lam_away, cfg.rho)
+    total = grid.sum()
+    if total <= 0:
+        # Degenerate; fall back to uniform-ish grid.
+        return np.full_like(grid, 1.0 / grid.size)
+    return grid / total
+
+
 def match_probabilities(
     lam_home: float,
     lam_away: float,
@@ -100,23 +122,47 @@ def match_probabilities(
     """Compute (P(home_win), P(draw), P(away_win)) from match-rate
     estimates, applying the DC tau correction. Returns probabilities
     summing to 1."""
-    k = cfg.max_goals + 1
-    pmf_h = _poisson_pmf_vec(lam_home, k)
-    pmf_a = _poisson_pmf_vec(lam_away, k)
-    grid = np.outer(pmf_h, pmf_a)
-    # Apply DC correction on the four low-score cells.
-    for h in (0, 1):
-        for a in (0, 1):
-            grid[h, a] *= _dc_tau(h, a, lam_home, lam_away, cfg.rho)
-    # Renormalise — tau can push slightly off 1.
-    total = grid.sum()
-    if total <= 0:
-        return 1 / 3, 1 / 3, 1 / 3
-    grid = grid / total
+    grid = _score_grid(lam_home, lam_away, cfg=cfg)
     p_home = float(np.tril(grid, k=-1).sum())
     p_draw = float(np.trace(grid))
     p_away = float(np.triu(grid, k=1).sum())
     return p_home, p_draw, p_away
+
+
+def over_under_probabilities(
+    lam_home: float,
+    lam_away: float,
+    *,
+    line: float = 2.5,
+    cfg: DCConfig = DCConfig(),
+) -> Tuple[float, float]:
+    """Return (P(total > line), P(total < line)) marginalising the score
+    grid. ``line`` is assumed non-integer (typical 2.5, 1.5, 3.5) so the
+    push case doesn't arise."""
+    grid = _score_grid(lam_home, lam_away, cfg=cfg)
+    over = 0.0
+    under = 0.0
+    for h in range(grid.shape[0]):
+        for a in range(grid.shape[1]):
+            if h + a > line:
+                over += grid[h, a]
+            elif h + a < line:
+                under += grid[h, a]
+    return float(over), float(under)
+
+
+def btts_probabilities(
+    lam_home: float,
+    lam_away: float,
+    *,
+    cfg: DCConfig = DCConfig(),
+) -> Tuple[float, float]:
+    """Return (P(both teams score), P(not both)) — i.e. P(home>=1 ∧
+    away>=1) vs the complement, marginalised from the score grid."""
+    grid = _score_grid(lam_home, lam_away, cfg=cfg)
+    yes = float(grid[1:, 1:].sum())  # both >= 1
+    no = float(1.0 - yes)
+    return yes, no
 
 
 # ---------------------------------------------------------------------------
@@ -158,6 +204,50 @@ class TeamRateSnapshot:
     matches_seen: int
 
 
+def _iter_rate_updates(
+    events: Sequence[dict],
+    cfg: DCConfig,
+):
+    """Internal generator that yields ``(event, pre_home, pre_away,
+    post_rates_dict)`` for each event in chronological order. Centralises
+    the EWMA update so callers (snapshot-emitter, final-state-collector)
+    don't duplicate the math."""
+    rates: Dict[str, TeamRates] = {}
+    eta = _ewma_factor(cfg.ewma_half_life)
+    for ev in events:
+        home = ev["home_team"]
+        away = ev["away_team"]
+        home_rates = rates.get(home, TeamRates(cfg.initial_rate, cfg.initial_rate, 0))
+        away_rates = rates.get(away, TeamRates(cfg.initial_rate, cfg.initial_rate, 0))
+
+        home_score = _blend_score(ev["home_score"], ev.get("home_xg"), cfg.xg_weight)
+        away_score = _blend_score(ev["away_score"], ev.get("away_xg"), cfg.xg_weight)
+
+        expected_home_atk = max(0.05, away_rates.defense * cfg.league_mean_goals * cfg.home_advantage)
+        expected_away_atk = max(0.05, home_rates.defense * cfg.league_mean_goals)
+        expected_home_def = max(0.05, away_rates.attack * cfg.league_mean_goals)
+        expected_away_def = max(0.05, home_rates.attack * cfg.league_mean_goals * cfg.home_advantage)
+
+        def _clip(x: float) -> float:
+            return max(0.1, min(4.0, x))
+
+        new_home = TeamRates(
+            attack=(1.0 - eta) * home_rates.attack + eta * _clip(home_score / expected_home_atk),
+            defense=(1.0 - eta) * home_rates.defense + eta * _clip(away_score / expected_home_def),
+            matches_seen=home_rates.matches_seen + 1,
+        )
+        new_away = TeamRates(
+            attack=(1.0 - eta) * away_rates.attack + eta * _clip(away_score / expected_away_atk),
+            defense=(1.0 - eta) * away_rates.defense + eta * _clip(home_score / expected_away_def),
+            matches_seen=away_rates.matches_seen + 1,
+        )
+
+        yield ev, home_rates, away_rates, new_home, new_away
+
+        rates[home] = new_home
+        rates[away] = new_away
+
+
 def estimate_rates_chronological(
     events: Sequence[dict],
     cfg: DCConfig = DCConfig(),
@@ -170,68 +260,32 @@ def estimate_rates_chronological(
     home_xg, away_xg`` (xg may be None). The output preserves order.
     """
     snapshots: List[TeamRateSnapshot] = []
-    rates: Dict[str, TeamRates] = {}
-    eta = _ewma_factor(cfg.ewma_half_life)
-
-    for ev in events:
-        home = ev["home_team"]
-        away = ev["away_team"]
-        home_rates = rates.get(
-            home, TeamRates(cfg.initial_rate, cfg.initial_rate, 0),
-        )
-        away_rates = rates.get(
-            away, TeamRates(cfg.initial_rate, cfg.initial_rate, 0),
-        )
-
+    for ev, pre_home, pre_away, _, _ in _iter_rate_updates(events, cfg):
         snapshots.append(TeamRateSnapshot(
-            event_id=ev["event_id"], team=home, side="home",
-            pre_attack=home_rates.attack, pre_defense=home_rates.defense,
-            matches_seen=home_rates.matches_seen,
+            event_id=ev["event_id"], team=ev["home_team"], side="home",
+            pre_attack=pre_home.attack, pre_defense=pre_home.defense,
+            matches_seen=pre_home.matches_seen,
         ))
         snapshots.append(TeamRateSnapshot(
-            event_id=ev["event_id"], team=away, side="away",
-            pre_attack=away_rates.attack, pre_defense=away_rates.defense,
-            matches_seen=away_rates.matches_seen,
+            event_id=ev["event_id"], team=ev["away_team"], side="away",
+            pre_attack=pre_away.attack, pre_defense=pre_away.defense,
+            matches_seen=pre_away.matches_seen,
         ))
-
-        # Update after recording pre-match state.
-        home_score = _blend_score(ev["home_score"], ev.get("home_xg"), cfg.xg_weight)
-        away_score = _blend_score(ev["away_score"], ev.get("away_xg"), cfg.xg_weight)
-
-        # Opponent-adjusted attack: how many did we score relative to what
-        # an average team would score against this defense?
-        expected_home_atk = max(0.05, away_rates.defense * cfg.league_mean_goals * cfg.home_advantage)
-        expected_away_atk = max(0.05, home_rates.defense * cfg.league_mean_goals)
-        new_home_atk = home_score / expected_home_atk
-        new_away_atk = away_score / expected_away_atk
-
-        # Symmetric for defense — what we conceded relative to the
-        # opponent's attack.
-        expected_home_def = max(0.05, away_rates.attack * cfg.league_mean_goals)
-        expected_away_def = max(0.05, home_rates.attack * cfg.league_mean_goals * cfg.home_advantage)
-        # A team's defense is *good* when they concede less; the rate is
-        # multiplicative on opponent rate so "concede less than expected"
-        # = ratio < 1. We invert later in match_probabilities via the
-        # multiplication structure.
-        new_home_def_ratio = away_score / expected_home_def
-        new_away_def_ratio = home_score / expected_away_def
-
-        # Clip extreme values to keep rates bounded.
-        def _clip(x: float) -> float:
-            return max(0.1, min(4.0, x))
-
-        rates[home] = TeamRates(
-            attack=(1.0 - eta) * home_rates.attack + eta * _clip(new_home_atk),
-            defense=(1.0 - eta) * home_rates.defense + eta * _clip(new_home_def_ratio),
-            matches_seen=home_rates.matches_seen + 1,
-        )
-        rates[away] = TeamRates(
-            attack=(1.0 - eta) * away_rates.attack + eta * _clip(new_away_atk),
-            defense=(1.0 - eta) * away_rates.defense + eta * _clip(new_away_def_ratio),
-            matches_seen=away_rates.matches_seen + 1,
-        )
-
     return snapshots
+
+
+def final_team_rates(
+    events: Sequence[dict],
+    cfg: DCConfig = DCConfig(),
+) -> Dict[str, TeamRates]:
+    """Walk ``events`` and return the *post-match* rates for each team
+    after the last event they played. Used at serve time to predict
+    upcoming fixtures whose event_id wasn't in the training set."""
+    rates: Dict[str, TeamRates] = {}
+    for ev, _, _, new_home, new_away in _iter_rate_updates(events, cfg):
+        rates[ev["home_team"]] = new_home
+        rates[ev["away_team"]] = new_away
+    return rates
 
 
 # ---------------------------------------------------------------------------

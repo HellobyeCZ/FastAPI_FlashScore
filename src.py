@@ -294,11 +294,26 @@ def bulk_scrape_manager_dependency() -> BulkScrapeManager:
     return _get_bulk_scrape_manager()
 
 
+@lru_cache()
+def _get_ml_artifacts():
+    """Load Phase 3 trained models from $APP_ML_MODELS_DIR. Cached so
+    repeated /predict calls don't re-load from disk."""
+    from app.ml.serving import load_models
+    return load_models()
+
+
 @app.on_event("startup")
 async def startup_snapshot_store() -> None:
     await _get_snapshot_store().initialize()
     await _get_bulk_scrape_manager().start()
     await _get_live_odds_scheduler().start()
+    # Pre-warm the model artifacts so the first /predict request doesn't
+    # pay the load latency. Failing to load is non-fatal — the endpoint
+    # returns the available subset.
+    try:
+        _get_ml_artifacts()
+    except Exception:
+        structlog.get_logger("ml").exception("ml_artifacts_load_failed_at_startup")
 
 
 @app.on_event("shutdown")
@@ -700,6 +715,90 @@ async def get_bulk_scrape_job(
         job["events"] = []
 
     return BulkScrapeJobDetail(**job)
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: serving endpoints — /predict and /picks/upcoming
+# ---------------------------------------------------------------------------
+
+def _serialize_prediction(record) -> dict:
+    return {
+        "model": record.model,
+        "market": record.market,
+        "selection": record.selection,
+        "model_prob": record.model_prob,
+        "market_price": record.market_price,
+        "market_implied": record.market_implied,
+        "market_devigged": record.market_devigged,
+        "edge": record.edge,
+        "kelly_full": record.kelly_full,
+        "notes": record.notes,
+    }
+
+
+@app.get("/predict/{event_id}")
+async def predict_event(event_id: str) -> dict:
+    """Run every loaded model on the given event and return per
+    (model, market, selection) predictions. ``market_*`` fields reflect
+    the freshest live_odds_snapshot — None if no live snapshot exists
+    yet for the event."""
+    from app.ml.serving import predict_event as run_predict
+
+    artifacts = _get_ml_artifacts()
+    records = run_predict(event_id, artifacts)
+    return {
+        "event_id": event_id,
+        "predictions": [_serialize_prediction(r) for r in records],
+        "available_models": {
+            "logistic": artifacts.logistic is not None,
+            "hgb": artifacts.hgb is not None,
+            "dixon_coles": artifacts.dc_rates is not None,
+        },
+    }
+
+
+@app.get("/picks/upcoming")
+async def picks_upcoming(
+    hours_ahead: int = Query(default=72, ge=1, le=336),
+    min_edge: float = Query(default=0.02, ge=0.0, le=1.0),
+    model: Optional[str] = Query(default=None,
+                                 description="Filter to one model (logistic|hgb|dixon_coles)"),
+    market: Optional[str] = Query(default=None,
+                                  description="Filter to one market (1X2_FT|OVER_UNDER_2.5_FT|BTTS_FT)"),
+) -> dict:
+    """List edge-positive picks across all loaded models for events
+    kicking off in the next ``hours_ahead``. Only selections where
+    ``edge >= min_edge`` are returned."""
+    from app.ml.serving import list_upcoming_events, predict_event as run_predict
+
+    artifacts = _get_ml_artifacts()
+    upcoming = list_upcoming_events(hours_ahead=hours_ahead)
+    picks: list = []
+    for fx in upcoming:
+        event_id = fx["event_id"]
+        records = run_predict(event_id, artifacts)
+        for r in records:
+            if r.edge is None or r.edge < min_edge:
+                continue
+            if model and r.model != model:
+                continue
+            if market and r.market != market:
+                continue
+            picks.append({
+                **_serialize_prediction(r),
+                "event_id": event_id,
+                "kickoff": fx["start_time_utc"],
+                "competition_path": fx["competition_path"],
+                "home_team_raw": fx["home_team_raw"],
+                "away_team_raw": fx["away_team_raw"],
+            })
+    return {
+        "hours_ahead": hours_ahead,
+        "min_edge": min_edge,
+        "events_considered": len(upcoming),
+        "pick_count": len(picks),
+        "picks": picks,
+    }
 
 
 # You can include routers here
