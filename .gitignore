@@ -4,6 +4,9 @@
 # Local Claude Code settings
 .claude/
 
+# Backtest run outputs
+reports/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

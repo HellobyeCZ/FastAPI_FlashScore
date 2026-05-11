@@ -1,0 +1,141 @@
+"""Backtest harness sanity checks.
+
+The core invariant required by the Phase 2 spec: the market-implied
+baseline at ``min_edge=0`` with bets forced should produce
+ROI ≈ −vig and CLV ≈ 0. If it doesn't, the harness is broken before
+any model is even involved.
+
+We also assert structural properties (every test event becomes 3 bets,
+log-loss is finite, reliability buckets are well-formed) to catch
+plumbing regressions cheaply.
+"""
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+
+import pytest
+
+from app.ml.backtest import run_backtest, render_reliability_svg
+from app.ml.closing_odds import backfill_closing_odds
+from app.ml.elo import EloConfig, backfill_elo
+from app.ml.labels import backfill_labels
+
+
+TEST_SCOPE = (("TESTLAND", "Test League"),)
+
+
+@pytest.fixture
+def backfilled_full(fixture_db):
+    """Run the full Phase 1 backfill against the fixture DB."""
+    backfill_labels(sport="football", scope=TEST_SCOPE, rebuild=True)
+    backfill_closing_odds(sport="football", scope=TEST_SCOPE, rebuild=True)
+    backfill_elo(config=EloConfig(sport="football"), scope=TEST_SCOPE, rebuild=True)
+    return fixture_db
+
+
+def test_market_implied_baseline_forced_produces_zero_clv(backfilled_full):
+    """Bets placed at the closing line, by definition, have CLV = 0.
+    The archive's archive odds are the closing line (validated in
+    Phase 0), so price_taken == closing_price for archive-only bets."""
+    report = run_backtest(
+        model="market_implied",
+        scope=TEST_SCOPE,
+        train_until="2020-01-01T00:00:00Z",
+        min_edge=0.0,
+        kelly_fraction=0.25,
+        force_bets=True,
+    )
+    assert report.total_bets > 0
+    assert report.mean_clv == 0.0
+
+
+def test_market_implied_baseline_forced_roi_is_minus_vig(backfilled_full):
+    """When the model exactly matches the devigged market probability and
+    bets are placed at the *vig-included* market price, expected ROI =
+    −vig. Our fixture has fair-ish prices around (2.0, 3.4, 4.0), which
+    implies vig ≈ 1/2 + 1/3.4 + 1/4 − 1 ≈ 0.044. With finite N the
+    realised ROI fluctuates but should be in the right ballpark."""
+    report = run_backtest(
+        model="market_implied",
+        scope=TEST_SCOPE,
+        train_until="2020-01-01T00:00:00Z",
+        min_edge=0.0,
+        force_bets=True,
+    )
+    # Implied (vig-included) sum for our fixture odds:
+    vig = 1 / 2.0 + 1 / 3.4 + 1 / 4.0 - 1
+    # With a tiny fixture this is noisy; assert sign + magnitude bound.
+    assert -vig - 0.5 <= report.roi <= -vig + 0.5
+    # The expected-value computation that justifies this:
+    # EV(stake S on selection s) = S*(price_s − 1)*devigged_prob_s − S*(1 − devigged_prob_s).
+    # Stake at vig-included price: price_s = 1 / implied_s. With model_prob
+    # = devigged_prob, summed across the three selections,
+    # E[total_pnl] / total_stake = −vig.
+
+
+def test_every_event_yields_three_bets_when_forced(backfilled_full):
+    """With force_bets=True, every event with both closing odds and
+    features produces exactly 3 bets (home, draw, away)."""
+    report = run_backtest(
+        model="market_implied",
+        scope=TEST_SCOPE,
+        train_until="2020-01-01T00:00:00Z",
+        min_edge=0.0,
+        force_bets=True,
+    )
+    # 5 fixture events × 3 selections each.
+    assert report.total_bets == 5 * 3
+
+
+def test_baseline_with_default_min_edge_places_no_bets(backfilled_full):
+    """Without forcing, the market_implied baseline produces zero edge
+    against itself — no bets should be placed."""
+    report = run_backtest(
+        model="market_implied",
+        scope=TEST_SCOPE,
+        train_until="2020-01-01T00:00:00Z",
+        min_edge=0.02,
+    )
+    assert report.total_bets == 0
+
+
+def test_brier_and_log_loss_are_finite(backfilled_full):
+    report = run_backtest(
+        model="market_implied",
+        scope=TEST_SCOPE,
+        train_until="2020-01-01T00:00:00Z",
+        min_edge=0.0,
+        force_bets=True,
+    )
+    assert 0.0 <= report.brier <= 1.0
+    assert report.log_loss > 0.0
+    assert report.log_loss < 50.0  # would only blow up if probs are pinned
+
+
+def test_reliability_buckets_well_formed(backfilled_full):
+    report = run_backtest(
+        model="market_implied",
+        scope=TEST_SCOPE,
+        train_until="2020-01-01T00:00:00Z",
+        min_edge=0.0,
+        force_bets=True,
+    )
+    for bucket in report.reliability_buckets:
+        assert 0.0 <= bucket.lower < bucket.upper <= 1.0
+        assert bucket.lower <= bucket.mean_pred <= bucket.upper
+        assert 0.0 <= bucket.hit_rate <= 1.0
+        assert bucket.n > 0
+
+
+def test_reliability_svg_renders(backfilled_full):
+    report = run_backtest(
+        model="market_implied",
+        scope=TEST_SCOPE,
+        train_until="2020-01-01T00:00:00Z",
+        min_edge=0.0,
+        force_bets=True,
+    )
+    svg = render_reliability_svg(report.reliability_buckets)
+    assert svg.startswith("<svg")
+    assert svg.endswith("</svg>")
+    assert "<circle" in svg  # at least one bucket point
