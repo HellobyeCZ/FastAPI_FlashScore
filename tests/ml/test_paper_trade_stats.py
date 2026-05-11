@@ -65,6 +65,15 @@ def test_aggregate_no_filters_no_group_returns_one_row(fixture_db):
     assert rows[0]["n"] == 1
     assert rows[0]["wins"] in (0, 1)
 
+    # Verify the returned row carries every documented metric key.
+    for key in ("n", "wins", "stake_total", "pnl_total", "mean_clv",
+                "brier", "hit_rate", "roi", "max_drawdown"):
+        assert key in rows[0], f"missing {key} in aggregate row"
+    # hit_rate is either None or in [0, 1].
+    assert rows[0]["hit_rate"] is None or 0.0 <= rows[0]["hit_rate"] <= 1.0
+    # max_drawdown is a non-negative float.
+    assert rows[0]["max_drawdown"] >= 0.0
+
 
 def test_aggregate_group_by_model(fixture_db):
     from app.ml.labels import backfill_labels
@@ -94,3 +103,27 @@ def test_aggregate_group_by_model(fixture_db):
     assert "dixon_coles" in by_model
     assert by_model["logistic"]["n"] == 1
     assert by_model["dixon_coles"]["n"] == 1
+
+
+def test_aggregate_min_n_filters_all_rows_does_not_raise(fixture_db):
+    """With min_n_per_group=2 and only 1 bet, the global result row is
+    filtered out by HAVING and aggregate() should return an empty list,
+    not raise IndexError when _attach_max_drawdown would otherwise
+    index rows[0]."""
+    from app.ml.labels import backfill_labels
+    from app.ml.closing_odds import backfill_closing_odds
+    backfill_labels(sport="football", scope=TEST_SCOPE, rebuild=True)
+    picks = [
+        PickInput(
+            event_id="evt001", model="logistic", market="1X2_FT",
+            selection="home", bet_ts=_now_iso(),
+            price_at_recommendation=1.8, model_prob=0.55,
+            devigged_prob=0.5, edge=0.05, kelly_full=0.10,
+        ),
+    ]
+    record_picks(picks)
+    backfill_closing_odds(sport="football", scope=TEST_SCOPE, rebuild=True)
+    settle_pending_bets()
+
+    rows = aggregate(StatsRequest(min_n_per_group=2))
+    assert rows == []

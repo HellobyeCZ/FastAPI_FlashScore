@@ -187,20 +187,38 @@ def aggregate(request: StatsRequest) -> List[Dict[str, Any]]:
     """
     select_clause = ", ".join([*select_parts, aggregates.strip()])
     group_clause = f"GROUP BY {', '.join(group_parts)}" if group_parts else ""
-    having_clause = (
-        f"HAVING n >= ?" if request.min_n_per_group > 1 else ""
-    )
-    sql = f"""
-        SELECT {select_clause}
-        FROM paper_bets pb
-        LEFT JOIN match_event_summaries mes ON mes.event_id = pb.event_id
-        WHERE {where_clause}
-        {group_clause}
-        {having_clause}
-    """
+    # HAVING requires GROUP BY in SQLite. When group_by is present we can use
+    # HAVING directly; when there is no GROUP BY, wrap as a subquery and filter
+    # on n in the outer WHERE.  Both produce the same result set.
     final_params = list(where_params)
     if request.min_n_per_group > 1:
         final_params.append(request.min_n_per_group)
+        if group_parts:
+            inner_sql = f"""
+                SELECT {select_clause}
+                FROM paper_bets pb
+                LEFT JOIN match_event_summaries mes ON mes.event_id = pb.event_id
+                WHERE {where_clause}
+                {group_clause}
+                HAVING n >= ?
+            """
+            sql = inner_sql
+        else:
+            inner_sql = f"""
+                SELECT {select_clause}
+                FROM paper_bets pb
+                LEFT JOIN match_event_summaries mes ON mes.event_id = pb.event_id
+                WHERE {where_clause}
+            """
+            sql = f"SELECT * FROM ({inner_sql}) WHERE n >= ?"
+    else:
+        sql = f"""
+            SELECT {select_clause}
+            FROM paper_bets pb
+            LEFT JOIN match_event_summaries mes ON mes.event_id = pb.event_id
+            WHERE {where_clause}
+            {group_clause}
+        """
 
     with ml_db.connect(read_only=True) as conn:
         conn.row_factory = sqlite3.Row
@@ -235,7 +253,7 @@ def _attach_max_drawdown(
             SELECT pb.pnl, COALESCE(pb.settled_at, pb.recommended_at) AS t
             FROM paper_bets pb
             LEFT JOIN match_event_summaries mes ON mes.event_id = pb.event_id
-            WHERE {where_clause} AND pb.status = 'settled'
+            WHERE {where_clause}
             ORDER BY t ASC
             """,
             where_params,
@@ -253,7 +271,7 @@ def _attach_max_drawdown(
         SELECT {group_exprs}, pb.pnl, COALESCE(pb.settled_at, pb.recommended_at) AS t
         FROM paper_bets pb
         LEFT JOIN match_event_summaries mes ON mes.event_id = pb.event_id
-        WHERE {where_clause} AND pb.status = 'settled'
+        WHERE {where_clause}
         ORDER BY t ASC
         """,
         where_params,
