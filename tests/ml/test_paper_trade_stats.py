@@ -107,9 +107,9 @@ def test_aggregate_group_by_model(fixture_db):
 
 def test_aggregate_min_n_filters_all_rows_does_not_raise(fixture_db):
     """With min_n_per_group=2 and only 1 bet, the global result row is
-    filtered out by HAVING and aggregate() should return an empty list,
-    not raise IndexError when _attach_max_drawdown would otherwise
-    index rows[0]."""
+    filtered out by the outer WHERE on n (subquery-wrapper path, no
+    group_by) and aggregate() should return an empty list, not raise
+    IndexError when _attach_max_drawdown would otherwise index rows[0]."""
     from app.ml.labels import backfill_labels
     from app.ml.closing_odds import backfill_closing_odds
     backfill_labels(sport="football", scope=TEST_SCOPE, rebuild=True)

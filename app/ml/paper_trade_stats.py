@@ -194,7 +194,7 @@ def aggregate(request: StatsRequest) -> List[Dict[str, Any]]:
     if request.min_n_per_group > 1:
         final_params.append(request.min_n_per_group)
         if group_parts:
-            inner_sql = f"""
+            sql = f"""
                 SELECT {select_clause}
                 FROM paper_bets pb
                 LEFT JOIN match_event_summaries mes ON mes.event_id = pb.event_id
@@ -202,7 +202,6 @@ def aggregate(request: StatsRequest) -> List[Dict[str, Any]]:
                 {group_clause}
                 HAVING n >= ?
             """
-            sql = inner_sql
         else:
             inner_sql = f"""
                 SELECT {select_clause}
@@ -247,6 +246,15 @@ def _attach_max_drawdown(
     where_params: Sequence[Any],
 ) -> List[Dict[str, Any]]:
     """Compute max drawdown per group by scanning ordered settled bets."""
+    # NOTE: This intentionally respects the caller's status filter (it
+    # delegates entirely to ``where_clause``). Consequence: when
+    # ``status='pending'`` or ``status='all'``, pending bets have
+    # ``pnl=NULL`` which COALESCE-coerces to 0.0 — they contribute
+    # nothing to the running cumulative. A drawdown computed over a
+    # pending-only population will therefore always be 0.0. This is
+    # consistent with the rest of the metrics, which use the same
+    # population, but callers passing non-settled statuses should
+    # interpret max_drawdown as "settled-only loss path."
     if not request.group_by:
         bets = conn.execute(
             f"""
