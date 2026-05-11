@@ -365,6 +365,7 @@ class SnapshotStore:
             )
             self._ensure_bulk_scrape_tables(connection)
             self._ensure_upcoming_tables(connection)
+            self._ensure_phase1_tables(connection)
 
     def _insert_odds_snapshot_sync(
         self,
@@ -1233,6 +1234,82 @@ class SnapshotStore:
             """
             CREATE INDEX IF NOT EXISTS idx_live_odds_snapshots_event_selection
             ON live_odds_snapshots(event_id, market, selection_key, fetched_at)
+            """
+        )
+        connection.commit()
+
+    @staticmethod
+    def _ensure_phase1_tables(connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS bet_labels (
+                event_id TEXT PRIMARY KEY,
+                sport TEXT NOT NULL,
+                country TEXT,
+                competition TEXT,
+                start_time_utc TEXT,
+                home_team TEXT,
+                away_team TEXT,
+                home_score INTEGER NOT NULL,
+                away_score INTEGER NOT NULL,
+                outcome_1x2 TEXT NOT NULL,
+                total_goals INTEGER NOT NULL,
+                over_2_5 INTEGER NOT NULL,
+                btts INTEGER NOT NULL,
+                home_goals_first_half INTEGER,
+                away_goals_first_half INTEGER,
+                derived_at TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_bet_labels_kickoff
+            ON bet_labels(start_time_utc, sport, competition)
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS closing_odds (
+                event_id TEXT NOT NULL,
+                bookmaker TEXT NOT NULL,
+                market TEXT NOT NULL,
+                selection_key TEXT NOT NULL,
+                decimal_price REAL NOT NULL,
+                implied_prob REAL NOT NULL,
+                devigged_prob REAL,
+                derived_at TEXT NOT NULL,
+                PRIMARY KEY (event_id, bookmaker, market, selection_key)
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_closing_odds_event_market
+            ON closing_odds(event_id, market)
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS team_elo_history (
+                event_id TEXT NOT NULL,
+                team TEXT NOT NULL,
+                side TEXT NOT NULL,
+                start_time_utc TEXT NOT NULL,
+                sport TEXT NOT NULL,
+                competition TEXT,
+                pre_elo REAL NOT NULL,
+                post_elo REAL NOT NULL,
+                k_factor REAL NOT NULL,
+                hfa REAL NOT NULL,
+                PRIMARY KEY (event_id, team)
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_team_elo_history_team_time
+            ON team_elo_history(team, start_time_utc)
             """
         )
         connection.commit()

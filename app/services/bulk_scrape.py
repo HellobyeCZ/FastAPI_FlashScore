@@ -1042,13 +1042,15 @@ class LiveOddsScheduler:
                     continue
                 if outcome.get("active") is False:
                     continue
+                # Precedence: selection (OVER/UNDER/YES/NO/HOME/AWAY) →
+                # eventParticipantId (participant markets) → position →
+                # "DRAW" (1X2 draw row, where all three are None).
                 base_selection = (
                     outcome.get("selection")
                     or outcome.get("eventParticipantId")
                     or outcome.get("position")
+                    or "DRAW"
                 )
-                if not base_selection:
-                    continue
                 handicap_raw = outcome.get("handicap")
                 handicap_value: Optional[str] = None
                 if isinstance(handicap_raw, dict):
