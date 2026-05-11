@@ -7,6 +7,9 @@
 # Backtest run outputs
 reports/
 
+# MLflow local tracking store
+mlruns/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

@@ -99,24 +99,27 @@ def names() -> tuple:
 # Logistic-model adapter (Phase 3a)
 # ---------------------------------------------------------------------------
 
-def make_logistic_model_fn(trained, *, calibrated: bool) -> ModelFn:
-    """Wrap a :class:`app.ml.training.TrainedLogistic` as a ``ModelFn`` the
-    backtester can consume. ``calibrated`` selects between the raw and
-    isotonic-calibrated probabilities.
+def make_trained_model_fn(trained, *, calibrated: bool, name_prefix: str = "trained") -> ModelFn:
+    """Wrap any object exposing ``feature_columns``, ``predict_proba``,
+    and ``predict_proba_calibrated`` as a backtester ``ModelFn``.
 
-    The backtester passes a feature dict and a market context; we extract
-    the LOGISTIC_FEATURE_COLUMNS in fixed order. Any missing feature
-    falls back to the uniform 1/3 prior so the bet is naturally
-    edge-less and skipped.
+    Reads the feature columns the trained model expects (in order) from
+    the feature dict + market context. Market columns (``market_prob_*``)
+    are pulled from the market context dict; everything else from the
+    feature dict. Any missing column falls back to a uniform 1/3 prior so
+    the bet is naturally edge-less and skipped.
     """
-    # Late import to avoid pulling sklearn at module import time.
-    from app.ml.training import LOGISTIC_FEATURE_COLUMNS
     import numpy as _np
+
+    feature_columns = tuple(getattr(trained, "feature_columns"))
 
     def _fn(features, market) -> Dict[str, float]:
         row = []
-        for col in LOGISTIC_FEATURE_COLUMNS:
-            v = features.get(col)
+        for col in feature_columns:
+            if col.startswith("market_prob_"):
+                v = market.get(f"devigged_prob_{col.removeprefix('market_prob_')}")
+            else:
+                v = features.get(col)
             if v is None:
                 return {"home": 1 / 3, "draw": 1 / 3, "away": 1 / 3}
             try:
@@ -130,5 +133,11 @@ def make_logistic_model_fn(trained, *, calibrated: bool) -> ModelFn:
         )
         return {"home": float(probs[0]), "draw": float(probs[1]), "away": float(probs[2])}
 
-    _fn.__name__ = f"logistic_{'calibrated' if calibrated else 'uncalibrated'}"
+    _fn.__name__ = f"{name_prefix}_{'calibrated' if calibrated else 'uncalibrated'}"
     return _fn
+
+
+# Back-compat alias: existing callers (train_logistic, tests) call
+# make_logistic_model_fn(). It now delegates to the generic helper.
+def make_logistic_model_fn(trained, *, calibrated: bool) -> ModelFn:
+    return make_trained_model_fn(trained, calibrated=calibrated, name_prefix="logistic")

@@ -35,9 +35,10 @@ from app.ml.labels import FOOTBALL_PHASE1_SCOPE
 
 SELECTIONS = ("home", "draw", "away")
 
-# Feature columns used by the logistic model. Order is load-bearing —
-# pickled scalers/models will only round-trip if this stays stable.
-LOGISTIC_FEATURE_COLUMNS: Tuple[str, ...] = (
+# Phase 3a logistic uses the base team-state features only — no
+# market_prob_* — so we measure pure team-state predictive power.
+# Order is load-bearing: pickled scalers/models depend on this.
+BASE_FEATURE_COLUMNS: Tuple[str, ...] = (
     "home_elo",
     "away_elo",
     "elo_diff",
@@ -49,14 +50,28 @@ LOGISTIC_FEATURE_COLUMNS: Tuple[str, ...] = (
     "away_days_rest",
 )
 
+# Phase 3b adds the closing-line devigged probabilities. The HGB model
+# is trained on this 12-column set so it can find *residual* edges
+# beyond what the market already prices in.
+MARKET_FEATURE_COLUMNS: Tuple[str, ...] = (
+    "market_prob_home",
+    "market_prob_draw",
+    "market_prob_away",
+)
+
+HGB_FEATURE_COLUMNS: Tuple[str, ...] = BASE_FEATURE_COLUMNS + MARKET_FEATURE_COLUMNS
+
+# Back-compat alias: existing callers and tests use LOGISTIC_FEATURE_COLUMNS.
+LOGISTIC_FEATURE_COLUMNS = BASE_FEATURE_COLUMNS
+
 
 @dataclass(frozen=True)
 class FeatureMatrix:
-    X: np.ndarray         # shape (n, len(LOGISTIC_FEATURE_COLUMNS))
+    X: np.ndarray         # shape (n, len(columns))
     y: np.ndarray         # shape (n,) int labels 0=home, 1=draw, 2=away
     event_ids: List[str]
     kickoffs: List[str]   # ISO strings
-    columns: Tuple[str, ...] = LOGISTIC_FEATURE_COLUMNS
+    columns: Tuple[str, ...] = BASE_FEATURE_COLUMNS
 
 
 @dataclass(frozen=True)
@@ -66,10 +81,10 @@ class TrainTestSplit:
     test: FeatureMatrix
 
 
-def feature_set_hash() -> str:
-    """Stable hash of the feature column order. Logged with every run so
+def feature_set_hash(columns: Sequence[str] = BASE_FEATURE_COLUMNS) -> str:
+    """Stable hash of a feature column order. Logged with every run so
     a model's MLflow record pins exactly which inputs it expects."""
-    payload = "|".join(LOGISTIC_FEATURE_COLUMNS)
+    payload = "|".join(columns)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
 
 
@@ -80,11 +95,14 @@ def feature_set_hash() -> str:
 _OUTCOME_TO_LABEL = {"home": 0, "draw": 1, "away": 2}
 
 
-def _row_from_features(features: Mapping[str, object]) -> Optional[List[float]]:
+def _row_from_features(
+    features: Mapping[str, object],
+    columns: Sequence[str] = BASE_FEATURE_COLUMNS,
+) -> Optional[List[float]]:
     """Extract a numeric row from a feature dict. Returns None if any
-    required field is missing."""
+    required column is missing."""
     row: List[float] = []
-    for col in LOGISTIC_FEATURE_COLUMNS:
+    for col in columns:
         v = features.get(col)
         if v is None:
             return None
@@ -101,11 +119,11 @@ def build_feature_matrix(
     scope: Sequence[Tuple[str, str]] = FOOTBALL_PHASE1_SCOPE,
     min_kickoff: Optional[str] = None,
     max_kickoff: Optional[str] = None,
+    columns: Sequence[str] = BASE_FEATURE_COLUMNS,
 ) -> FeatureMatrix:
     """Build an aligned ``(X, y, event_ids)`` matrix for every settled
     event in scope. ``as_of_ts = kickoff − CLOSING_LINE_BUFFER`` so
-    market features are available at the closing-line moment, but the
-    logistic doesn't consume them in Phase 3a."""
+    market features are available at the closing-line moment."""
     placeholders = ",".join("(?, ?)" for _ in scope) if scope else ""
     params: List[str] = [sport]
     if scope:
@@ -152,7 +170,7 @@ def build_feature_matrix(
         features = get_features(event_id, as_of)
         if features is None:
             continue
-        feature_row = _row_from_features(features)
+        feature_row = _row_from_features(features, columns)
         if feature_row is None:
             continue
         X_rows.append(feature_row)
@@ -165,6 +183,7 @@ def build_feature_matrix(
         y=np.asarray(y_rows, dtype=int),
         event_ids=event_ids,
         kickoffs=kickoffs,
+        columns=tuple(columns),
     )
 
 
@@ -211,7 +230,7 @@ def chronological_split(
 class TrainedLogistic:
     pipeline: object  # sklearn Pipeline with StandardScaler + LogisticRegression
     calibrators: Optional[Tuple[object, object, object]]  # per-class IsotonicRegression, or None
-    feature_columns: Tuple[str, ...] = LOGISTIC_FEATURE_COLUMNS
+    feature_columns: Tuple[str, ...] = BASE_FEATURE_COLUMNS
 
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
         return self.pipeline.predict_proba(X)
@@ -260,27 +279,107 @@ def train_logistic(
 
 
 def isotonic_calibrate(
-    model: TrainedLogistic,
+    model: "TrainedLogistic | TrainedHGB",
     calib: FeatureMatrix,
-) -> TrainedLogistic:
+) -> "TrainedLogistic | TrainedHGB":
     """Fit per-class isotonic on the calibration block. Returns a NEW
-    :class:`TrainedLogistic` with calibrators attached; the input model
-    is unchanged."""
+    trained-model with calibrators attached; the input is unchanged.
+    Works for both TrainedLogistic and TrainedHGB."""
     from sklearn.isotonic import IsotonicRegression
 
     raw = model.predict_proba(calib.X)
     calibrators = []
     for k in range(3):
         ir = IsotonicRegression(out_of_bounds="clip")
-        # Binary y for this class: did this class occur?
         binary_y = (calib.y == k).astype(int)
         ir.fit(raw[:, k], binary_y)
         calibrators.append(ir)
+    if isinstance(model, TrainedHGB):
+        return TrainedHGB(
+            model=model.model,
+            calibrators=tuple(calibrators),
+            feature_columns=model.feature_columns,
+        )
     return TrainedLogistic(
         pipeline=model.pipeline,
         calibrators=tuple(calibrators),
         feature_columns=model.feature_columns,
     )
+
+
+# ---------------------------------------------------------------------------
+# Histogram-gradient-boosted classifier (Phase 3b)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class TrainedHGB:
+    model: object  # sklearn HistGradientBoostingClassifier
+    calibrators: Optional[Tuple[object, object, object]] = None
+    feature_columns: Tuple[str, ...] = HGB_FEATURE_COLUMNS
+
+    def predict_proba(self, X: np.ndarray) -> np.ndarray:
+        return self.model.predict_proba(X)
+
+    def predict_proba_calibrated(self, X: np.ndarray) -> np.ndarray:
+        raw = self.predict_proba(X)
+        if self.calibrators is None:
+            return raw
+        calibrated = np.zeros_like(raw)
+        for k, cal in enumerate(self.calibrators):
+            calibrated[:, k] = cal.predict(raw[:, k])
+        row_sums = calibrated.sum(axis=1, keepdims=True)
+        row_sums[row_sums == 0] = 1.0
+        return calibrated / row_sums
+
+    def save(self, path: str) -> None:
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "wb") as f:
+            pickle.dump(self, f)
+
+    @staticmethod
+    def load(path: str) -> "TrainedHGB":
+        with open(path, "rb") as f:
+            return pickle.load(f)
+
+
+def train_hgb(
+    train: FeatureMatrix,
+    *,
+    max_iter: int = 300,
+    learning_rate: float = 0.05,
+    max_depth: int = 4,
+    l2_regularization: float = 0.0,
+    validation_fraction: float = 0.1,
+    random_state: int = 42,
+) -> TrainedHGB:
+    """Fit a histogram-based gradient boosting classifier.
+
+    sklearn's HistGradientBoostingClassifier is the same algorithmic
+    family as LightGBM/XGBoost. We use it instead of LightGBM here
+    because LightGBM's installed wheel has a numpy 2 ABI mismatch in
+    this environment (see Phase 2 dependency notes). HGB is already
+    available via the existing scikit-learn dep, no new requirements.
+
+    Defaults are conservative: ``max_depth=4`` and a low learning rate
+    (0.05) over up to 300 iterations with early stopping on an internal
+    10% validation cut from the train block. Early stopping is disabled
+    automatically if the train block is too small (under ~30 rows) since
+    the stratified validation split needs at least one row per class.
+    """
+    from sklearn.ensemble import HistGradientBoostingClassifier
+
+    use_early_stopping = train.X.shape[0] >= 30
+    model = HistGradientBoostingClassifier(
+        max_iter=max_iter,
+        learning_rate=learning_rate,
+        max_depth=max_depth,
+        l2_regularization=l2_regularization,
+        early_stopping=use_early_stopping,
+        validation_fraction=validation_fraction if use_early_stopping else None,
+        random_state=random_state,
+    )
+    model.fit(train.X, train.y)
+    return TrainedHGB(model=model, feature_columns=tuple(train.columns))
 
 
 # ---------------------------------------------------------------------------
