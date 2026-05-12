@@ -131,3 +131,26 @@ model LiveOddsSnapshot {
   @@index([eventId, market, selectionKey, fetchedAt], map: "idx_live_odds_snapshots_event_selection")
   @@map("live_odds_snapshots")
 }
+
+model MatchEventSummary {
+  eventId              String  @id @map("event_id")
+  eventName            String? @map("event_name")
+  homeTeam             String? @map("home_team")
+  awayTeam             String? @map("away_team")
+  sport                String?
+  country              String?
+  competition          String?
+  competitionStage     String? @map("competition_stage")
+  competitionPath      String? @map("competition_path")
+  startTimeUtc         String? @map("start_time_utc")
+  status               String?
+  statusDetail         String? @map("status_detail")
+  outcome              String?
+  oddsSnapshotCount    Int     @default(0) @map("odds_snapshot_count")
+  statsSnapshotCount   Int     @default(0) @map("stats_snapshot_count")
+  latestOddsFetchedAt  String? @map("latest_odds_fetched_at")
+  latestStatsFetchedAt String? @map("latest_stats_fetched_at")
+  updatedAt            String  @map("updated_at")
+
+  @@map("match_event_summaries")
+}
