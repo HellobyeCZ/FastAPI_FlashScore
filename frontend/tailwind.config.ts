@@ -12,7 +12,19 @@ const config: Config = {
           surface: "var(--color-brand-surface)",
           "surface-alt": "var(--color-brand-surface-alt)",
           outline: "var(--color-brand-outline)"
-        }
+        },
+        bg: "var(--bg)",
+        surface: "var(--surface)",
+        "surface-2": "var(--surface-2)",
+        border: "var(--border)",
+        "border-hot": "var(--border-hot)",
+        text: "var(--text)",
+        "text-dim": "var(--text-dim)",
+        "text-faint": "var(--text-faint)",
+        accent: "var(--accent)",
+        pos: "var(--pos)",
+        neg: "var(--neg)",
+        warn: "var(--warn)"
       },
       fontFamily: {
         mono: ["var(--font-mono)", "ui-monospace", "monospace"],
