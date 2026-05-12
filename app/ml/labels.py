@@ -20,12 +20,15 @@ from app.ml.sports import LabelDerivationError, MatchLabels, derive_labels
 FOOTBALL_PHASE1_SCOPE: Tuple[Tuple[str, str], ...] = (
     ("ENGLAND", "Premier League"),
     ("ENGLAND", "Championship"),
+    ("ENGLAND", "Championship - Play Offs"),
     ("GERMANY", "Bundesliga"),
     ("SPAIN", "LaLiga"),
     ("SPAIN", "Primera Division"),
     ("FRANCE", "Ligue 1"),
     ("CZECH REPUBLIC", "FORTUNA:LIGA"),
     ("CZECH REPUBLIC", "Chance Liga"),
+    ("CZECH REPUBLIC", "Chance Liga - Relegation Group"),
+    ("CZECH REPUBLIC", "Chance Liga - Championship Group"),
 )
 
 

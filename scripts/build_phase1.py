@@ -13,6 +13,7 @@ import argparse
 import sys
 
 from app.ml.closing_odds import backfill_closing_odds
+from app.ml.closing_odds_from_live import backfill_closing_from_live
 from app.ml.elo import backfill_elo, EloConfig
 from app.ml.features import get_features
 from app.ml.labels import backfill_labels, FOOTBALL_PHASE1_SCOPE
@@ -134,6 +135,11 @@ def main() -> int:
     print(">>> Step 2/3: closing_odds (this can take a few minutes)")
     odds_report = backfill_closing_odds(sport=args.sport, rebuild=args.rebuild)
     print(f"  {odds_report}")
+
+    print()
+    print(">>> Step 2b/3: closing_odds from live snapshots (fallback for events with no archive odds)")
+    live_report = backfill_closing_from_live(sport=args.sport)
+    print(f"  {live_report}")
 
     if not args.skip_elo:
         print()
