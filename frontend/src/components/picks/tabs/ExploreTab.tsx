@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useLocale } from "@/contexts/LocaleContext";
@@ -30,10 +29,6 @@ import {
   HeatmapChart,
   type HeatmapCell,
 } from "@/components/picks/charts/HeatmapChart";
-
-// Avoid unused-import lint while keeping the import slot for parity with
-// ModelsTab (drilldown could link to event pages later).
-void Link;
 
 const MODEL_COLORS: Record<string, string> = {
   dixon_coles: "#1f77b4",
