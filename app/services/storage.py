@@ -97,6 +97,7 @@ class SnapshotStore:
                 response_payload_json,
                 feed_payloads_json,
                 is_terminal,
+                response.event,
             )
 
     async def list_odds_snapshots(self, *, event_id: str, limit: int = 25) -> List[Dict[str, Any]]:
@@ -397,6 +398,7 @@ class SnapshotStore:
                     upstream_payload_json,
                 ),
             )
+            self._update_summary_from_odds_sync(connection, event_id, fetched_at)
             connection.commit()
 
     def _insert_match_stats_snapshot_sync(
@@ -408,6 +410,7 @@ class SnapshotStore:
         match_stats_payload_json: str,
         feed_payloads_json: str,
         is_terminal: bool,
+        event: Any,
     ) -> None:
         with self._connect() as connection:
             connection.execute(
@@ -432,7 +435,103 @@ class SnapshotStore:
                     1 if is_terminal else 0,
                 ),
             )
+            self._upsert_summary_from_stats_sync(connection, event, fetched_at)
             connection.commit()
+
+    @staticmethod
+    def _upsert_summary_from_stats_sync(
+        connection: sqlite3.Connection,
+        event: Any,
+        fetched_at_iso: str,
+    ) -> None:
+        home_team = getattr(event, "home_team", None)
+        away_team = getattr(event, "away_team", None)
+        if home_team and away_team:
+            event_name = f"{home_team} vs {away_team}"
+        else:
+            event_name = None
+        start_time = getattr(event, "start_time_utc", None)
+        if start_time is not None:
+            start_time_utc_iso = start_time.astimezone(timezone.utc).isoformat()
+        else:
+            start_time_utc_iso = None
+        updated_at = datetime.now(timezone.utc).isoformat()
+        connection.execute(
+            """
+            INSERT INTO match_event_summaries (
+                event_id,
+                event_name,
+                home_team,
+                away_team,
+                sport,
+                country,
+                competition,
+                competition_stage,
+                competition_path,
+                start_time_utc,
+                status,
+                status_detail,
+                outcome,
+                odds_snapshot_count,
+                stats_snapshot_count,
+                latest_odds_fetched_at,
+                latest_stats_fetched_at,
+                updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, NULL, ?, ?)
+            ON CONFLICT(event_id) DO UPDATE SET
+                event_name = COALESCE(excluded.event_name, match_event_summaries.event_name),
+                home_team = COALESCE(excluded.home_team, match_event_summaries.home_team),
+                away_team = COALESCE(excluded.away_team, match_event_summaries.away_team),
+                sport = COALESCE(excluded.sport, match_event_summaries.sport),
+                country = COALESCE(excluded.country, match_event_summaries.country),
+                competition = COALESCE(excluded.competition, match_event_summaries.competition),
+                competition_stage = COALESCE(excluded.competition_stage, match_event_summaries.competition_stage),
+                competition_path = COALESCE(excluded.competition_path, match_event_summaries.competition_path),
+                start_time_utc = COALESCE(excluded.start_time_utc, match_event_summaries.start_time_utc),
+                status = COALESCE(excluded.status, match_event_summaries.status),
+                status_detail = COALESCE(excluded.status_detail, match_event_summaries.status_detail),
+                outcome = COALESCE(excluded.outcome, match_event_summaries.outcome),
+                stats_snapshot_count = match_event_summaries.stats_snapshot_count + 1,
+                latest_stats_fetched_at = excluded.latest_stats_fetched_at,
+                updated_at = excluded.updated_at
+            """,
+            (
+                getattr(event, "event_id", None),
+                event_name,
+                home_team,
+                away_team,
+                getattr(event, "sport", None),
+                getattr(event, "country", None),
+                getattr(event, "competition", None),
+                getattr(event, "competition_stage", None),
+                getattr(event, "competition_path", None),
+                start_time_utc_iso,
+                getattr(event, "status", None),
+                getattr(event, "status_detail", None),
+                getattr(event, "outcome", None),
+                fetched_at_iso,
+                updated_at,
+            ),
+        )
+
+    @staticmethod
+    def _update_summary_from_odds_sync(
+        connection: sqlite3.Connection,
+        event_id: str,
+        fetched_at_iso: str,
+    ) -> None:
+        # No-op when the row does not yet exist; the stats path will create it.
+        updated_at = datetime.now(timezone.utc).isoformat()
+        connection.execute(
+            """
+            UPDATE match_event_summaries
+            SET odds_snapshot_count = odds_snapshot_count + 1,
+                latest_odds_fetched_at = ?,
+                updated_at = ?
+            WHERE event_id = ?
+            """,
+            (fetched_at_iso, updated_at, event_id),
+        )
 
     def _list_odds_snapshots_sync(self, event_id: str, limit: int) -> List[Dict[str, Any]]:
         with self._connect() as connection:
@@ -1240,6 +1339,30 @@ class SnapshotStore:
 
     @staticmethod
     def _ensure_phase1_tables(connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS match_event_summaries (
+                event_id TEXT PRIMARY KEY,
+                event_name TEXT,
+                home_team TEXT,
+                away_team TEXT,
+                sport TEXT,
+                country TEXT,
+                competition TEXT,
+                competition_stage TEXT,
+                competition_path TEXT,
+                start_time_utc TEXT,
+                status TEXT,
+                status_detail TEXT,
+                outcome TEXT,
+                odds_snapshot_count INTEGER NOT NULL DEFAULT 0,
+                stats_snapshot_count INTEGER NOT NULL DEFAULT 0,
+                latest_odds_fetched_at TEXT,
+                latest_stats_fetched_at TEXT,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS bet_labels (
