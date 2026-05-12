@@ -315,5 +315,58 @@ def calibration_buckets(
     filters: StatsFilter = StatsFilter(),
     n_buckets: int = 10,
 ) -> List[Dict[str, Any]]:
-    """Stub — implemented in Task A4."""
-    raise NotImplementedError
+    """Bin settled bets for ``model`` by ``model_prob`` and return the
+    per-bucket sample count, mean predicted prob, and empirical hit
+    rate. Used by the per-model deep-dive calibration plot."""
+    width = 1.0 / n_buckets
+    # Ensure paper_bets table exists before the read-only query.
+    from app.ml.paper_trade import _ensure_paper_bets_table
+    _ensure_paper_bets_table()
+    # Force model filter to the given model, on top of caller filters.
+    model_filters = filters.__class__(
+        **{**filters.__dict__, "model": tuple([model])}
+    )
+    # Settled rows only.
+    if model_filters.status == "pending":
+        return []
+    if model_filters.status == "all":
+        model_filters = model_filters.__class__(
+            **{**model_filters.__dict__, "status": "settled"}
+        )
+
+    where_clause, where_params = _build_where(model_filters)
+    with ml_db.connect(read_only=True) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            f"""
+            SELECT pb.model_prob AS p, pb.result AS r
+            FROM paper_bets pb
+            LEFT JOIN match_event_summaries mes ON mes.event_id = pb.event_id
+            WHERE {where_clause}
+              AND pb.status = 'settled'
+              AND pb.result IS NOT NULL
+            """,
+            where_params,
+        ).fetchall()
+    if not rows:
+        return []
+
+    buckets: List[List[Tuple[float, float]]] = [[] for _ in range(n_buckets)]
+    for row in rows:
+        p = float(row["p"])
+        idx = min(int(p / width), n_buckets - 1)
+        buckets[idx].append((p, float(row["r"])))
+    out: List[Dict[str, Any]] = []
+    for i, bucket in enumerate(buckets):
+        if not bucket:
+            continue
+        mean_pred = sum(p for p, _ in bucket) / len(bucket)
+        hit_rate = sum(r for _, r in bucket) / len(bucket)
+        out.append({
+            "lower": i * width,
+            "upper": (i + 1) * width,
+            "n": len(bucket),
+            "mean_pred": mean_pred,
+            "hit_rate": hit_rate,
+        })
+    return out

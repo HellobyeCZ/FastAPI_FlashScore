@@ -198,3 +198,33 @@ def test_min_n_per_group_drops_small_buckets(fixture_db):
 
     rows = aggregate(StatsRequest(group_by=("model",), min_n_per_group=5))
     assert len(rows) == 0
+
+
+def test_calibration_buckets_empty(fixture_db):
+    rows = calibration_buckets(model="logistic")
+    assert rows == []
+
+
+def test_calibration_buckets_one_settled_bet(fixture_db):
+    from app.ml.labels import backfill_labels
+    from app.ml.closing_odds import backfill_closing_odds
+    backfill_labels(sport="football", scope=TEST_SCOPE, rebuild=True)
+    picks = [
+        PickInput(
+            event_id="evt001", model="logistic", market="1X2_FT",
+            selection="home", bet_ts=_now_iso(),
+            price_at_recommendation=1.8, model_prob=0.55,
+            devigged_prob=0.5, edge=0.05, kelly_full=0.10,
+        ),
+    ]
+    record_picks(picks)
+    backfill_closing_odds(sport="football", scope=TEST_SCOPE, rebuild=True)
+    settle_pending_bets()
+
+    rows = calibration_buckets(model="logistic")
+    assert len(rows) == 1
+    bucket = rows[0]
+    assert 0.5 <= bucket["mean_pred"] <= 0.6
+    assert bucket["lower"] == pytest.approx(0.5)
+    assert bucket["upper"] == pytest.approx(0.6)
+    assert bucket["n"] == 1
