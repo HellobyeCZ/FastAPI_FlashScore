@@ -44,7 +44,7 @@ export function DataTable<T>({
 
   return (
     <table className={clsx("w-full border-collapse font-mono text-[12px]", className)}>
-      <thead>
+      <thead className="sticky top-0 z-10 bg-bg">
         <tr className="border-b border-border">
           {columns.map((c) => (
             <th
