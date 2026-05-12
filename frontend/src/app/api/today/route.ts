@@ -1,11 +1,5 @@
 import { NextResponse } from "next/server";
-import { PrismaClient } from "@prisma/client";
-
-const prisma =
-  (globalThis as unknown as { __prisma?: PrismaClient }).__prisma ?? new PrismaClient();
-if (process.env.NODE_ENV !== "production") {
-  (globalThis as unknown as { __prisma?: PrismaClient }).__prisma = prisma;
-}
+import { prisma } from "@/server/prisma";
 
 export const dynamic = "force-dynamic";
 
