@@ -823,6 +823,101 @@ async def picks_summary() -> dict:
     return fetch_summary()
 
 
+@app.get("/picks/stats")
+async def picks_stats(
+    group_by: Optional[str] = Query(default=None),
+    status: str = Query(default="settled"),
+    date_from: Optional[str] = Query(default=None),
+    date_to: Optional[str] = Query(default=None),
+    model: Optional[str] = Query(default=None),
+    market: Optional[str] = Query(default=None),
+    sport: Optional[str] = Query(default=None),
+    country: Optional[str] = Query(default=None),
+    competition: Optional[str] = Query(default=None),
+    selection: Optional[str] = Query(default=None),
+    edge_min: Optional[float] = Query(default=None),
+    edge_max: Optional[float] = Query(default=None),
+    price_min: Optional[float] = Query(default=None),
+    price_max: Optional[float] = Query(default=None),
+    min_n_per_group: int = Query(default=1, ge=1),
+) -> dict:
+    """Aggregation over paper_bets. ``group_by`` is a comma-separated
+    list of dimensions; multi-value filters are comma-separated too."""
+    from app.ml.paper_trade_stats import StatsFilter, StatsRequest, aggregate
+
+    def _csv(value: Optional[str]) -> tuple:
+        if not value:
+            return ()
+        return tuple(v.strip() for v in value.split(",") if v.strip())
+
+    try:
+        request = StatsRequest(
+            group_by=_csv(group_by),
+            filters=StatsFilter(
+                status=status,
+                date_from=date_from,
+                date_to=date_to,
+                model=_csv(model),
+                market=_csv(market),
+                sport=_csv(sport),
+                country=_csv(country),
+                competition=_csv(competition),
+                selection=_csv(selection),
+                edge_min=edge_min,
+                edge_max=edge_max,
+                price_min=price_min,
+                price_max=price_max,
+            ),
+            min_n_per_group=min_n_per_group,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    rows = aggregate(request)
+    return {
+        "group_by": list(request.group_by),
+        "filters": {
+            "status": status, "date_from": date_from, "date_to": date_to,
+            "model": list(request.filters.model),
+            "market": list(request.filters.market),
+            "sport": list(request.filters.sport),
+            "country": list(request.filters.country),
+            "competition": list(request.filters.competition),
+            "selection": list(request.filters.selection),
+            "edge_min": edge_min, "edge_max": edge_max,
+            "price_min": price_min, "price_max": price_max,
+        },
+        "rows": rows,
+    }
+
+
+@app.get("/picks/stats/calibration")
+async def picks_stats_calibration(
+    model: str = Query(...),
+    date_from: Optional[str] = Query(default=None),
+    date_to: Optional[str] = Query(default=None),
+    market: Optional[str] = Query(default=None),
+    competition: Optional[str] = Query(default=None),
+    n_buckets: int = Query(default=10, ge=2, le=50),
+) -> dict:
+    """Calibration buckets for ``model``. Settled bets only."""
+    from app.ml.paper_trade_stats import StatsFilter, calibration_buckets
+
+    def _csv(value: Optional[str]) -> tuple:
+        if not value:
+            return ()
+        return tuple(v.strip() for v in value.split(",") if v.strip())
+
+    filters = StatsFilter(
+        status="settled",
+        date_from=date_from, date_to=date_to,
+        market=_csv(market),
+        competition=_csv(competition),
+    )
+    buckets = calibration_buckets(model=model, filters=filters, n_buckets=n_buckets)
+    return {"model": model, "n_buckets": n_buckets, "buckets": buckets}
+
+
 # You can include routers here
 # from app.routers import items_router
 # app.include_router(items_router.router, prefix="/items", tags=["items"])
