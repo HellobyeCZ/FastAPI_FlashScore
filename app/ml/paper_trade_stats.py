@@ -317,7 +317,25 @@ def calibration_buckets(
 ) -> List[Dict[str, Any]]:
     """Bin settled bets for ``model`` by ``model_prob`` and return the
     per-bucket sample count, mean predicted prob, and empirical hit
-    rate. Used by the per-model deep-dive calibration plot."""
+    rate. Used by the per-model deep-dive calibration plot.
+
+    Calibration is only defined for settled bets, so this function
+    overrides the caller's ``filters.status`` accordingly:
+
+      - ``status="settled"`` (default): query settled rows.
+      - ``status="all"``: silently rewritten to "settled".
+      - ``status="pending"``: returns ``[]`` immediately because
+        calibration is undefined for unsettled bets.
+
+    The caller's ``filters.model`` is also overridden to ``(model,)``.
+
+    Each returned bucket assumes a binary ``result`` (1.0 for win,
+    0.0 for loss). Markets with fractional outcomes (e.g. Asian
+    handicap half-wins) would need a different definition of
+    ``hit_rate`` than the current ``sum(result) / n`` mean.
+    """
+    if n_buckets < 1:
+        raise ValueError(f"n_buckets must be >= 1, got {n_buckets}")
     width = 1.0 / n_buckets
     # Ensure paper_bets table exists before the read-only query.
     from app.ml.paper_trade import _ensure_paper_bets_table

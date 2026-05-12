@@ -228,3 +228,44 @@ def test_calibration_buckets_one_settled_bet(fixture_db):
     assert bucket["lower"] == pytest.approx(0.5)
     assert bucket["upper"] == pytest.approx(0.6)
     assert bucket["n"] == 1
+
+
+def test_calibration_buckets_filters_by_model(fixture_db):
+    """Calibration buckets must isolate to the queried model. Record
+    two bets with different models, ask for calibration of one, and
+    confirm the other is not in the result."""
+    from app.ml.labels import backfill_labels
+    from app.ml.closing_odds import backfill_closing_odds
+    backfill_labels(sport="football", scope=TEST_SCOPE, rebuild=True)
+    picks = [
+        PickInput(
+            event_id="evt001", model="logistic", market="1X2_FT",
+            selection="home", bet_ts=_now_iso(),
+            price_at_recommendation=1.8, model_prob=0.55,
+            devigged_prob=0.5, edge=0.05, kelly_full=0.10,
+        ),
+        PickInput(
+            event_id="evt001", model="dixon_coles", market="1X2_FT",
+            selection="home", bet_ts=_now_iso(),
+            price_at_recommendation=1.8, model_prob=0.25,
+            devigged_prob=0.5, edge=-0.25, kelly_full=0.00,
+        ),
+    ]
+    record_picks(picks)
+    backfill_closing_odds(sport="football", scope=TEST_SCOPE, rebuild=True)
+    settle_pending_bets()
+
+    logistic = calibration_buckets(model="logistic")
+    dixon = calibration_buckets(model="dixon_coles")
+    # Each model produces exactly one bucket from its single bet, and
+    # those buckets live in different probability bins (0.5-0.6 vs
+    # 0.2-0.3) — proving the model filter actually isolates data.
+    assert len(logistic) == 1
+    assert len(dixon) == 1
+    assert logistic[0]["lower"] == pytest.approx(0.5)
+    assert dixon[0]["lower"] == pytest.approx(0.2)
+
+
+def test_calibration_buckets_rejects_zero_n_buckets():
+    with pytest.raises(ValueError, match="n_buckets must be >= 1"):
+        calibration_buckets(model="logistic", n_buckets=0)
