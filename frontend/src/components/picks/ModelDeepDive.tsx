@@ -10,11 +10,14 @@ import {
   type CalibrationBucket,
   type HistoryRow,
 } from "@/lib/api-picks";
-import { CalibrationPlot } from "@/components/picks/charts/CalibrationPlot";
+import { CalibrationPlot } from "@/components/terminal/charts/CalibrationPlot";
 import {
   WaterfallChart,
   type WaterfallBar,
-} from "@/components/picks/charts/WaterfallChart";
+} from "@/components/terminal/charts/WaterfallChart";
+import { PageHeader } from "@/components/terminal/PageHeader";
+import { Kicker } from "@/components/terminal/Kicker";
+import { Stat } from "@/components/terminal/Stat";
 
 function fmtNum(v: number | null | undefined, digits = 2): string {
   if (v === null || v === undefined || Number.isNaN(v)) return "—";
@@ -26,8 +29,7 @@ function fmtPct(v: number | null | undefined): string {
   return `${(v * 100).toFixed(1)}%`;
 }
 
-const SECTION_CLASS =
-  "rounded-2xl border border-[color:var(--color-brand-outline)] bg-[color:var(--color-brand-surface)] p-4";
+const SECTION_CLASS = "border border-border p-4";
 
 export function ModelDeepDive({ model }: { model: string }) {
   const { t } = useLocale();
@@ -72,7 +74,8 @@ export function ModelDeepDive({ model }: { model: string }) {
   if (error) {
     return (
       <main className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-8">
-        <div className={`${SECTION_CLASS} text-sm`}>
+        <PageHeader kicker={`Picks · model · ${model}`} />
+        <div className={`${SECTION_CLASS} font-mono text-[12px] text-text`}>
           {t("picks.error")}: {error}
         </div>
       </main>
@@ -90,99 +93,58 @@ export function ModelDeepDive({ model }: { model: string }) {
 
   return (
     <main className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-8">
-      <header>
-        <h1 className="text-2xl font-semibold text-[color:var(--color-text-high)]">
-          {model}
-        </h1>
-      </header>
+      <PageHeader kicker={`Picks · model · ${model}`} />
 
-      <section className="grid grid-cols-2 gap-3 md:grid-cols-5">
-        <div className={SECTION_CLASS}>
-          <div className="text-xs uppercase text-[color:var(--color-text-muted)]">
-            {t("picks.deepDive.kpi.bets")}
-          </div>
-          <div className="mt-1 text-xl font-semibold text-[color:var(--color-text-high)]">
-            {summary ? summary.n : "—"}
-          </div>
+      <section className="grid grid-cols-2 gap-px border border-border bg-border md:grid-cols-5">
+        <div className="bg-bg">
+          <Stat label={t("picks.deepDive.kpi.bets")} value={summary ? String(summary.n) : "—"} />
         </div>
-        <div className={SECTION_CLASS}>
-          <div className="text-xs uppercase text-[color:var(--color-text-muted)]">
-            {t("picks.deepDive.kpi.hitRate")}
-          </div>
-          <div className="mt-1 text-xl font-semibold text-[color:var(--color-text-high)]">
-            {fmtPct(summary?.hit_rate ?? null)}
-          </div>
+        <div className="bg-bg">
+          <Stat label={t("picks.deepDive.kpi.hitRate")} value={fmtPct(summary?.hit_rate ?? null)} />
         </div>
-        <div className={SECTION_CLASS}>
-          <div className="text-xs uppercase text-[color:var(--color-text-muted)]">
-            {t("picks.deepDive.kpi.roi")}
-          </div>
-          <div className="mt-1 text-xl font-semibold text-[color:var(--color-text-high)]">
-            {fmtPct(summary?.roi ?? null)}
-          </div>
+        <div className="bg-bg">
+          <Stat label={t("picks.deepDive.kpi.roi")} value={fmtPct(summary?.roi ?? null)} />
         </div>
-        <div className={SECTION_CLASS}>
-          <div className="text-xs uppercase text-[color:var(--color-text-muted)]">
-            {t("picks.deepDive.kpi.meanClv")}
-          </div>
-          <div className="mt-1 text-xl font-semibold text-[color:var(--color-text-high)]">
-            {fmtNum(summary?.mean_clv ?? null, 4)}
-          </div>
+        <div className="bg-bg">
+          <Stat label={t("picks.deepDive.kpi.meanClv")} value={fmtNum(summary?.mean_clv ?? null, 4)} />
         </div>
-        <div className={SECTION_CLASS}>
-          <div className="text-xs uppercase text-[color:var(--color-text-muted)]">
-            {t("picks.deepDive.brierLabel")}
-          </div>
-          <div className="mt-1 text-xl font-semibold text-[color:var(--color-text-high)]">
-            {fmtNum(summary?.brier ?? null, 4)}
-          </div>
+        <div className="bg-bg">
+          <Stat label={t("picks.deepDive.brierLabel")} value={fmtNum(summary?.brier ?? null, 4)} />
         </div>
       </section>
 
       <section className={SECTION_CLASS}>
-        <h2 className="mb-3 text-sm font-semibold text-[color:var(--color-text-muted)]">
-          {t("picks.deepDive.calibration")}
-        </h2>
+        <Kicker className="mb-3 block">{t("picks.deepDive.calibration")}</Kicker>
         <CalibrationPlot buckets={calibration} />
       </section>
 
       <section className={SECTION_CLASS}>
-        <h2 className="mb-3 text-sm font-semibold text-[color:var(--color-text-muted)]">
-          {t("picks.deepDive.outcomeBreakdown")}
-        </h2>
-        <table className="w-full text-left text-sm">
-          <thead className="text-xs uppercase text-[color:var(--color-text-muted)]">
-            <tr>
-              <th className="px-2 py-2">{t("picks.filter.selection")}</th>
-              <th className="px-2 py-2">n</th>
-              <th className="px-2 py-2">{t("picks.deepDive.kpi.hitRate")}</th>
-              <th className="px-2 py-2">{t("picks.deepDive.kpi.meanClv")}</th>
-              <th className="px-2 py-2">{t("picks.deepDive.kpi.roi")}</th>
+        <Kicker className="mb-3 block">{t("picks.deepDive.outcomeBreakdown")}</Kicker>
+        <table className="w-full border-collapse text-left font-mono text-[12px]">
+          <thead>
+            <tr className="border-b border-border">
+              <th className="px-2 py-2 font-sans text-[10px] uppercase text-text-dim" style={{ letterSpacing: "var(--track-wide)" }}>{t("picks.filter.selection")}</th>
+              <th className="px-2 py-2 font-sans text-[10px] uppercase text-text-dim" style={{ letterSpacing: "var(--track-wide)" }}>n</th>
+              <th className="px-2 py-2 font-sans text-[10px] uppercase text-text-dim" style={{ letterSpacing: "var(--track-wide)" }}>{t("picks.deepDive.kpi.hitRate")}</th>
+              <th className="px-2 py-2 font-sans text-[10px] uppercase text-text-dim" style={{ letterSpacing: "var(--track-wide)" }}>{t("picks.deepDive.kpi.meanClv")}</th>
+              <th className="px-2 py-2 font-sans text-[10px] uppercase text-text-dim" style={{ letterSpacing: "var(--track-wide)" }}>{t("picks.deepDive.kpi.roi")}</th>
             </tr>
           </thead>
           <tbody>
             {bySelection.length === 0 ? (
               <tr>
-                <td
-                  className="px-2 py-3 text-[color:var(--color-text-muted)]"
-                  colSpan={5}
-                >
+                <td className="px-2 py-3 text-text-dim" colSpan={5}>
                   —
                 </td>
               </tr>
             ) : (
               bySelection.map((row, i) => (
-                <tr
-                  key={`${row.selection}-${i}`}
-                  className="border-t border-[color:var(--color-brand-outline)]"
-                >
-                  <td className="px-2 py-2 font-semibold text-[color:var(--color-text-high)]">
-                    {String(row.selection ?? "")}
-                  </td>
-                  <td className="px-2 py-2">{row.n}</td>
-                  <td className="px-2 py-2">{fmtPct(row.hit_rate)}</td>
-                  <td className="px-2 py-2">{fmtNum(row.mean_clv, 4)}</td>
-                  <td className="px-2 py-2">{fmtPct(row.roi)}</td>
+                <tr key={`${row.selection}-${i}`} className="border-b border-border/60">
+                  <td className="px-2 py-2 text-text">{String(row.selection ?? "")}</td>
+                  <td className="px-2 py-2 tabular-nums">{row.n}</td>
+                  <td className="px-2 py-2 tabular-nums">{fmtPct(row.hit_rate)}</td>
+                  <td className="px-2 py-2 tabular-nums">{fmtNum(row.mean_clv, 4)}</td>
+                  <td className="px-2 py-2 tabular-nums">{fmtPct(row.roi)}</td>
                 </tr>
               ))
             )}
@@ -191,57 +153,43 @@ export function ModelDeepDive({ model }: { model: string }) {
       </section>
 
       <section className={SECTION_CLASS}>
-        <h2 className="mb-3 text-sm font-semibold text-[color:var(--color-text-muted)]">
-          {t("picks.deepDive.waterfall")}
-        </h2>
+        <Kicker className="mb-3 block">{t("picks.deepDive.waterfall")}</Kicker>
         <WaterfallChart bars={waterfallBars} />
       </section>
 
       <section className={SECTION_CLASS}>
-        <h2 className="mb-3 text-sm font-semibold text-[color:var(--color-text-muted)]">
-          {t("picks.deepDive.bets")}
-        </h2>
-        <table className="w-full text-left text-sm">
-          <thead className="text-xs uppercase text-[color:var(--color-text-muted)]">
-            <tr>
-              <th className="px-2 py-2">{t("picks.recent.event")}</th>
-              <th className="px-2 py-2">{t("picks.recent.market")}</th>
-              <th className="px-2 py-2">{t("picks.recent.selection")}</th>
-              <th className="px-2 py-2">{t("picks.recent.price")}</th>
-              <th className="px-2 py-2">{t("picks.recent.edge")}</th>
-              <th className="px-2 py-2">{t("picks.recent.result")}</th>
-              <th className="px-2 py-2">{t("picks.recent.pnl")}</th>
-              <th className="px-2 py-2">{t("picks.recent.clv")}</th>
+        <Kicker className="mb-3 block">{t("picks.deepDive.bets")}</Kicker>
+        <table className="w-full border-collapse text-left font-mono text-[12px]">
+          <thead>
+            <tr className="border-b border-border">
+              <th className="px-2 py-2 font-sans text-[10px] uppercase text-text-dim" style={{ letterSpacing: "var(--track-wide)" }}>{t("picks.recent.event")}</th>
+              <th className="px-2 py-2 font-sans text-[10px] uppercase text-text-dim" style={{ letterSpacing: "var(--track-wide)" }}>{t("picks.recent.market")}</th>
+              <th className="px-2 py-2 font-sans text-[10px] uppercase text-text-dim" style={{ letterSpacing: "var(--track-wide)" }}>{t("picks.recent.selection")}</th>
+              <th className="px-2 py-2 font-sans text-[10px] uppercase text-text-dim" style={{ letterSpacing: "var(--track-wide)" }}>{t("picks.recent.price")}</th>
+              <th className="px-2 py-2 font-sans text-[10px] uppercase text-text-dim" style={{ letterSpacing: "var(--track-wide)" }}>{t("picks.recent.edge")}</th>
+              <th className="px-2 py-2 font-sans text-[10px] uppercase text-text-dim" style={{ letterSpacing: "var(--track-wide)" }}>{t("picks.recent.result")}</th>
+              <th className="px-2 py-2 font-sans text-[10px] uppercase text-text-dim" style={{ letterSpacing: "var(--track-wide)" }}>{t("picks.recent.pnl")}</th>
+              <th className="px-2 py-2 font-sans text-[10px] uppercase text-text-dim" style={{ letterSpacing: "var(--track-wide)" }}>{t("picks.recent.clv")}</th>
             </tr>
           </thead>
           <tbody>
             {betsToShow.length === 0 ? (
               <tr>
-                <td
-                  className="px-2 py-3 text-[color:var(--color-text-muted)]"
-                  colSpan={8}
-                >
+                <td className="px-2 py-3 text-text-dim" colSpan={8}>
                   —
                 </td>
               </tr>
             ) : (
               betsToShow.map((row) => (
-                <tr
-                  key={row.id}
-                  className="border-t border-[color:var(--color-brand-outline)]"
-                >
-                  <td className="px-2 py-2 font-mono text-xs">
-                    {row.event_id}
-                  </td>
+                <tr key={row.id} className="border-b border-border/60">
+                  <td className="px-2 py-2 text-[11px] text-text-dim">{row.event_id}</td>
                   <td className="px-2 py-2">{row.market}</td>
                   <td className="px-2 py-2">{row.selection}</td>
-                  <td className="px-2 py-2">
-                    {fmtNum(row.price_at_recommendation, 2)}
-                  </td>
-                  <td className="px-2 py-2">{fmtPct(row.edge)}</td>
-                  <td className="px-2 py-2">{fmtNum(row.result, 0)}</td>
-                  <td className="px-2 py-2">{fmtNum(row.pnl, 2)}</td>
-                  <td className="px-2 py-2">{fmtNum(row.clv, 4)}</td>
+                  <td className="px-2 py-2 tabular-nums">{fmtNum(row.price_at_recommendation, 2)}</td>
+                  <td className="px-2 py-2 tabular-nums">{fmtPct(row.edge)}</td>
+                  <td className="px-2 py-2 tabular-nums">{fmtNum(row.result, 0)}</td>
+                  <td className="px-2 py-2 tabular-nums">{fmtNum(row.pnl, 2)}</td>
+                  <td className="px-2 py-2 tabular-nums">{fmtNum(row.clv, 4)}</td>
                 </tr>
               ))
             )}

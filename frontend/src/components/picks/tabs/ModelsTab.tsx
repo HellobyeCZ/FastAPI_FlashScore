@@ -20,15 +20,19 @@ import { FilterBar } from "@/components/picks/filters/FilterBar";
 import {
   CumulativeLineChart,
   type Series,
-} from "@/components/picks/charts/CumulativeLineChart";
+} from "@/components/terminal/charts/CumulativeLine";
 import {
   HeatmapChart,
   type HeatmapCell,
-} from "@/components/picks/charts/HeatmapChart";
+} from "@/components/terminal/charts/HeatmapChart";
 import {
   ViolinChart,
   type ViolinSeries,
-} from "@/components/picks/charts/ViolinChart";
+} from "@/components/terminal/charts/ViolinChart";
+import { PageHeader } from "@/components/terminal/PageHeader";
+import { Kicker } from "@/components/terminal/Kicker";
+import { DataTable, type Column } from "@/components/terminal/DataTable";
+import { useRouter } from "next/navigation";
 
 const MODEL_COLORS: Record<string, string> = {
   dixon_coles: "#6366f1",
@@ -52,6 +56,7 @@ function fmtPct(v: number | null | undefined): string {
 
 export function ModelsTab() {
   const { t, locale } = useLocale();
+  const router = useRouter();
   const searchParams = useSearchParams();
   const filters = useMemo(
     () => filtersFromSearchParams(new URLSearchParams(searchParams.toString())),
@@ -235,16 +240,81 @@ export function ModelsTab() {
     [modelComp],
   );
 
+  const leaderboardCols: Column<StatsRow>[] = [
+    {
+      key: "model",
+      header: t("picks.filter.model"),
+      render: (row) => (
+        <Link
+          href={
+            `/${locale}/picks/model/${row.model}` as unknown as Parameters<typeof Link>[0]["href"]
+          }
+          className="text-accent hover:underline"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {String(row.model)}
+        </Link>
+      ),
+      sort: (a, b) => String(a.model ?? "").localeCompare(String(b.model ?? "")),
+    },
+    {
+      key: "n",
+      header: "n",
+      align: "right",
+      render: (row) => row.n,
+      sort: (a, b) => (a.n ?? 0) - (b.n ?? 0),
+    },
+    {
+      key: "hit_rate",
+      header: t("picks.deepDive.kpi.hitRate"),
+      align: "right",
+      render: (row) => fmtPct(row.hit_rate),
+      sort: (a, b) => (a.hit_rate ?? 0) - (b.hit_rate ?? 0),
+    },
+    {
+      key: "roi",
+      header: t("picks.deepDive.kpi.roi"),
+      align: "right",
+      render: (row) => fmtPct(row.roi),
+      sort: (a, b) => (a.roi ?? 0) - (b.roi ?? 0),
+    },
+    {
+      key: "mean_clv",
+      header: t("picks.deepDive.kpi.meanClv"),
+      align: "right",
+      render: (row) => fmtNum(row.mean_clv, 4),
+      sort: (a, b) => (a.mean_clv ?? 0) - (b.mean_clv ?? 0),
+    },
+    {
+      key: "brier",
+      header: t("picks.leaderboard.brier"),
+      align: "right",
+      render: (row) => fmtNum(row.brier, 4),
+      sort: (a, b) => (a.brier ?? 0) - (b.brier ?? 0),
+    },
+    {
+      key: "max_drawdown",
+      header: t("picks.leaderboard.maxDrawdown"),
+      align: "right",
+      render: (row) => fmtNum(row.max_drawdown, 2),
+      sort: (a, b) => (a.max_drawdown ?? 0) - (b.max_drawdown ?? 0),
+    },
+  ];
+
   if (error) {
     return (
-      <div className="rounded-2xl border border-[color:var(--color-brand-outline)] bg-[color:var(--color-brand-surface)] p-6 text-sm">
-        {t("picks.error")}: {error}
+      <div className="flex flex-col gap-4">
+        <PageHeader kicker="Picks · models" />
+        <div className="border border-border p-6 font-mono text-[12px] text-text">
+          {t("picks.error")}: {error}
+        </div>
       </div>
     );
   }
 
   return (
     <div className="flex flex-col gap-4">
+      <PageHeader kicker="Picks · models" />
       <FilterBar
         fields={["date", "status", "market", "competition", "edge"]}
         options={{
@@ -253,81 +323,28 @@ export function ModelsTab() {
         }}
       />
 
-      <section className="rounded-2xl border border-[color:var(--color-brand-outline)] bg-[color:var(--color-brand-surface)] p-4">
-        <h2 className="mb-3 text-sm font-semibold text-[color:var(--color-text-muted)]">
-          {t("picks.leaderboard.title")}
-        </h2>
-        <table className="w-full text-left text-sm">
-          <thead className="text-xs uppercase text-[color:var(--color-text-muted)]">
-            <tr>
-              <th className="px-2 py-2">{t("picks.filter.model")}</th>
-              <th className="px-2 py-2">n</th>
-              <th className="px-2 py-2">{t("picks.deepDive.kpi.hitRate")}</th>
-              <th className="px-2 py-2">{t("picks.deepDive.kpi.roi")}</th>
-              <th className="px-2 py-2">{t("picks.deepDive.kpi.meanClv")}</th>
-              <th className="px-2 py-2">{t("picks.leaderboard.brier")}</th>
-              <th className="px-2 py-2">{t("picks.leaderboard.maxDrawdown")}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {leaderboard.length === 0 ? (
-              <tr>
-                <td
-                  className="px-2 py-3 text-[color:var(--color-text-muted)]"
-                  colSpan={7}
-                >
-                  —
-                </td>
-              </tr>
-            ) : (
-              leaderboard.map((row) => (
-                <tr
-                  key={String(row.model)}
-                  className="border-t border-[color:var(--color-brand-outline)]"
-                >
-                  <td className="px-2 py-2 font-semibold text-[color:var(--color-text-high)]">
-                    <Link
-                      href={
-                        `/${locale}/picks/model/${row.model}` as unknown as Parameters<
-                          typeof Link
-                        >[0]["href"]
-                      }
-                      className="underline"
-                    >
-                      {String(row.model)}
-                    </Link>
-                  </td>
-                  <td className="px-2 py-2">{row.n}</td>
-                  <td className="px-2 py-2">{fmtPct(row.hit_rate)}</td>
-                  <td className="px-2 py-2">{fmtPct(row.roi)}</td>
-                  <td className="px-2 py-2">{fmtNum(row.mean_clv, 4)}</td>
-                  <td className="px-2 py-2">{fmtNum(row.brier, 4)}</td>
-                  <td className="px-2 py-2">{fmtNum(row.max_drawdown, 2)}</td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
+      <section className="border border-border p-4">
+        <Kicker className="mb-3 block">{t("picks.leaderboard.title")}</Kicker>
+        <DataTable
+          columns={leaderboardCols}
+          rows={leaderboard}
+          empty="—"
+          onRowClick={(row) => router.push(`/${locale}/picks/model/${row.model}`)}
+        />
       </section>
 
-      <section className="rounded-2xl border border-[color:var(--color-brand-outline)] bg-[color:var(--color-brand-surface)] p-4">
-        <h2 className="mb-3 text-sm font-semibold text-[color:var(--color-text-muted)]">
-          {t("picks.trend.title")}
-        </h2>
+      <section className="border border-border p-4">
+        <Kicker className="mb-3 block">{t("picks.trend.title")}</Kicker>
         <CumulativeLineChart series={pnlSeries} />
       </section>
 
-      <section className="rounded-2xl border border-[color:var(--color-brand-outline)] bg-[color:var(--color-brand-surface)] p-4">
-        <h2 className="mb-3 text-sm font-semibold text-[color:var(--color-text-muted)]">
-          {t("picks.violin.title")}
-        </h2>
+      <section className="border border-border p-4">
+        <Kicker className="mb-3 block">{t("picks.violin.title")}</Kicker>
         <ViolinChart series={violinSeries} referenceY={0} />
       </section>
 
-      <section className="rounded-2xl border border-[color:var(--color-brand-outline)] bg-[color:var(--color-brand-surface)] p-4">
-        <h2 className="mb-3 text-sm font-semibold text-[color:var(--color-text-muted)]">
-          {t("picks.heatmap.modelMarket")}
-        </h2>
+      <section className="border border-border p-4">
+        <Kicker className="mb-3 block">{t("picks.heatmap.modelMarket")}</Kicker>
         <HeatmapChart
           cells={marketCells}
           rows={models}
@@ -336,10 +353,8 @@ export function ModelsTab() {
         />
       </section>
 
-      <section className="rounded-2xl border border-[color:var(--color-brand-outline)] bg-[color:var(--color-brand-surface)] p-4">
-        <h2 className="mb-3 text-sm font-semibold text-[color:var(--color-text-muted)]">
-          {t("picks.heatmap.modelCompetition")}
-        </h2>
+      <section className="border border-border p-4">
+        <Kicker className="mb-3 block">{t("picks.heatmap.modelCompetition")}</Kicker>
         <HeatmapChart
           cells={compCells}
           rows={models}
