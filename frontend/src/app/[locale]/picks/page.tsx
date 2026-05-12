@@ -3,6 +3,7 @@ import { isLocale, locales } from "@/lib/i18n";
 import { PicksLayout, type PicksTab } from "@/components/picks/PicksLayout";
 import { HealthTab } from "@/components/picks/tabs/HealthTab";
 import { ModelsTab } from "@/components/picks/tabs/ModelsTab";
+import { ExploreTab } from "@/components/picks/tabs/ExploreTab";
 
 export const dynamicParams = false;
 
@@ -31,11 +32,7 @@ export default function PicksPage({
     <PicksLayout activeTab={tab}>
       {tab === "health" && <HealthTab />}
       {tab === "models" && <ModelsTab />}
-      {tab === "explore" && (
-        <div className="rounded-2xl border border-[color:var(--color-brand-outline)] bg-[color:var(--color-brand-surface)] p-6 text-sm text-[color:var(--color-text-muted)]">
-          Explore tab — implemented in Phase D
-        </div>
-      )}
+      {tab === "explore" && <ExploreTab />}
     </PicksLayout>
   );
 }
