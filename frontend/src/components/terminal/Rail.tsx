@@ -38,7 +38,17 @@ function useRailItems(): Item[] {
   ];
 }
 
-function RailList({ items, pathname }: { items: Item[]; pathname: string }) {
+function RailList({
+  items,
+  pathname,
+  onNavigate,
+  variant
+}: {
+  items: Item[];
+  pathname: string;
+  onNavigate?: () => void;
+  variant: "desktop" | "mobile";
+}) {
   return (
     <ul className="flex flex-col gap-[2px]">
       {items.map((it, i) => {
@@ -50,40 +60,92 @@ function RailList({ items, pathname }: { items: Item[]; pathname: string }) {
           return (
             <Fragment key={key}>
               <li className="my-2 border-t border-border" aria-hidden />
-              <RailRow item={it} active={active} />
+              <RailRow item={it} active={active} variant={variant} onNavigate={onNavigate} />
             </Fragment>
           );
         }
-        return <RailRow key={key} item={it} active={active} />;
+        return (
+          <RailRow
+            key={key}
+            item={it}
+            active={active}
+            variant={variant}
+            onNavigate={onNavigate}
+          />
+        );
       })}
     </ul>
   );
 }
 
-export function Rail() {
+export function Rail({
+  open = false,
+  onClose
+}: { open?: boolean; onClose?: () => void } = {}) {
   const pathname = usePathname() ?? "/";
   const items = useRailItems();
 
   return (
-    <nav
-      aria-label="Primary"
-      className="fixed left-0 top-8 bottom-6 z-20 hidden w-[180px] flex-col border-r border-border bg-bg px-3 py-4 md:flex"
-    >
-      <div
-        className="mb-3 flex items-center gap-1 text-[10px] uppercase text-text-faint"
-        style={{ letterSpacing: "var(--track-wide)" }}
+    <>
+      {/* desktop */}
+      <nav
+        aria-label="Primary"
+        className="fixed left-0 top-8 bottom-6 z-20 hidden w-[180px] flex-col border-r border-border bg-bg px-3 py-4 md:flex"
       >
-        <Glyph kind="section" /> Navigation
-      </div>
-      <RailList items={items} pathname={pathname} />
-    </nav>
+        <div
+          className="mb-3 flex items-center gap-1 text-[10px] uppercase text-text-faint"
+          style={{ letterSpacing: "var(--track-wide)" }}
+        >
+          <Glyph kind="section" /> Navigation
+        </div>
+        <RailList items={items} pathname={pathname} variant="desktop" />
+      </nav>
+
+      {/* mobile drawer */}
+      {open && (
+        <nav
+          aria-label="Primary (mobile)"
+          className="fixed inset-0 z-40 flex flex-col bg-bg/95 px-6 pt-10 md:hidden"
+        >
+          <button
+            onClick={onClose}
+            className="absolute right-4 top-3 border-none font-mono text-[10px] text-text-dim"
+            aria-label="Close menu"
+          >
+            esc
+          </button>
+          <div
+            className="mb-3 flex items-center gap-1 text-[10px] uppercase text-text-faint"
+            style={{ letterSpacing: "var(--track-wide)" }}
+          >
+            <Glyph kind="section" /> Navigation
+          </div>
+          <RailList
+            items={items}
+            pathname={pathname}
+            variant="mobile"
+            onNavigate={onClose}
+          />
+        </nav>
+      )}
+    </>
   );
 }
 
-function RailRow({ item, active }: { item: Item; active: boolean }) {
+function RailRow({
+  item,
+  active,
+  variant,
+  onNavigate
+}: {
+  item: Item;
+  active: boolean;
+  variant: "desktop" | "mobile";
+  onNavigate?: () => void;
+}) {
   return (
     <li className="relative">
-      {active && (
+      {active && variant === "desktop" && (
         <span
           className="absolute left-[-12px] top-0 bottom-0 w-[2px] bg-accent"
           aria-hidden
@@ -91,8 +153,10 @@ function RailRow({ item, active }: { item: Item; active: boolean }) {
       )}
       <Link
         href={item.href as unknown as Parameters<typeof Link>[0]["href"]}
+        onClick={onNavigate}
         className={clsx(
-          "flex items-center gap-1 py-[2px] font-sans text-[10px] uppercase",
+          "flex items-center gap-1 py-[2px] font-sans uppercase",
+          variant === "mobile" ? "text-[14px]" : "text-[10px]",
           active ? "text-accent" : "text-text-dim hover:text-text"
         )}
         style={{

@@ -4,7 +4,10 @@ import { Glyph } from "./Glyph";
 import { useLocale } from "@/contexts/LocaleContext";
 import { useDbStats } from "@/hooks/useDbStats";
 
-export function TopBar() {
+export function TopBar({
+  onMenu,
+  menuOpen
+}: { onMenu?: () => void; menuOpen?: boolean } = {}) {
   const { locale, setLocale } = useLocale();
   const stats = useDbStats();
   const ledColor =
@@ -17,6 +20,14 @@ export function TopBar() {
   return (
     <header className="fixed top-0 left-0 right-0 z-30 flex h-8 items-center justify-between border-b border-border bg-bg px-4 font-sans">
       <div className="flex items-center gap-2">
+        <button
+          onClick={onMenu}
+          className="border-none px-2 text-text-dim md:hidden"
+          aria-label="Toggle menu"
+          aria-expanded={menuOpen ?? false}
+        >
+          ≡
+        </button>
         <Glyph kind="section" className="text-accent" />
         <span
           className="text-[11px] uppercase text-text"
