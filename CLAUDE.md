@@ -40,6 +40,16 @@ func start                        # Azure Functions emulator on :7071 (uses func
 
 Local Functions config goes in `local.settings.json` (gitignored). Backend env vars use `APP_` prefix (see `.env.local.example`).
 
+ML / scripts workflow runs against system Python (the documented venv lacks pytest and ML deps). Use `PYTHONPATH=. APP_STORAGE_DB_PATH=<path> python3 scripts/<name>.py` — both env vars are required from a worktree. The real DB lives at `<repo-root>/data/flashscore_snapshots.sqlite3`, not in the worktree.
+
+### ML pipeline (`app/ml/` + `scripts/`)
+
+- Tables: `bet_labels`, `closing_odds`, `team_elo_history`, `paper_bets`, `upcoming_fixtures`, `live_odds_snapshots`, `match_event_summaries` (legacy, NOT in Prisma). Several are read by many modules but written only by Phase 0/1 backfill scripts or the live `SnapshotStore` — if a table looks stale, check who writes to it before adding reads.
+- `FOOTBALL_PHASE1_SCOPE` in `app/ml/labels.py` is the canonical (country, competition) allowlist for labels + closing_odds backfill. FlashScore reports stage variants (e.g. `Chance Liga - Relegation Group`) as distinct strings — add explicitly.
+- Two odds sources: `odds_snapshots` (archive, rich JSON, `build_closing_odds`) vs `live_odds_snapshots` (live pipeline, flat per-bookmaker rows, `build_closing_from_live` fallback).
+- Case-folding mismatch: `upcoming_fixtures.country` is lowercase, `match_event_summaries.country` is UPPERCASE. Scope predicates use uppercase.
+- Settler pipeline: `record_picks` → `build_phase1` (labels + closing_odds + elo) → `settle_paper_bets`. Skipping any step zeroes the dashboard.
+
 ### Frontend
 
 ```bash
@@ -59,5 +69,11 @@ When changing `frontend/prisma/schema.prisma`, run `prisma:migrate` in dev to cr
 ## Conventions worth knowing
 
 - The repo has both a top-level `package-lock.json` and `frontend/package-lock.json` — node tooling lives in `frontend/`; the root lockfile is incidental.
-- Localization is en/cs only via `next-intl`; the `[locale]` segment is part of the App Router structure.
+- Localization is en/cs via a custom typed catalog in `frontend/src/lib/i18n.ts` exposed by `useLocale()` from `frontend/src/contexts/LocaleContext` — NOT `next-intl` despite the dependency being present.
 - `host.json` deliberately sets `routePrefix: ""` so Azure Functions does not prepend `/api` — keep this if you add routes.
+- Next.js 14 typedRoutes can't statically validate dynamic query-string paths — for `<Link href={`...?tab=${tab}`}>` use `as unknown as Parameters<typeof Link>[0]["href"]` cast (see `frontend/src/components/picks/PicksLayout.tsx`).
+- visx package is `@visx/stats` (plural) for ViolinPlot/BoxPlot — `@visx/stat` (singular) does not exist on npm.
+- Prisma 7 requires `npx prisma generate` before `npm run build` or the client import fails. The CI workflow needs this step.
+- `useEffect`/`useMemo` deps split arrays via `.join(",")` to keep primitives in dep arrays — ESLint warns; the warnings are sanctioned. Don't "fix" them by adding the arrays directly.
+- Transient `ENOENT: _ssgManifest.js` during `npm run build` in a worktree is a known race; safe to ignore if "Compiled successfully" printed first.
+- Playwright cross-browser: firefox/webkit binaries aren't installed locally by default (`npx playwright install` to fix). Tests routinely chromium-only on dev machines.
