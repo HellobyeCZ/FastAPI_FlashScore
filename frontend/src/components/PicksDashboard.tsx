@@ -53,6 +53,11 @@ type Bet = {
   pnl?: number | null;
   clv?: number | null;
   status?: string;
+  // Joined from upcoming_fixtures (may be null when the event aged out
+  // of the 14-day window or was never recorded there).
+  kickoff?: string | null;
+  home_team_raw?: string | null;
+  away_team_raw?: string | null;
 };
 
 type HistoryResponse = {
@@ -251,6 +256,8 @@ function RecentBetsTable({ bets }: { bets: Bet[] }) {
         <thead className="bg-[color:var(--color-brand-primary)] text-[color:var(--color-text-inverse)]">
           <tr>
             <th className="px-3 py-2 font-semibold">{t("picks.recent.event")}</th>
+            <th className="px-3 py-2 font-semibold">Match</th>
+            <th className="px-3 py-2 font-semibold">Kickoff</th>
             <th className="px-3 py-2 font-semibold">{t("picks.recent.model")}</th>
             <th className="px-3 py-2 font-semibold">{t("picks.recent.market")}</th>
             <th className="px-3 py-2 font-semibold">{t("picks.recent.selection")}</th>
@@ -282,7 +289,27 @@ function RecentBetsTable({ bets }: { bets: Bet[] }) {
                     : "border-t border-[color:var(--color-brand-outline)] bg-[color:var(--color-brand-surface)]"
                 }
               >
-                <td className="px-3 py-2 font-mono text-xs text-[color:var(--color-text-high)]">{bet.event_id}</td>
+                <td className="px-3 py-2 font-mono text-xs text-[color:var(--color-text-high)]">
+                  {bet.event_id ? (
+                    <a
+                      href={`https://www.flashscore.com/match/${bet.event_id}/#/match-summary`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline hover:text-[color:var(--color-brand-accent)]"
+                      title="Open on FlashScore"
+                    >
+                      {bet.event_id} ↗
+                    </a>
+                  ) : "—"}
+                </td>
+                <td className="px-3 py-2 text-xs text-[color:var(--color-text-high)]">
+                  {bet.home_team_raw && bet.away_team_raw
+                    ? `${bet.home_team_raw} – ${bet.away_team_raw}`
+                    : "—"}
+                </td>
+                <td className="px-3 py-2 text-xs text-[color:var(--color-text-muted)]">
+                  {formatTime(bet.kickoff ?? undefined, locale)}
+                </td>
                 <td className="px-3 py-2 text-[color:var(--color-text-high)]">{bet.model}</td>
                 <td className="px-3 py-2 text-[color:var(--color-text-muted)]">{bet.market}</td>
                 <td className="px-3 py-2 text-[color:var(--color-text-high)]">{bet.selection}</td>

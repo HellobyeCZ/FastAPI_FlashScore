@@ -343,17 +343,43 @@ def fetch_paper_bets(
     status: Optional[str] = None,
     limit: int = 500,
 ) -> List[Dict[str, Any]]:
+    """Return paper_bets rows enriched with kickoff time and raw team
+    names from upcoming_fixtures (when available). The dashboard uses
+    these to display the match kickoff and to link out to FlashScore.
+
+    Older settled events that have aged out of upcoming_fixtures (or
+    were never recorded there) get NULL for kickoff / team fields.
+    Tolerates absence of the upcoming_fixtures table (e.g., in test
+    DBs) by falling back to the plain paper_bets SELECT.
+    """
     _ensure_paper_bets_table()
     with sqlite3.connect(ml_db.db_path(), timeout=60.0) as conn:
         conn.row_factory = sqlite3.Row
+        has_upcoming = conn.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE type='table' AND name='upcoming_fixtures'"
+        ).fetchone() is not None
+        if has_upcoming:
+            base_select = """
+                SELECT
+                    pb.*,
+                    uf.start_time_utc AS kickoff,
+                    uf.home_team_raw,
+                    uf.away_team_raw,
+                    uf.competition_path
+                FROM paper_bets pb
+                LEFT JOIN upcoming_fixtures uf ON uf.event_id = pb.event_id
+            """
+        else:
+            base_select = "SELECT pb.* FROM paper_bets pb"
         if status:
             rows = conn.execute(
-                "SELECT * FROM paper_bets WHERE status = ? ORDER BY id DESC LIMIT ?",
+                f"{base_select} WHERE pb.status = ? ORDER BY pb.id DESC LIMIT ?",
                 (status, limit),
             ).fetchall()
         else:
             rows = conn.execute(
-                "SELECT * FROM paper_bets ORDER BY id DESC LIMIT ?",
+                f"{base_select} ORDER BY pb.id DESC LIMIT ?",
                 (limit,),
             ).fetchall()
     return [dict(r) for r in rows]
