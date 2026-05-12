@@ -1,3 +1,12 @@
+/*
+ * Terminal redesign tokens.
+ * Coexists with the legacy `globals.css` + `design-tokens.css` (which still
+ * power unmigrated pages and Tailwind's `brand.*` palette). New terminal
+ * components consume the vars defined here. Both files are loaded; this one
+ * is imported first so legacy rules in globals.css win for unmigrated chrome.
+ * Phases 4+ migrate pages off the legacy tokens; once that's complete the
+ * `--color-brand-*` vars and the legacy globals can be removed.
+ */
 :root {
   /* color */
   --bg: #0a0a0a;
