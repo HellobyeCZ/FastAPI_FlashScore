@@ -1,3 +1,18 @@
+# macOS
+.DS_Store
+
+# Local Claude Code settings
+.claude/
+
+# Backtest run outputs
+reports/
+
+# MLflow local tracking store
+mlruns/
+
+# Superpowers visual brainstorming session artifacts
+.superpowers/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

@@ -8,6 +8,14 @@ opentelemetry-instrumentation-fastapi
 opentelemetry-instrumentation-httpx
 azure-monitor-opentelemetry-exporter
 pydantic-settings
+
+# ML pipeline (Phase 3+). scikit-learn provides LogisticRegression,
+# IsotonicRegression, and StandardScaler used by app/ml/training.py.
+# mlflow tracks per-run params/metrics/artifacts in a local file-backed
+# store under mlruns/.
+scikit-learn>=1.4
+mlflow>=2.9
+
 # Add other dependencies here, e.g.:
 # sqlalchemy
 # pydantic[email]

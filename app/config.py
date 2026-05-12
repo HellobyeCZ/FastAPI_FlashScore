@@ -62,6 +62,26 @@ class _SettingsFields:
         "data/flashscore_snapshots.sqlite3",
         description="Filesystem path for persistent snapshot storage.",
     )
+    live_odds_enabled: bool = Field(
+        False,
+        description="Enable the periodic live-odds scheduler on FastAPI startup.",
+    )
+    live_odds_interval_seconds: int = Field(
+        28800,
+        description="Interval between live-odds discovery+snapshot cycles (default 8h).",
+    )
+    live_odds_window_days: int = Field(
+        14,
+        description="Forward window for upcoming-fixture discovery and live odds snapshots.",
+    )
+    live_odds_max_concurrency: int = Field(
+        4,
+        description="Maximum concurrent upstream odds requests per live-odds cycle.",
+    )
+    live_odds_initial_delay_seconds: int = Field(
+        30,
+        description="Delay before the first live-odds cycle runs after startup.",
+    )
 
     def build_odds_url(self, event_id: str) -> str:
         """Construct the odds endpoint URL for the provided event."""

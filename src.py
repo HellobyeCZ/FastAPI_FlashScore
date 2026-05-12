@@ -19,7 +19,12 @@ from app.schemas.bulk_scrape import (
 )
 from app.schemas.match_stats import MatchStatsResponse
 from app.schemas.odds import OddsResponse
-from app.services.bulk_scrape import BulkScrapeJobConfig, BulkScrapeManager
+from app.services.bulk_scrape import (
+    BulkScrapeJobConfig,
+    BulkScrapeManager,
+    LiveOddsScheduler,
+    build_live_odds_scheduler_from_settings,
+)
 from app.services.match_stats import map_match_stats_payload
 from app.services.odds import map_odds_payload
 from app.services.odds_client import OddsAPIError, OddsClient, build_odds_client
@@ -265,6 +270,14 @@ def _get_bulk_scrape_manager() -> BulkScrapeManager:
     )
 
 
+@lru_cache()
+def _get_live_odds_scheduler() -> LiveOddsScheduler:
+    return build_live_odds_scheduler_from_settings(
+        snapshot_store=_get_snapshot_store(),
+        odds_client=_get_odds_client(),
+    )
+
+
 def odds_client_dependency() -> OddsClient:
     return _get_odds_client()
 
@@ -281,14 +294,31 @@ def bulk_scrape_manager_dependency() -> BulkScrapeManager:
     return _get_bulk_scrape_manager()
 
 
+@lru_cache()
+def _get_ml_artifacts():
+    """Load Phase 3 trained models from $APP_ML_MODELS_DIR. Cached so
+    repeated /predict calls don't re-load from disk."""
+    from app.ml.serving import load_models
+    return load_models()
+
+
 @app.on_event("startup")
 async def startup_snapshot_store() -> None:
     await _get_snapshot_store().initialize()
     await _get_bulk_scrape_manager().start()
+    await _get_live_odds_scheduler().start()
+    # Pre-warm the model artifacts so the first /predict request doesn't
+    # pay the load latency. Failing to load is non-fatal — the endpoint
+    # returns the available subset.
+    try:
+        _get_ml_artifacts()
+    except Exception:
+        structlog.get_logger("ml").exception("ml_artifacts_load_failed_at_startup")
 
 
 @app.on_event("shutdown")
 async def shutdown_odds_client() -> None:
+    await _get_live_odds_scheduler().shutdown()
     await _get_bulk_scrape_manager().shutdown()
     await _get_odds_client().aclose()
     await _get_match_stats_client().aclose()
@@ -685,6 +715,207 @@ async def get_bulk_scrape_job(
         job["events"] = []
 
     return BulkScrapeJobDetail(**job)
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: serving endpoints — /predict and /picks/upcoming
+# ---------------------------------------------------------------------------
+
+def _serialize_prediction(record) -> dict:
+    return {
+        "model": record.model,
+        "market": record.market,
+        "selection": record.selection,
+        "model_prob": record.model_prob,
+        "market_price": record.market_price,
+        "market_implied": record.market_implied,
+        "market_devigged": record.market_devigged,
+        "edge": record.edge,
+        "kelly_full": record.kelly_full,
+        "notes": record.notes,
+    }
+
+
+@app.get("/predict/{event_id}")
+async def predict_event(event_id: str) -> dict:
+    """Run every loaded model on the given event and return per
+    (model, market, selection) predictions. ``market_*`` fields reflect
+    the freshest live_odds_snapshot — None if no live snapshot exists
+    yet for the event."""
+    from app.ml.serving import predict_event as run_predict
+
+    artifacts = _get_ml_artifacts()
+    records = run_predict(event_id, artifacts)
+    return {
+        "event_id": event_id,
+        "predictions": [_serialize_prediction(r) for r in records],
+        "available_models": {
+            "logistic": artifacts.logistic is not None,
+            "hgb": artifacts.hgb is not None,
+            "dixon_coles": artifacts.dc_rates is not None,
+        },
+    }
+
+
+@app.get("/picks/upcoming")
+async def picks_upcoming(
+    hours_ahead: int = Query(default=72, ge=1, le=336),
+    min_edge: float = Query(default=0.02, ge=0.0, le=1.0),
+    model: Optional[str] = Query(default=None,
+                                 description="Filter to one model (logistic|hgb|dixon_coles)"),
+    market: Optional[str] = Query(default=None,
+                                  description="Filter to one market (1X2_FT|OVER_UNDER_2.5_FT|BTTS_FT)"),
+) -> dict:
+    """List edge-positive picks across all loaded models for events
+    kicking off in the next ``hours_ahead``. Only selections where
+    ``edge >= min_edge`` are returned."""
+    from app.ml.serving import list_upcoming_events, predict_event as run_predict
+
+    artifacts = _get_ml_artifacts()
+    upcoming = list_upcoming_events(hours_ahead=hours_ahead)
+    picks: list = []
+    for fx in upcoming:
+        event_id = fx["event_id"]
+        records = run_predict(event_id, artifacts)
+        for r in records:
+            if r.edge is None or r.edge < min_edge:
+                continue
+            if model and r.model != model:
+                continue
+            if market and r.market != market:
+                continue
+            picks.append({
+                **_serialize_prediction(r),
+                "event_id": event_id,
+                "kickoff": fx["start_time_utc"],
+                "competition_path": fx["competition_path"],
+                "home_team_raw": fx["home_team_raw"],
+                "away_team_raw": fx["away_team_raw"],
+            })
+    return {
+        "hours_ahead": hours_ahead,
+        "min_edge": min_edge,
+        "events_considered": len(upcoming),
+        "pick_count": len(picks),
+        "picks": picks,
+    }
+
+
+@app.get("/picks/history")
+async def picks_history(
+    status: Optional[str] = Query(default=None, description="pending|settled|voided"),
+    limit: int = Query(default=200, ge=1, le=5000),
+) -> dict:
+    """Return paper_bets rows for the dashboard. Filterable by status."""
+    from app.ml.paper_trade import fetch_paper_bets
+
+    rows = fetch_paper_bets(status=status, limit=limit)
+    return {"count": len(rows), "rows": rows}
+
+
+@app.get("/picks/summary")
+async def picks_summary() -> dict:
+    """Aggregate paper_bets stats: totals, per-model and per-market
+    breakdowns, settled time-series for the cumulative P&L / CLV
+    dashboard chart."""
+    from app.ml.paper_trade import fetch_summary
+
+    return fetch_summary()
+
+
+@app.get("/picks/stats")
+async def picks_stats(
+    group_by: Optional[str] = Query(default=None),
+    status: str = Query(default="settled"),
+    date_from: Optional[str] = Query(default=None),
+    date_to: Optional[str] = Query(default=None),
+    model: Optional[str] = Query(default=None),
+    market: Optional[str] = Query(default=None),
+    sport: Optional[str] = Query(default=None),
+    country: Optional[str] = Query(default=None),
+    competition: Optional[str] = Query(default=None),
+    selection: Optional[str] = Query(default=None),
+    edge_min: Optional[float] = Query(default=None),
+    edge_max: Optional[float] = Query(default=None),
+    price_min: Optional[float] = Query(default=None),
+    price_max: Optional[float] = Query(default=None),
+    min_n_per_group: int = Query(default=1, ge=1),
+) -> dict:
+    """Aggregation over paper_bets. ``group_by`` is a comma-separated
+    list of dimensions; multi-value filters are comma-separated too."""
+    from app.ml.paper_trade_stats import StatsFilter, StatsRequest, aggregate
+
+    def _csv(value: Optional[str]) -> tuple:
+        if not value:
+            return ()
+        return tuple(v.strip() for v in value.split(",") if v.strip())
+
+    try:
+        request = StatsRequest(
+            group_by=_csv(group_by),
+            filters=StatsFilter(
+                status=status,
+                date_from=date_from,
+                date_to=date_to,
+                model=_csv(model),
+                market=_csv(market),
+                sport=_csv(sport),
+                country=_csv(country),
+                competition=_csv(competition),
+                selection=_csv(selection),
+                edge_min=edge_min,
+                edge_max=edge_max,
+                price_min=price_min,
+                price_max=price_max,
+            ),
+            min_n_per_group=min_n_per_group,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    rows = aggregate(request)
+    return {
+        "group_by": list(request.group_by),
+        "filters": {
+            "status": status, "date_from": date_from, "date_to": date_to,
+            "model": list(request.filters.model),
+            "market": list(request.filters.market),
+            "sport": list(request.filters.sport),
+            "country": list(request.filters.country),
+            "competition": list(request.filters.competition),
+            "selection": list(request.filters.selection),
+            "edge_min": edge_min, "edge_max": edge_max,
+            "price_min": price_min, "price_max": price_max,
+        },
+        "rows": rows,
+    }
+
+
+@app.get("/picks/stats/calibration")
+async def picks_stats_calibration(
+    model: str = Query(...),
+    date_from: Optional[str] = Query(default=None),
+    date_to: Optional[str] = Query(default=None),
+    market: Optional[str] = Query(default=None),
+    competition: Optional[str] = Query(default=None),
+    n_buckets: int = Query(default=10, ge=2, le=50),
+) -> dict:
+    """Calibration buckets for ``model``. Settled bets only."""
+    from app.ml.paper_trade_stats import StatsFilter, calibration_buckets
+
+    def _csv(value: Optional[str]) -> tuple:
+        if not value:
+            return ()
+        return tuple(v.strip() for v in value.split(",") if v.strip())
+
+    filters = StatsFilter(
+        status="settled",
+        date_from=date_from, date_to=date_to,
+        market=_csv(market),
+        competition=_csv(competition),
+    )
+    buckets = calibration_buckets(model=model, filters=filters, n_buckets=n_buckets)
+    return {"model": model, "n_buckets": n_buckets, "buckets": buckets}
 
 
 # You can include routers here
