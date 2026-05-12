@@ -15,8 +15,8 @@ const config: Config = {
         }
       },
       fontFamily: {
-        sans: ["var(--font-family-sans)", "system-ui", "sans-serif"],
-        mono: ["var(--font-family-mono)", "monospace"]
+        mono: ["var(--font-mono)", "ui-monospace", "monospace"],
+        sans: ["var(--font-sans)", "system-ui", "sans-serif"]
       }
     }
   },
