@@ -6,7 +6,7 @@ import { Kicker } from "@/components/terminal/Kicker";
 import { Glyph } from "@/components/terminal/Glyph";
 import { AsciiProgress } from "@/components/terminal/AsciiProgress";
 
-type Stage = "queued" | "scrape" | "settle" | "predict" | "done" | "error";
+type Stage = "queued" | "scrape" | "phase1" | "settle" | "predict" | "done" | "error";
 
 type StageBlock = { state?: string } & Record<string, unknown>;
 
@@ -20,6 +20,14 @@ type RefreshRun = {
   error: string | null;
   summary: {
     scrape?: Record<string, unknown>;
+    phase1?: {
+      labels_scanned?: number;
+      labels_upserted?: number;
+      closing_upserted?: number;
+      closing_from_live_upserted?: number;
+      elo_upserted?: number;
+      elo_error?: string;
+    };
     settle?: {
       pending_at_start?: number;
       settled?: number;
@@ -41,16 +49,17 @@ type ListResponse = { active_run_id: string | null; runs: RefreshRun[] };
 const STAGE_LABEL: Record<Stage, string> = {
   queued: "queued",
   scrape: "scrape · upcoming",
+  phase1: "labels · closing · elo",
   settle: "settle · pending",
   predict: "predict · record",
   done: "done",
   error: "error",
 };
 
-const STAGE_ORDER: Stage[] = ["scrape", "settle", "predict"];
+const STAGE_ORDER: Stage[] = ["scrape", "phase1", "settle", "predict"];
 
 function stageStep(status: Stage): number {
-  if (status === "done") return 3;
+  if (status === "done") return STAGE_ORDER.length;
   if (status === "error") return -1;
   const idx = STAGE_ORDER.indexOf(status);
   return idx < 0 ? 0 : idx;
@@ -183,7 +192,7 @@ function RunBadge({ run }: { run: RefreshRun }) {
 function StageStrip({ run }: { run: RefreshRun }) {
   const step = stageStep(run.status);
   return (
-    <div className="grid grid-cols-1 gap-px border-t border-border bg-border md:grid-cols-3">
+    <div className="grid grid-cols-1 gap-px border-t border-border bg-border md:grid-cols-4">
       {STAGE_ORDER.map((stage, i) => {
         const state =
           step < 0
@@ -268,6 +277,10 @@ function SummaryGrid({ run }: { run: RefreshRun }) {
           label: "scrape",
           rows: Object.entries(s.scrape).filter(([k]) => !k.startsWith("_")),
         },
+        s.phase1 && {
+          label: "phase1",
+          rows: Object.entries(s.phase1),
+        },
         s.settle && {
           label: "settle",
           rows: Object.entries(s.settle),
@@ -277,11 +290,11 @@ function SummaryGrid({ run }: { run: RefreshRun }) {
           rows: Object.entries(s.predict),
         },
       ].filter(Boolean) as Array<{ label: string; rows: [string, unknown][] }>,
-    [s.scrape, s.settle, s.predict],
+    [s.scrape, s.phase1, s.settle, s.predict],
   );
   if (items.length === 0) return null;
   return (
-    <div className="grid grid-cols-1 gap-px border-t border-border bg-border md:grid-cols-3">
+    <div className="grid grid-cols-1 gap-px border-t border-border bg-border md:grid-cols-4">
       {items.map((it) => (
         <div key={it.label} className="bg-bg px-3 py-2">
           <div

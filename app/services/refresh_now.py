@@ -24,6 +24,10 @@ from datetime import datetime, timezone
 from threading import Lock
 from typing import Any, Iterable, Literal, Optional
 
+from app.ml.closing_odds import backfill_closing_odds
+from app.ml.closing_odds_from_live import backfill_closing_from_live
+from app.ml.elo import EloConfig, backfill_elo
+from app.ml.labels import backfill_labels
 from app.ml.paper_trade import PickInput, record_picks, settle_pending_bets
 from app.ml.serving import list_upcoming_events, load_models, predict_event
 from app.services.bulk_scrape import (
@@ -35,7 +39,7 @@ from app.services.storage import build_snapshot_store
 
 logger = logging.getLogger(__name__)
 
-Stage = Literal["queued", "scrape", "settle", "predict", "done", "error"]
+Stage = Literal["queued", "scrape", "phase1", "settle", "predict", "done", "error"]
 
 
 @dataclass
@@ -119,6 +123,7 @@ class RefreshNowManager:
     ) -> None:
         try:
             await self._stage_scrape(run, window_days, max_concurrency)
+            await self._stage_phase1(run)
             await self._stage_settle(run)
             await self._stage_predict(run, hours_ahead, min_edge)
             run.status = "done"
@@ -156,6 +161,48 @@ class RefreshNowManager:
             await odds_client.aclose()
         run.stage_progress["scrape"] = {"state": "done", **summary}
         run.summary["scrape"] = summary
+
+    async def _stage_phase1(self, run: RefreshRun) -> None:
+        """Backfill labels + closing_odds + elo for newly terminal events.
+
+        The settler reads ``bet_labels`` to determine outcomes and
+        ``closing_odds`` for CLV. Without this step the settle stage finds
+        no labels for fresh matches and leaves every pick pending.
+        """
+        run.status = "phase1"
+        run.stage_progress["phase1"] = {"state": "running"}
+        result = await asyncio.to_thread(self._phase1_sync)
+        run.stage_progress["phase1"] = {"state": "done", **result}
+        run.summary["phase1"] = result
+
+    @staticmethod
+    def _phase1_sync() -> dict[str, int]:
+        # Labels: derive home/away/over/under/btts from terminal stats snapshots.
+        labels = backfill_labels(sport="football")
+        # Closing odds + live fallback: feed the settler's CLV column.
+        closing = backfill_closing_odds(sport="football")
+        live_closing = backfill_closing_from_live(sport="football")
+        # Elo: chronological feature for the model. Skipped if it errors so a
+        # transient feature-builder issue doesn't take the whole refresh down.
+        elo_upserted = 0
+        elo_error: Optional[str] = None
+        try:
+            elo = backfill_elo(config=EloConfig(sport="football"), rebuild=False)
+            elo_upserted = getattr(elo, "upserted", 0)
+        except Exception as exc:  # noqa: BLE001
+            elo_error = f"{type(exc).__name__}: {exc}"
+            logger.warning("phase1_elo_failed", exc_info=True)
+
+        out: dict[str, Any] = {
+            "labels_scanned": labels.scanned,
+            "labels_upserted": labels.upserted,
+            "closing_upserted": getattr(closing, "upserted", 0),
+            "closing_from_live_upserted": getattr(live_closing, "upserted", 0),
+            "elo_upserted": elo_upserted,
+        }
+        if elo_error:
+            out["elo_error"] = elo_error
+        return out
 
     async def _stage_settle(self, run: RefreshRun) -> None:
         run.status = "settle"
