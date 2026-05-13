@@ -1541,20 +1541,62 @@ class SnapshotStore:
     @staticmethod
     def _is_terminal_match_response(response: MatchStatsResponse) -> bool:
         status = (response.event.status or "").strip().lower()
-        if status in _TERMINAL_MATCH_STATUSES or status.startswith("finished"):
-            return True
 
         # Keep non-terminal events refreshable (scheduled/live/interrupted/postponed).
         if status in {"scheduled", "live", "interrupted", "postponed"}:
             return False
 
+        finished_status = (
+            status in _TERMINAL_MATCH_STATUSES or status.startswith("finished")
+        )
         status_detail = (response.event.status_detail or "").strip().lower()
-        if response.event.outcome and any(
+        finished_detail = bool(response.event.outcome) and any(
             token in status_detail
             for token in ("after extra time", "after penalties", "penalties", "final")
-        ):
-            return True
+        )
 
+        if not (finished_status or finished_detail):
+            return False
+
+        # The upstream occasionally returns ``status="finished"`` for a page
+        # whose body never populated (zero stats, no Final score row, team
+        # name still tagged "<X> LIVE"). Stamping such snapshots terminal
+        # poisons the event: downstream label derivation has nothing to
+        # parse, and the scheduler will never refresh it again because the
+        # row is "done". Only mark terminal once we can see a Final score
+        # row in the Match-period score categories.
+        return SnapshotStore._has_final_score(response)
+
+    @staticmethod
+    def _has_final_score(response: MatchStatsResponse) -> bool:
+        """True iff the payload exposes a usable Final score row.
+
+        Mirrors the parser in :func:`app.ml.sports._football_labels` but is
+        sport-agnostic enough for other parsers that follow the same
+        Match/Score/Final-score nesting.
+        """
+        try:
+            periods = response.event.periods or ()
+        except AttributeError:
+            return False
+        for period in periods:
+            name = (getattr(period, "name", None) or "").strip().lower()
+            if name != "match":
+                continue
+            for category in getattr(period, "categories", None) or ():
+                cat_name = (getattr(category, "name", None) or "").strip().lower()
+                if cat_name != "score":
+                    continue
+                for stat in getattr(category, "stats", None) or ():
+                    label = (getattr(stat, "label", None) or "").lower()
+                    if "final score" not in label:
+                        continue
+                    try:
+                        int(getattr(stat, "home", None))  # type: ignore[arg-type]
+                        int(getattr(stat, "away", None))  # type: ignore[arg-type]
+                        return True
+                    except (TypeError, ValueError):
+                        return False
         return False
 
     @staticmethod

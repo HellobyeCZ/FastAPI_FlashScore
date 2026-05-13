@@ -21,6 +21,7 @@ type RefreshRun = {
   summary: {
     scrape?: Record<string, unknown>;
     phase1?: {
+      unstamped_unparseable?: number;
       labels_scanned?: number;
       labels_upserted?: number;
       closing_upserted?: number;

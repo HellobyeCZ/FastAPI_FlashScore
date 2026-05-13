@@ -24,6 +24,9 @@ from datetime import datetime, timezone
 from threading import Lock
 from typing import Any, Iterable, Literal, Optional
 
+import json
+
+from app.ml import db as ml_db
 from app.ml.closing_odds import backfill_closing_odds
 from app.ml.closing_odds_from_live import backfill_closing_from_live
 from app.ml.elo import EloConfig, backfill_elo
@@ -176,7 +179,13 @@ class RefreshNowManager:
         run.summary["phase1"] = result
 
     @staticmethod
-    def _phase1_sync() -> dict[str, int]:
+    def _phase1_sync() -> dict[str, Any]:
+        # Rescue: undo is_terminal=1 on stats snapshots whose payload has no
+        # usable Final score (the upstream sometimes returns status=finished
+        # for a half-loaded page). Without this, those rows stay terminal
+        # forever and the scheduler never re-fetches them.
+        unstamped = RefreshNowManager._unstamp_unparseable_terminal_rows()
+
         # Labels: derive home/away/over/under/btts from terminal stats snapshots.
         labels = backfill_labels(sport="football")
         # Closing odds + live fallback: feed the settler's CLV column.
@@ -194,6 +203,7 @@ class RefreshNowManager:
             logger.warning("phase1_elo_failed", exc_info=True)
 
         out: dict[str, Any] = {
+            "unstamped_unparseable": unstamped,
             "labels_scanned": labels.scanned,
             "labels_upserted": labels.upserted,
             "closing_upserted": getattr(closing, "upserted", 0),
@@ -203,6 +213,65 @@ class RefreshNowManager:
         if elo_error:
             out["elo_error"] = elo_error
         return out
+
+    @staticmethod
+    def _unstamp_unparseable_terminal_rows() -> int:
+        """Flip ``is_terminal=1 -> 0`` for stats snapshots whose payload has
+        no usable Final score. Returns the number of rows flipped.
+
+        Mirrors :meth:`SnapshotStore._has_final_score` but evaluated in
+        Python against the stored JSON. Idempotent — re-running on a clean
+        DB returns 0.
+        """
+        unstamped = 0
+        with ml_db.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, event_id, match_stats_payload_json
+                FROM match_stats_snapshots
+                WHERE is_terminal = 1
+                """
+            ).fetchall()
+            bad_ids: list[int] = []
+            for row in rows:
+                try:
+                    payload = json.loads(row["match_stats_payload_json"])
+                except (TypeError, ValueError):
+                    bad_ids.append(row["id"])
+                    continue
+                event = (payload or {}).get("event") or {}
+                if not RefreshNowManager._payload_has_final_score(event):
+                    bad_ids.append(row["id"])
+            if bad_ids:
+                conn.executemany(
+                    "UPDATE match_stats_snapshots SET is_terminal = 0 WHERE id = ?",
+                    [(rid,) for rid in bad_ids],
+                )
+                conn.commit()
+                unstamped = len(bad_ids)
+        if unstamped > 0:
+            logger.info("refresh_unstamped_unparseable count=%d", unstamped)
+        return unstamped
+
+    @staticmethod
+    def _payload_has_final_score(event: dict[str, Any]) -> bool:
+        for period in event.get("periods") or ():
+            if (period.get("name") or "").strip().lower() != "match":
+                continue
+            for category in period.get("categories") or ():
+                if (category.get("name") or "").strip().lower() != "score":
+                    continue
+                for stat in category.get("stats") or ():
+                    label = (stat.get("label") or "").lower()
+                    if "final score" not in label:
+                        continue
+                    try:
+                        int(stat["home"])
+                        int(stat["away"])
+                        return True
+                    except (KeyError, TypeError, ValueError):
+                        return False
+        return False
 
     async def _stage_settle(self, run: RefreshRun) -> None:
         run.status = "settle"
