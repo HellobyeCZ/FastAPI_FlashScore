@@ -9,6 +9,7 @@ import { Glyph } from "@/components/terminal/Glyph";
 import { useBulkScrapeJobsData } from "@/hooks/useBulkScrapeJobsData";
 import { startBulkScrapeJob } from "@/lib/api-client";
 import type { BulkScrapeJob } from "@/types/bulk-scrape";
+import { RefreshNowPanel } from "./RefreshNowPanel";
 
 const STATUS_MAP: Record<string, StatusKind> = {
   queued: "PEND",
@@ -135,6 +136,7 @@ export function JobsPage() {
   return (
     <>
       <PageHeader kicker="Jobs · bulk scrape" />
+      <RefreshNowPanel />
       <form
         onSubmit={submit}
         className="mb-6 flex flex-wrap items-center gap-3 border border-border p-3 font-mono text-[12px]"
