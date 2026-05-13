@@ -7,8 +7,19 @@ export const runtime = "nodejs";
 
 type SortKey = "last_fetch_desc" | "kickoff_desc" | "kickoff_asc" | "snaps_desc";
 
+// "last fetch" in the UI is max(latestOdds, latestStats, updatedAt).
+// SQLite via Prisma can't express GREATEST(...) directly in orderBy, so
+// approximate it: order by the strictly-newer of the two scrape timestamps
+// first (nulls last so rows that have only one column populated still rank
+// by the populated one), then fall back to updatedAt. This matches what
+// the displayed value resolves to for ~all rows in practice.
 const SORT_KEYS: Record<SortKey, Prisma.MatchEventSummaryOrderByWithRelationInput[]> = {
-  last_fetch_desc: [{ updatedAt: "desc" }, { eventId: "desc" }],
+  last_fetch_desc: [
+    { latestOddsFetchedAt: { sort: "desc", nulls: "last" } },
+    { latestStatsFetchedAt: { sort: "desc", nulls: "last" } },
+    { updatedAt: "desc" },
+    { eventId: "desc" },
+  ],
   kickoff_desc: [{ startTimeUtc: "desc" }, { eventId: "desc" }],
   kickoff_asc: [{ startTimeUtc: "asc" }, { eventId: "asc" }],
   snaps_desc: [{ oddsSnapshotCount: "desc" }, { eventId: "desc" }],
