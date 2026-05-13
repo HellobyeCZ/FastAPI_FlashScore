@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
+import { useElementWidth } from "@/hooks/useElementWidth";
 
 export type HeatmapCell = {
   row: string;
@@ -38,10 +39,13 @@ export function HeatmapChart({
   cols,
   colorScale = terminalColorScale,
   minNToShow = 1,
-  width = 720,
+  width: widthProp,
   cellHeight = 28,
 }: HeatmapChartProps) {
-  const cellWidth = (width - 120) / Math.max(1, cols.length);
+  const [containerRef, measuredWidth] = useElementWidth<HTMLDivElement>(720);
+  const width = widthProp ?? Math.max(360, measuredWidth);
+  // 180px for the row-label column + 90px for the row-total column.
+  const cellWidth = Math.max(60, (width - 270) / Math.max(1, cols.length));
   const map = useMemo(() => {
     const m = new Map<string, HeatmapCell>();
     cells.forEach((c) => m.set(`${c.row}::${c.col}`, c));
@@ -81,27 +85,34 @@ export function HeatmapChart({
   );
 
   return (
-    <div style={{ overflowX: "auto" }} className="border border-border bg-bg">
+    <div
+      ref={containerRef}
+      style={{ overflowX: "auto", width: "100%" }}
+      className="border border-border bg-bg"
+    >
       {hiddenCount > 0 && (
         <div className="border-b border-border px-3 py-1 font-mono text-[10px] text-text-faint">
           ▸ {hiddenCount} {hiddenCount === 1 ? "cell" : "cells"} hidden (n &lt; {minNToShow})
         </div>
       )}
-      <table className="border-collapse font-mono text-[11px]">
+      <table
+        className="border-collapse font-mono text-[11px]"
+        style={{ width: "100%", tableLayout: "fixed" }}
+      >
         <thead>
           <tr>
-            <th style={{ minWidth: 100 }} className="px-2 py-1 text-left font-sans text-[10px] uppercase text-text-dim" />
+            <th style={{ width: 180 }} className="px-2 py-1 text-left font-sans text-[10px] uppercase text-text-dim" />
             {cols.map((c) => (
               <th
                 key={c}
-                style={{ minWidth: cellWidth }}
+                style={{ width: cellWidth }}
                 className="px-1 py-1 text-center font-sans text-[10px] uppercase text-text-dim"
               >
                 {c}
               </th>
             ))}
             <th
-              style={{ minWidth: 80 }}
+              style={{ width: 90 }}
               className="px-1 py-1 text-left font-sans text-[10px] uppercase text-text-dim"
             >
               row total

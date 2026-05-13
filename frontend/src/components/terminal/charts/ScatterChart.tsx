@@ -4,6 +4,7 @@ import { Group } from "@visx/group";
 import { scaleLinear } from "@visx/scale";
 import { useMemo } from "react";
 import { TerminalAxisLeft, TerminalAxisBottom } from "./TerminalAxis";
+import { useElementWidth } from "@/hooks/useElementWidth";
 
 export type ScatterPoint = {
   x: number;
@@ -24,9 +25,11 @@ interface ScatterChartProps {
 
 export function ScatterChart({
   points,
-  width = 720,
+  width: widthProp,
   height = 240,
 }: ScatterChartProps) {
+  const [containerRef, measuredWidth] = useElementWidth<HTMLDivElement>(720);
+  const width = widthProp ?? Math.max(320, measuredWidth);
   const padding = { top: 16, right: 16, bottom: 32, left: 48 };
   const innerW = width - padding.left - padding.right;
   const innerH = height - padding.top - padding.bottom;
@@ -47,23 +50,26 @@ export function ScatterChart({
 
   if (points.length === 0) {
     return (
-      <svg width={width} height={height} role="img">
-        <rect width={width} height={height} fill="var(--bg)" />
-        <text
-          x={width / 2}
-          y={height / 2}
-          textAnchor="middle"
-          fontSize={11}
-          fontFamily="var(--font-mono)"
-          fill="var(--text-dim)"
-        >
-          no data
-        </text>
-      </svg>
+      <div ref={containerRef} style={{ width: "100%" }}>
+        <svg width={width} height={height} role="img">
+          <rect width={width} height={height} fill="var(--bg)" />
+          <text
+            x={width / 2}
+            y={height / 2}
+            textAnchor="middle"
+            fontSize={11}
+            fontFamily="var(--font-mono)"
+            fill="var(--text-dim)"
+          >
+            no data
+          </text>
+        </svg>
+      </div>
     );
   }
 
   return (
+    <div ref={containerRef} style={{ width: "100%" }}>
     <svg width={width} height={height} role="img" aria-label="scatter chart">
       <rect width={width} height={height} fill="var(--bg)" />
       <Group left={padding.left} top={padding.top}>
@@ -102,5 +108,6 @@ export function ScatterChart({
         })}
       </Group>
     </svg>
+    </div>
   );
 }

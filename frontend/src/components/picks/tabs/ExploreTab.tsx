@@ -29,6 +29,7 @@ import { BucketBars, type Bucket as TerminalBucket } from "@/components/terminal
 import { PageHeader } from "@/components/terminal/PageHeader";
 import { Kicker } from "@/components/terminal/Kicker";
 import { MODEL_COLORS } from "@/components/terminal/charts/modelColors";
+import { competitionRoot } from "@/lib/competition";
 
 type Bucket = { label: string; value: number | null; n: number };
 
@@ -174,16 +175,36 @@ export function ExploreTab() {
     }).filter((b) => b.value !== null);
   }, [roiByPrice]);
 
-  const heatmapCells: HeatmapCell[] = useMemo(
-    () =>
-      compSel.map((r) => ({
-        row: String(r.competition ?? ""),
-        col: String(r.selection ?? ""),
-        value: r.mean_clv,
-        n: r.n,
-      })),
-    [compSel],
-  );
+  // Fold stage suffixes ("Chance Liga - Championship Group" → "Chance Liga")
+  // and re-aggregate cells that collapse onto the same (root, selection) pair.
+  const heatmapCells: HeatmapCell[] = useMemo(() => {
+    type Agg = { sumNxClv: number; n: number };
+    const merged = new Map<string, Agg>();
+    for (const r of compSel) {
+      const row = competitionRoot(String(r.competition ?? "")) ?? "";
+      const col = String(r.selection ?? "");
+      if (!row || !col) continue;
+      const key = `${row}::${col}`;
+      const cur = merged.get(key) ?? { sumNxClv: 0, n: 0 };
+      const clv = r.mean_clv;
+      if (clv !== null && clv !== undefined) {
+        cur.sumNxClv += clv * r.n;
+      }
+      cur.n += r.n;
+      merged.set(key, cur);
+    }
+    const out: HeatmapCell[] = [];
+    for (const [key, agg] of merged.entries()) {
+      const [row, col] = key.split("::");
+      out.push({
+        row,
+        col,
+        value: agg.n > 0 ? agg.sumNxClv / agg.n : null,
+        n: agg.n,
+      });
+    }
+    return out;
+  }, [compSel]);
 
   const heatmapRows = useMemo(
     () =>
@@ -200,16 +221,8 @@ export function ExploreTab() {
     [heatmapCells],
   );
 
-  const toTerminalBuckets = (bs: Bucket[], { signed }: { signed: boolean }): TerminalBucket[] =>
-    bs.map((b) => {
-      const v = b.value ?? 0;
-      const tone: TerminalBucket["tone"] = signed
-        ? v >= 0
-          ? "pos"
-          : "neg"
-        : "neutral";
-      return { label: b.label, value: Math.abs(v), tone };
-    });
+  const toTerminalBuckets = (bs: Bucket[]): TerminalBucket[] =>
+    bs.map((b) => ({ label: b.label, value: b.value ?? 0 }));
 
   if (error) {
     return (
@@ -254,12 +267,12 @@ export function ExploreTab() {
       <div className="grid gap-4 lg:grid-cols-2">
         <section className="border border-border p-4">
           <Kicker className="mb-3 block">{t("picks.buckets.hitByEdge")}</Kicker>
-          <BucketBars buckets={toTerminalBuckets(hitByEdgeBuckets, { signed: false })} height={120} />
+          <BucketBars buckets={toTerminalBuckets(hitByEdgeBuckets)} height={140} />
         </section>
 
         <section className="border border-border p-4">
           <Kicker className="mb-3 block">{t("picks.buckets.roiByPrice")}</Kicker>
-          <BucketBars buckets={toTerminalBuckets(roiByPriceBuckets, { signed: true })} height={120} />
+          <BucketBars buckets={toTerminalBuckets(roiByPriceBuckets)} height={140} signed />
         </section>
       </div>
 

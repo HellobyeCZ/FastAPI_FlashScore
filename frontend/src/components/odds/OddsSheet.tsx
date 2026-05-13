@@ -1,6 +1,6 @@
 "use client";
 import { useMemo } from "react";
-import type { UseQueryResult } from "@tanstack/react-query";
+import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { Kicker } from "@/components/terminal/Kicker";
 import { Glyph } from "@/components/terminal/Glyph";
 import type { EventOddsSummary } from "@/types/odds";
@@ -55,7 +55,27 @@ export function OddsSheet({
   selectedSnapshotId?: string;
   onSelectSnapshot: (id?: string) => void;
 }) {
-  const { data, isLoading, error } = query;
+  const liveData = query.data;
+  const liveLoading = query.isLoading;
+  const liveError = query.error;
+
+  const snapshotQuery = useQuery<EventOddsSummary>({
+    queryKey: ["snapshot", eventId, selectedSnapshotId],
+    queryFn: async () => {
+      const r = await fetch(
+        `/api/snapshots/${eventId}/${encodeURIComponent(selectedSnapshotId!)}`
+      );
+      if (!r.ok) throw new Error(`snapshot ${r.status}`);
+      return r.json();
+    },
+    enabled: !!eventId && !!selectedSnapshotId,
+    staleTime: 60_000,
+  });
+
+  const showingSnapshot = !!selectedSnapshotId;
+  const data = showingSnapshot ? snapshotQuery.data : liveData;
+  const isLoading = showingSnapshot ? snapshotQuery.isLoading : liveLoading;
+  const error = showingSnapshot ? snapshotQuery.error : liveError;
 
   return (
     <section className="flex flex-col gap-6">
@@ -64,6 +84,11 @@ export function OddsSheet({
         selectedId={selectedSnapshotId}
         onSelect={onSelectSnapshot}
       />
+      {showingSnapshot && (
+        <div className="font-mono text-[11px] text-text-faint">
+          ▸ viewing snapshot at {new Date(selectedSnapshotId!).toLocaleString()}
+        </div>
+      )}
       {isLoading && (
         <div className="font-mono text-[12px] text-text-dim">▸ loading odds…</div>
       )}
