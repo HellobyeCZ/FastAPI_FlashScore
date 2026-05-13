@@ -60,12 +60,17 @@ function toSummary(r: {
 }): ScrapedMatchSummary {
   const latestOdds = r.latestOddsFetchedAt ?? undefined;
   const latestStats = r.latestStatsFetchedAt ?? undefined;
+  // Display value matches the sort expression: max of all three timestamps.
+  // updatedAt is bumped on any change to the summary row, including backfills
+  // that touch teams/competition without re-fetching odds/stats — so it can be
+  // newer than either latestOdds or latestStats.
+  const candidates = [latestOdds, latestStats, r.updatedAt].filter(
+    (v): v is string => typeof v === "string" && v.length > 0,
+  );
   const lastFetchedAt =
-    latestOdds && latestStats
-      ? new Date(latestOdds) > new Date(latestStats)
-        ? latestOdds
-        : latestStats
-      : (latestOdds ?? latestStats ?? r.updatedAt);
+    candidates.length > 0
+      ? candidates.reduce((max, v) => (v > max ? v : max))
+      : r.updatedAt;
   const item: ScrapedMatchSummary = {
     eventId: r.eventId,
     lastFetchedAt,
@@ -142,22 +147,151 @@ export async function GET(request: Request) {
   const where = buildWhere({ q, countries, leagues, statuses });
 
   try {
-    // Fetch one extra row to know whether there's a next page.
-    const args: Prisma.MatchEventSummaryFindManyArgs = {
-      where,
-      orderBy,
-      take: limit + 1,
-    };
-    if (cursor) {
-      args.cursor = { eventId: cursor };
-      args.skip = 1;
-    }
+    let rows: Awaited<ReturnType<typeof prisma.matchEventSummary.findMany>>;
+    let totalUnfiltered: number;
 
-    const [rows, totalUnfiltered] = await Promise.all([
-      prisma.matchEventSummary.findMany(args),
-      // Total respects filters but not pagination; useful for "X matches" badge.
-      prisma.matchEventSummary.count({ where }),
-    ]);
+    if (sort === "last_fetch_desc") {
+      // Sort by the same expression the UI displays as "last fetch":
+      // max(latest_odds_fetched_at, latest_stats_fetched_at, updated_at).
+      // Prisma's typed orderBy can't express GREATEST(...), so use raw SQL.
+      // Keyset pagination by (last_fetch_value, event_id) keeps it O(limit)
+      // even on huge tables.
+      const sqlWhere: string[] = [];
+      const sqlBinds: (string | number)[] = [];
+
+      if (q && q.trim()) {
+        const like = `%${q.trim()}%`;
+        sqlWhere.push(
+          "(home_team LIKE ? OR away_team LIKE ? OR competition LIKE ? OR event_name LIKE ? OR event_id LIKE ?)",
+        );
+        sqlBinds.push(like, like, like, like, like);
+      }
+      if (countries.length > 0) {
+        sqlWhere.push(`country IN (${countries.map(() => "?").join(",")})`);
+        sqlBinds.push(...countries);
+      }
+      if (leagues.length > 0) {
+        sqlWhere.push(`competition IN (${leagues.map(() => "?").join(",")})`);
+        sqlBinds.push(...leagues);
+      }
+
+      const LAST_FETCH = `MAX(
+        COALESCE(latest_odds_fetched_at, ''),
+        COALESCE(latest_stats_fetched_at, ''),
+        COALESCE(updated_at, '')
+      )`;
+
+      if (cursor) {
+        // cursor format: "<lastFetchISO>|<eventId>" (URI-encoded by caller)
+        const decoded = decodeURIComponent(cursor);
+        const sep = decoded.lastIndexOf("|");
+        if (sep > 0) {
+          const cursorLast = decoded.slice(0, sep);
+          const cursorEventId = decoded.slice(sep + 1);
+          sqlWhere.push(
+            `(${LAST_FETCH} < ? OR (${LAST_FETCH} = ? AND event_id < ?))`,
+          );
+          sqlBinds.push(cursorLast, cursorLast, cursorEventId);
+        }
+      }
+
+      const whereClause = sqlWhere.length > 0 ? `WHERE ${sqlWhere.join(" AND ")}` : "";
+
+      // Fetch one extra row to detect next page.
+      const sql = `
+        SELECT event_id AS eventId,
+               event_name AS eventName,
+               home_team AS homeTeam,
+               away_team AS awayTeam,
+               sport,
+               country,
+               competition,
+               competition_stage AS competitionStage,
+               competition_path AS competitionPath,
+               start_time_utc AS startTimeUtc,
+               status,
+               status_detail AS statusDetail,
+               outcome,
+               odds_snapshot_count AS oddsSnapshotCount,
+               stats_snapshot_count AS statsSnapshotCount,
+               latest_odds_fetched_at AS latestOddsFetchedAt,
+               latest_stats_fetched_at AS latestStatsFetchedAt,
+               updated_at AS updatedAt
+        FROM match_event_summaries
+        ${whereClause}
+        ORDER BY ${LAST_FETCH} DESC, event_id DESC
+        LIMIT ?
+      `;
+      const fetched = (await prisma.$queryRawUnsafe(sql, ...sqlBinds, limit + 1)) as Array<{
+        eventId: string;
+        eventName: string | null;
+        homeTeam: string | null;
+        awayTeam: string | null;
+        sport: string | null;
+        country: string | null;
+        competition: string | null;
+        competitionStage: string | null;
+        competitionPath: string | null;
+        startTimeUtc: string | null;
+        status: string | null;
+        statusDetail: string | null;
+        outcome: string | null;
+        oddsSnapshotCount: number | bigint;
+        statsSnapshotCount: number | bigint;
+        latestOddsFetchedAt: string | null;
+        latestStatsFetchedAt: string | null;
+        updatedAt: string;
+      }>;
+
+      // Normalize bigints from raw query.
+      rows = fetched.map((r) => ({
+        ...r,
+        oddsSnapshotCount: Number(r.oddsSnapshotCount),
+        statsSnapshotCount: Number(r.statsSnapshotCount),
+      }));
+
+      // Total count uses the same filter set (no cursor).
+      const countSql = `SELECT COUNT(*) AS c FROM match_event_summaries ${whereClause.replace(/\bAND \(MAX\([^)]*\)[^)]*\)[^)]*\)/, "")}`;
+      // Strip the cursor predicate from the count: simpler to rebuild it.
+      const countWhere: string[] = [];
+      const countBinds: (string | number)[] = [];
+      if (q && q.trim()) {
+        const like = `%${q.trim()}%`;
+        countWhere.push(
+          "(home_team LIKE ? OR away_team LIKE ? OR competition LIKE ? OR event_name LIKE ? OR event_id LIKE ?)",
+        );
+        countBinds.push(like, like, like, like, like);
+      }
+      if (countries.length > 0) {
+        countWhere.push(`country IN (${countries.map(() => "?").join(",")})`);
+        countBinds.push(...countries);
+      }
+      if (leagues.length > 0) {
+        countWhere.push(`competition IN (${leagues.map(() => "?").join(",")})`);
+        countBinds.push(...leagues);
+      }
+      const countWhereClause = countWhere.length > 0 ? `WHERE ${countWhere.join(" AND ")}` : "";
+      const countRows = (await prisma.$queryRawUnsafe(
+        `SELECT COUNT(*) AS c FROM match_event_summaries ${countWhereClause}`,
+        ...countBinds,
+      )) as Array<{ c: number | bigint }>;
+      totalUnfiltered = Number(countRows[0]?.c ?? 0);
+    } else {
+      // Other sorts: typed Prisma path with eventId-only keyset cursor.
+      const args: Prisma.MatchEventSummaryFindManyArgs = {
+        where,
+        orderBy,
+        take: limit + 1,
+      };
+      if (cursor) {
+        args.cursor = { eventId: decodeURIComponent(cursor) };
+        args.skip = 1;
+      }
+      [rows, totalUnfiltered] = await Promise.all([
+        prisma.matchEventSummary.findMany(args),
+        prisma.matchEventSummary.count({ where }),
+      ]);
+    }
 
     let summaries = rows.map(toSummary);
     if (statuses.length > 0) {
@@ -168,7 +302,13 @@ export async function GET(request: Request) {
     let nextCursor: string | null = null;
     if (summaries.length > limit) {
       const next = summaries[limit];
-      nextCursor = next.eventId;
+      if (sort === "last_fetch_desc") {
+        // Composite cursor: <lastFetchValue>|<eventId>, URI-encoded so
+        // a possible '|' in the timestamp can't confuse the parser.
+        nextCursor = encodeURIComponent(`${next.lastFetchedAt}|${next.eventId}`);
+      } else {
+        nextCursor = encodeURIComponent(next.eventId);
+      }
       summaries = summaries.slice(0, limit);
     }
 
