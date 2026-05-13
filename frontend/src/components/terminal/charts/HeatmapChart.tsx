@@ -74,8 +74,19 @@ export function HeatmapChart({
     [rowTotals],
   );
 
+  const hiddenCount = useMemo(
+    () =>
+      cells.filter((c) => c.value !== null && c.n < minNToShow).length,
+    [cells, minNToShow],
+  );
+
   return (
     <div style={{ overflowX: "auto" }} className="border border-border bg-bg">
+      {hiddenCount > 0 && (
+        <div className="border-b border-border px-3 py-1 font-mono text-[10px] text-text-faint">
+          ▸ {hiddenCount} {hiddenCount === 1 ? "cell" : "cells"} hidden (n &lt; {minNToShow})
+        </div>
+      )}
       <table className="border-collapse font-mono text-[11px]">
         <thead>
           <tr>

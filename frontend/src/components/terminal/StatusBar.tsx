@@ -9,9 +9,10 @@ const BUILD_SHA = process.env.NEXT_PUBLIC_BUILD_SHA ?? "dev";
 export function StatusBar({ pageHints }: { pageHints?: string }) {
   const { locale } = useLocale();
   const stats = useDbStats();
-  const [now, setNow] = useState<Date>(() => new Date());
+  const [now, setNow] = useState<Date | null>(null);
 
   useEffect(() => {
+    setNow(new Date());
     const id = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(id);
   }, []);
@@ -25,12 +26,14 @@ export function StatusBar({ pageHints }: { pageHints?: string }) {
   const ledLabel =
     stats.status === "success" ? "ok" : stats.status === "error" ? "err" : "—";
 
-  const clock = new Intl.DateTimeFormat(locale, {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false
-  }).format(now);
+  const clock = now
+    ? new Intl.DateTimeFormat(locale, {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false
+      }).format(now)
+    : "--:--:--";
 
   const rows =
     stats.data && "rows" in stats.data ? stats.data.rows.toLocaleString(locale) : "—";
@@ -47,9 +50,11 @@ export function StatusBar({ pageHints }: { pageHints?: string }) {
         {pageHints && <span className="hidden md:inline">KEY: {pageHints}</span>}
       </div>
       <div className="flex items-center gap-4">
-        <span>{clock}</span>
+        <span suppressHydrationWarning>{clock}</span>
         <span className="hidden sm:inline">db: {rows} rows</span>
-        <span className="hidden sm:inline">build: {BUILD_SHA}</span>
+        <span className="hidden sm:inline" suppressHydrationWarning>
+          build: {BUILD_SHA}
+        </span>
       </div>
     </footer>
   );

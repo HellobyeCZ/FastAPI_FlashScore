@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useLocale } from "@/contexts/LocaleContext";
 import {
   fetchStats,
@@ -31,14 +31,12 @@ import {
 } from "@/components/terminal/charts/ViolinChart";
 import { PageHeader } from "@/components/terminal/PageHeader";
 import { Kicker } from "@/components/terminal/Kicker";
+import { Chip } from "@/components/terminal/Chip";
 import { DataTable, type Column } from "@/components/terminal/DataTable";
-import { useRouter } from "next/navigation";
+import { Stat } from "@/components/terminal/Stat";
+import { colorForModel } from "@/components/terminal/charts/modelColors";
 
-import { MODEL_COLORS, colorForModel } from "@/components/terminal/charts/modelColors";
-
-function colorFor(model: string): string {
-  return colorForModel(model);
-}
+type CompareView = "pnl" | "clv" | "market" | "competition";
 
 function fmtNum(v: number | null | undefined, digits = 2): string {
   if (v === null || v === undefined || Number.isNaN(v)) return "—";
@@ -48,6 +46,20 @@ function fmtNum(v: number | null | undefined, digits = 2): string {
 function fmtPct(v: number | null | undefined): string {
   if (v === null || v === undefined || Number.isNaN(v)) return "—";
   return `${(v * 100).toFixed(1)}%`;
+}
+
+function bestBy(rows: StatsRow[], key: keyof StatsRow): StatsRow | undefined {
+  let best: StatsRow | undefined;
+  let bestVal = -Infinity;
+  for (const r of rows) {
+    const v = r[key];
+    if (typeof v !== "number" || Number.isNaN(v)) continue;
+    if (v > bestVal) {
+      bestVal = v;
+      best = r;
+    }
+  }
+  return best;
 }
 
 export function ModelsTab() {
@@ -67,8 +79,9 @@ export function ModelsTab() {
   const [knownMarkets, setKnownMarkets] = useState<string[]>([]);
   const [knownComps, setKnownComps] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [view, setView] = useState<CompareView>("pnl");
 
-  // Build StatsFilters from URL filters state.
   const apiFilters: StatsFilters = useMemo(() => {
     const out: StatsFilters = { status: filters.status };
     const range = presetToDateRange(filters.datePreset);
@@ -100,6 +113,7 @@ export function ModelsTab() {
 
   useEffect(() => {
     let cancelled = false;
+    setLoading(true);
     async function load() {
       try {
         const [byModel, byModelDay, byModelMarket, byModelComp, history] =
@@ -114,7 +128,6 @@ export function ModelsTab() {
 
         setLeaderboard(byModel.rows);
 
-        // Build cumulative P&L per model, x=days since first day.
         const byModelDayRows = [...byModelDay.rows].sort((a, b) =>
           String(a.day ?? "").localeCompare(String(b.day ?? "")),
         );
@@ -128,9 +141,7 @@ export function ModelsTab() {
           const dayStr = String(row.day ?? "");
           if (!dayStr) continue;
           const dayMs = new Date(dayStr).getTime();
-          const x = firstDayMs
-            ? Math.round((dayMs - firstDayMs) / 86400e3)
-            : 0;
+          const x = firstDayMs ? Math.round((dayMs - firstDayMs) / 86400e3) : 0;
           const prev = runningByModel.get(model) ?? 0;
           const next = prev + (row.pnl_total ?? 0);
           runningByModel.set(model, next);
@@ -141,13 +152,17 @@ export function ModelsTab() {
         const series: Series[] = Array.from(perModel.entries()).map(
           ([model, points]) => ({
             label: model,
-            color: colorFor(model),
-            points,
+            color: colorForModel(model),
+            // Anchor each series to (0, 0) so cumulative P&L reads from the
+            // origin even when the first observation is mid-window.
+            points:
+              points.length > 0 && points[0].x > 0
+                ? [{ x: 0, y: 0 }, ...points]
+                : points,
           }),
         );
         setPnlSeries(series);
 
-        // Violin: settled rows with non-null clv, grouped by model.
         const byModelClv = new Map<string, number[]>();
         for (const r of history.rows as HistoryRow[]) {
           if (r.status !== "settled") continue;
@@ -159,7 +174,7 @@ export function ModelsTab() {
         const vSeries: ViolinSeries[] = Array.from(byModelClv.entries()).map(
           ([model, values]) => ({
             label: model,
-            color: colorFor(model),
+            color: colorForModel(model),
             values,
           }),
         );
@@ -189,6 +204,8 @@ export function ModelsTab() {
       } catch (err) {
         if (cancelled) return;
         setError(err instanceof Error ? err.message : "load failed");
+      } finally {
+        if (!cancelled) setLoading(false);
       }
     }
     void load();
@@ -215,6 +232,14 @@ export function ModelsTab() {
     [leaderboard],
   );
 
+  const totalN = useMemo(
+    () => leaderboard.reduce((acc, r) => acc + (r.n ?? 0), 0),
+    [leaderboard],
+  );
+  const bestRoi = useMemo(() => bestBy(leaderboard, "roi"), [leaderboard]);
+  const bestHit = useMemo(() => bestBy(leaderboard, "hit_rate"), [leaderboard]);
+  const bestClv = useMemo(() => bestBy(leaderboard, "mean_clv"), [leaderboard]);
+
   const marketCells: HeatmapCell[] = useMemo(
     () =>
       modelMarket.map((r) => ({
@@ -240,24 +265,31 @@ export function ModelsTab() {
     {
       key: "model",
       header: t("picks.filter.model"),
-      render: (row) => (
-        <Link
-          href={
-            `/${locale}/picks/model/${row.model}` as unknown as Parameters<typeof Link>[0]["href"]
-          }
-          className="text-accent hover:underline"
-          onClick={(e) => e.stopPropagation()}
-        >
-          {String(row.model)}
-        </Link>
-      ),
-      sort: (a, b) => String(a.model ?? "").localeCompare(String(b.model ?? "")),
+      render: (row) => {
+        const m = String(row.model ?? "");
+        return (
+          <Link
+            href={`/${locale}/picks/model/${m}` as unknown as Parameters<typeof Link>[0]["href"]}
+            className="inline-flex items-center gap-2 hover:text-accent"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <span
+              aria-hidden
+              className="inline-block h-2 w-2"
+              style={{ background: colorForModel(m) }}
+            />
+            <span>{m}</span>
+          </Link>
+        );
+      },
+      sort: (a, b) =>
+        String(a.model ?? "").localeCompare(String(b.model ?? "")),
     },
     {
       key: "n",
       header: "n",
       align: "right",
-      render: (row) => row.n,
+      render: (row) => row.n.toLocaleString(locale),
       sort: (a, b) => (a.n ?? 0) - (b.n ?? 0),
     },
     {
@@ -271,8 +303,31 @@ export function ModelsTab() {
       key: "roi",
       header: t("picks.deepDive.kpi.roi"),
       align: "right",
-      render: (row) => fmtPct(row.roi),
+      render: (row) => {
+        const v = row.roi;
+        if (v === null || v === undefined) return "—";
+        const tone =
+          v > 0.001 ? "text-pos" : v < -0.001 ? "text-neg" : "text-text-dim";
+        return <span className={tone}>{fmtPct(v)}</span>;
+      },
       sort: (a, b) => (a.roi ?? 0) - (b.roi ?? 0),
+    },
+    {
+      key: "pnl_total",
+      header: "P&L",
+      align: "right",
+      render: (row) => {
+        const v = row.pnl_total;
+        const tone =
+          v > 0.001 ? "text-pos" : v < -0.001 ? "text-neg" : "text-text-dim";
+        return (
+          <span className={tone}>
+            {v >= 0 ? "+" : ""}
+            {fmtNum(v, 2)}u
+          </span>
+        );
+      },
+      sort: (a, b) => (a.pnl_total ?? 0) - (b.pnl_total ?? 0),
     },
     {
       key: "mean_clv",
@@ -301,16 +356,46 @@ export function ModelsTab() {
     return (
       <div className="flex flex-col gap-4">
         <PageHeader kicker="Picks · models" />
-        <div className="border border-border p-6 font-mono text-[12px] text-text">
-          {t("picks.error")}: {error}
+        <div className="border border-neg/40 bg-bg p-4 font-mono text-[12px] text-neg">
+          ▸ {t("picks.error")}: {error}
         </div>
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-6">
       <PageHeader kicker="Picks · models" />
+
+      {/* KPI strip */}
+      <section className="grid grid-cols-2 divide-x divide-y divide-border border border-border md:grid-cols-4 md:divide-y-0">
+        <Stat
+          label="Best ROI"
+          value={bestRoi ? fmtPct(bestRoi.roi) : "—"}
+          delta={bestRoi ? String(bestRoi.model) : undefined}
+          deltaTone={bestRoi && (bestRoi.roi ?? 0) > 0 ? "pos" : "neutral"}
+        />
+        <Stat
+          label="Best hit rate"
+          value={bestHit ? fmtPct(bestHit.hit_rate) : "—"}
+          delta={bestHit ? String(bestHit.model) : undefined}
+          deltaTone="neutral"
+        />
+        <Stat
+          label="Best CLV"
+          value={bestClv ? fmtNum(bestClv.mean_clv, 4) : "—"}
+          delta={bestClv ? String(bestClv.model) : undefined}
+          deltaTone={bestClv && (bestClv.mean_clv ?? 0) > 0 ? "pos" : "neutral"}
+        />
+        <Stat
+          label="Total settled"
+          value={loading ? "—" : totalN.toLocaleString(locale)}
+          delta={`${leaderboard.length} ${leaderboard.length === 1 ? "model" : "models"}`}
+          deltaTone="neutral"
+        />
+      </section>
+
+      {/* Filters */}
       <FilterBar
         fields={["date", "status", "market", "competition", "edge"]}
         options={{
@@ -319,44 +404,79 @@ export function ModelsTab() {
         }}
       />
 
-      <section className="border border-border p-4">
-        <Kicker className="mb-3 block">{t("picks.leaderboard.title")}</Kicker>
-        <DataTable
-          columns={leaderboardCols}
-          rows={leaderboard}
-          empty="—"
-          onRowClick={(row) => router.push(`/${locale}/picks/model/${row.model}`)}
-        />
+      {/* Leaderboard */}
+      <section className="border border-border">
+        <div className="flex items-baseline justify-between border-b border-border px-4 py-2">
+          <Kicker>{t("picks.leaderboard.title")}</Kicker>
+          <span className="font-mono text-[10px] text-text-faint">
+            ▸ click a row to drill into a model
+          </span>
+        </div>
+        <div className="overflow-x-auto px-4 pb-2">
+          <DataTable
+            columns={leaderboardCols}
+            rows={leaderboard}
+            empty={loading ? "▸ loading…" : "▸ no models in range"}
+            onRowClick={(row) =>
+              router.push(`/${locale}/picks/model/${row.model}` as unknown as Parameters<typeof router.push>[0])
+            }
+          />
+        </div>
       </section>
 
-      <section className="border border-border p-4">
-        <Kicker className="mb-3 block">{t("picks.trend.title")}</Kicker>
-        <CumulativeLineChart series={pnlSeries} />
-      </section>
-
-      <section className="border border-border p-4">
-        <Kicker className="mb-3 block">{t("picks.violin.title")}</Kicker>
-        <ViolinChart series={violinSeries} referenceY={0} />
-      </section>
-
-      <section className="border border-border p-4">
-        <Kicker className="mb-3 block">{t("picks.heatmap.modelMarket")}</Kicker>
-        <HeatmapChart
-          cells={marketCells}
-          rows={models}
-          cols={knownMarkets}
-          minNToShow={10}
-        />
-      </section>
-
-      <section className="border border-border p-4">
-        <Kicker className="mb-3 block">{t("picks.heatmap.modelCompetition")}</Kicker>
-        <HeatmapChart
-          cells={compCells}
-          rows={models}
-          cols={knownComps}
-          minNToShow={10}
-        />
+      {/* Compare panel: chips switch the chart below */}
+      <section className="border border-border">
+        <div className="flex flex-wrap items-center gap-3 border-b border-border px-4 py-2">
+          <Kicker>Compare</Kicker>
+          <div className="ml-2 flex flex-wrap items-center gap-1">
+            <Chip selected={view === "pnl"} onClick={() => setView("pnl")}>
+              P&L · time
+            </Chip>
+            <Chip selected={view === "clv"} onClick={() => setView("clv")}>
+              CLV · distribution
+            </Chip>
+            <Chip selected={view === "market"} onClick={() => setView("market")}>
+              ROI × Market
+            </Chip>
+            <Chip
+              selected={view === "competition"}
+              onClick={() => setView("competition")}
+            >
+              ROI × Competition
+            </Chip>
+          </div>
+        </div>
+        <div className="overflow-x-auto p-4">
+          {view === "pnl" && (
+            <CumulativeLineChart series={pnlSeries} width={960} height={280} />
+          )}
+          {view === "clv" && (
+            <ViolinChart
+              series={violinSeries}
+              referenceY={0}
+              width={960}
+              height={280}
+            />
+          )}
+          {view === "market" && (
+            <HeatmapChart
+              cells={marketCells}
+              rows={models}
+              cols={knownMarkets}
+              minNToShow={5}
+              width={960}
+            />
+          )}
+          {view === "competition" && (
+            <HeatmapChart
+              cells={compCells}
+              rows={models}
+              cols={knownComps}
+              minNToShow={5}
+              width={960}
+            />
+          )}
+        </div>
       </section>
     </div>
   );

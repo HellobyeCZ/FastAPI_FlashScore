@@ -20,13 +20,38 @@ interface ViolinChartProps {
   referenceY?: number;
 }
 
-function computeKde(values: number[], bandwidth = 0.02): { value: number; density: number }[] {
-  if (values.length === 0) return [];
+function stdev(values: number[]): number {
+  if (values.length < 2) return 0;
+  const mean = values.reduce((a, b) => a + b, 0) / values.length;
+  const variance =
+    values.reduce((a, b) => a + (b - mean) ** 2, 0) / (values.length - 1);
+  return Math.sqrt(variance);
+}
+
+// Silverman's rule of thumb: 1.06 * σ * n^(-1/5).
+// Falls back to (max-min)/20 when σ is degenerate.
+function silvermanBandwidth(values: number[]): number {
+  const n = values.length;
+  if (n < 2) return 0.01;
+  const sigma = stdev(values);
+  if (sigma > 0) return 1.06 * sigma * Math.pow(n, -1 / 5);
   const min = Math.min(...values);
   const max = Math.max(...values);
-  const step = (max - min) / 30 || 0.001;
+  return (max - min) / 20 || 0.01;
+}
+
+function computeKde(values: number[]): { value: number; density: number }[] {
+  if (values.length === 0) return [];
+  const bandwidth = silvermanBandwidth(values);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  // Extend domain slightly past the data so the violin tails close.
+  const pad = bandwidth * 2;
+  const lo = min - pad;
+  const hi = max + pad;
+  const step = (hi - lo) / 64 || 0.001;
   const out: { value: number; density: number }[] = [];
-  for (let x = min; x <= max; x += step) {
+  for (let x = lo; x <= hi; x += step) {
     let d = 0;
     for (const v of values) {
       const u = (x - v) / bandwidth;
@@ -119,7 +144,7 @@ export function ViolinChart({ series, width = 480, height = 240, referenceY }: V
             <Group key={s.label} left={cx}>
               <ViolinPlot
                 data={computeKde(s.values)}
-                stroke="var(--accent)"
+                stroke={s.color || "var(--accent)"}
                 fill="transparent"
                 valueScale={yScale}
                 width={bandWidth * 0.85}

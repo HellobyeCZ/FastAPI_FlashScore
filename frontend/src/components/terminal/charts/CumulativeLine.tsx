@@ -87,23 +87,39 @@ export function CumulativeLineChart({
           strokeDasharray="2 2"
         />
         {series.map((s, idx) => {
-          const stroke = SERIES_TOKENS[idx % SERIES_TOKENS.length];
+          const stroke = s.color || SERIES_TOKENS[idx % SERIES_TOKENS.length];
+          // Always render data-point dots so single-point series stay visible
+          // and a reader can see actual observations vs. interpolated runs.
           return (
-            <LinePath
-              key={s.label}
-              data={s.points}
-              x={(d) => xScale(d.x)}
-              y={(d) => yScale(d.y)}
-              stroke={stroke}
-              strokeWidth={1}
-              shapeRendering="crispEdges"
-            />
+            <Group key={s.label}>
+              {s.points.length > 1 && (
+                <LinePath
+                  data={s.points}
+                  x={(d) => xScale(d.x)}
+                  y={(d) => yScale(d.y)}
+                  stroke={stroke}
+                  strokeWidth={1.5}
+                  shapeRendering="crispEdges"
+                />
+              )}
+              {s.points.map((p, i) => (
+                <rect
+                  key={i}
+                  x={xScale(p.x) - 2}
+                  y={yScale(p.y) - 2}
+                  width={4}
+                  height={4}
+                  fill={stroke}
+                  shapeRendering="crispEdges"
+                />
+              ))}
+            </Group>
           );
         })}
         {series.length > 1 && (
-          <Group left={innerW - 90} top={4}>
+          <Group left={innerW - 110} top={4}>
             {series.map((s, i) => {
-              const stroke = SERIES_TOKENS[i % SERIES_TOKENS.length];
+              const stroke = s.color || SERIES_TOKENS[i % SERIES_TOKENS.length];
               return (
                 <Group key={s.label} top={i * 14}>
                   <line x1={0} x2={14} y1={5} y2={5} stroke={stroke} strokeWidth={1} />
