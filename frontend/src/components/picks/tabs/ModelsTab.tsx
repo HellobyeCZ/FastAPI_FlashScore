@@ -34,14 +34,10 @@ import { Kicker } from "@/components/terminal/Kicker";
 import { DataTable, type Column } from "@/components/terminal/DataTable";
 import { useRouter } from "next/navigation";
 
-const MODEL_COLORS: Record<string, string> = {
-  dixon_coles: "#6366f1",
-  hgb: "#10b981",
-  logistic: "#f59e0b",
-};
+import { MODEL_COLORS, colorForModel } from "@/components/terminal/charts/modelColors";
 
 function colorFor(model: string): string {
-  return MODEL_COLORS[model] ?? "#94a3b8";
+  return colorForModel(model);
 }
 
 function fmtNum(v: number | null | undefined, digits = 2): string {

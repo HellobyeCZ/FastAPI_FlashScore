@@ -4,6 +4,7 @@ import { TopBar } from "./TopBar";
 import { Rail } from "./Rail";
 import { StatusBar } from "./StatusBar";
 import { GlobalKeybindings } from "./GlobalKeybindings";
+import { useSettings } from "@/hooks/useSettings";
 
 export function Shell({
   children,
@@ -13,6 +14,7 @@ export function Shell({
   pageHints?: string;
 }) {
   const [menu, setMenu] = useState(false);
+  const { settings } = useSettings();
   return (
     <>
       <TopBar onMenu={() => setMenu((v) => !v)} menuOpen={menu} />
@@ -22,6 +24,16 @@ export function Shell({
         <div className="px-6 py-5">{children}</div>
       </main>
       <StatusBar pageHints={pageHints} />
+      {settings.scanlines && (
+        <div
+          aria-hidden
+          className="pointer-events-none fixed inset-0 z-50"
+          style={{
+            backgroundImage:
+              "repeating-linear-gradient(0deg, rgba(0,0,0,0.18) 0, rgba(0,0,0,0.18) 1px, transparent 1px, transparent 3px)"
+          }}
+        />
+      )}
     </>
   );
 }

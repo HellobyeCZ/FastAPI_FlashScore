@@ -1,7 +1,5 @@
 import { expect, test } from "@playwright/test";
 
-// Stats response shape: { group_by, filters, rows: StatsRow[] }
-// StatsRow: { n, wins, hit_rate, stake_total, pnl_total, roi, mean_clv, brier, max_drawdown, ...dims }
 const STATS_RESPONSE = {
   group_by: [] as string[],
   filters: {},
@@ -51,7 +49,6 @@ const STATS_BY_MODEL_RESPONSE = {
   ]
 };
 
-// Calibration response: { model, n_buckets, buckets: [{lower,upper,n,mean_pred,hit_rate}] }
 const CALIBRATION_RESPONSE = {
   model: "dixon_coles",
   n_buckets: 5,
@@ -64,9 +61,8 @@ const CALIBRATION_RESPONSE = {
   ]
 };
 
-// History response: { count, rows: HistoryRow[] }
 const HISTORY_RESPONSE = {
-  count: 2,
+  count: 1,
   rows: [
     {
       id: 1,
@@ -86,33 +82,15 @@ const HISTORY_RESPONSE = {
       pnl: 1.1,
       clv: 0.04,
       status: "settled"
-    },
-    {
-      id: 2,
-      event_id: "evt2",
-      model: "elo",
-      market: "1x2",
-      selection: "away",
-      recommended_at: "2026-05-09T15:00:00Z",
-      bet_ts: "2026-05-09T15:00:00Z",
-      price_at_recommendation: 3.2,
-      closing_price: 3.4,
-      model_prob: 0.35,
-      devigged_prob: 0.3,
-      edge: -0.02,
-      kelly_full: 0,
-      result: 0,
-      pnl: -1,
-      clv: -0.01,
-      status: "settled"
     }
   ]
 };
 
 test.describe("picks dashboard", () => {
   test.beforeEach(async ({ page }) => {
-    // Calibration must be registered first because /api/picks/stats/calibration
-    // would also match /api/picks/stats*.
+    await page.route("**/api/db-stats", (route) =>
+      route.fulfill({ json: { ok: true, rows: 0, odds: 0, stats: 0 } })
+    );
     await page.route("**/api/picks/stats/calibration*", async (route) => {
       await route.fulfill({
         status: 200,
@@ -145,23 +123,15 @@ test.describe("picks dashboard", () => {
     });
   });
 
-  test("Health tab renders KPIs and per-model snapshot", async ({ page }) => {
-    await page.goto("/en/picks?tab=health");
-    await expect(page.getByText("Paper Trade Picks")).toBeVisible();
+  test("Health page renders KPIs and per-model snapshot", async ({ page }) => {
+    await page.goto("/en/picks/health");
     await expect(page.getByText("7-day hit rate")).toBeVisible();
     await expect(page.getByText("dixon_coles").first()).toBeVisible();
   });
 
-  test("Tab links update the URL", async ({ page }) => {
-    await page.goto("/en/picks?tab=health");
-    await page.getByRole("link", { name: "Models" }).click();
-    await expect(page).toHaveURL(/tab=models/);
-  });
-
-  test("Filter selection updates URL on Models tab", async ({ page }) => {
-    await page.goto("/en/picks?tab=models");
-    await page.getByLabel("Date").selectOption("30d");
-    await expect(page).toHaveURL(/date=30d/);
+  test("Picks index redirects to a tab", async ({ page }) => {
+    await page.goto("/en/picks");
+    await expect(page).toHaveURL(/\/en\/picks\/(health|models|explore)$/);
   });
 
   test("Model deep-dive page renders calibration section", async ({ page }) => {

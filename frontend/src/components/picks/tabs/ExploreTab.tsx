@@ -28,14 +28,9 @@ import {
 import { BucketBars, type Bucket as TerminalBucket } from "@/components/terminal/BucketBars";
 import { PageHeader } from "@/components/terminal/PageHeader";
 import { Kicker } from "@/components/terminal/Kicker";
+import { MODEL_COLORS } from "@/components/terminal/charts/modelColors";
 
 type Bucket = { label: string; value: number | null; n: number };
-
-const MODEL_COLORS: Record<string, string> = {
-  dixon_coles: "#1f77b4",
-  hgb: "#ff7f0e",
-  logistic: "#d62728",
-};
 
 const EDGE_BUCKETS = ["0-2", "2-5", "5-10", "10-15", "15+"] as const;
 const PRICE_BUCKETS = ["<=1.5", "1.5-2", "2-3", "3-5", "5+"] as const;
