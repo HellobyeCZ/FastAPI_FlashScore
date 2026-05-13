@@ -110,6 +110,7 @@ function buildWhere(opts: {
   countries: string[];
   leagues: string[];
   statuses: string[];
+  sports: string[];
 }): Prisma.MatchEventSummaryWhereInput {
   const where: Prisma.MatchEventSummaryWhereInput = {};
   const and: Prisma.MatchEventSummaryWhereInput[] = [];
@@ -128,6 +129,9 @@ function buildWhere(opts: {
   }
   if (opts.countries.length > 0) {
     and.push({ country: { in: opts.countries } });
+  }
+  if (opts.sports.length > 0) {
+    and.push({ sport: { in: opts.sports } });
   }
   if (opts.leagues.length > 0) {
     // Match the league root and any stage-suffixed variant
@@ -155,13 +159,14 @@ export async function GET(request: Request) {
   const countries = params.getAll("country");
   const leagues = params.getAll("league");
   const statuses = params.getAll("status"); // LIVE | FT | SCHED
+  const sports = params.getAll("sport");
   const sort = (params.get("sort") ?? "last_fetch_desc") as SortKey;
   const limit = Math.min(Math.max(Number(params.get("limit") ?? "50"), 1), 200);
   const cursor = params.get("cursor") ?? undefined;
   const wantFacets = params.get("withFacets") === "1";
   const orderBy = SORT_KEYS[sort] ?? SORT_KEYS.last_fetch_desc;
 
-  const where = buildWhere({ q, countries, leagues, statuses });
+  const where = buildWhere({ q, countries, leagues, statuses, sports });
 
   try {
     let rows: Awaited<ReturnType<typeof prisma.matchEventSummary.findMany>>;
@@ -186,6 +191,10 @@ export async function GET(request: Request) {
       if (countries.length > 0) {
         sqlWhere.push(`country IN (${countries.map(() => "?").join(",")})`);
         sqlBinds.push(...countries);
+      }
+      if (sports.length > 0) {
+        sqlWhere.push(`sport IN (${sports.map(() => "?").join(",")})`);
+        sqlBinds.push(...sports);
       }
       if (leagues.length > 0) {
         const parts: string[] = [];
@@ -289,9 +298,19 @@ export async function GET(request: Request) {
         countWhere.push(`country IN (${countries.map(() => "?").join(",")})`);
         countBinds.push(...countries);
       }
+      if (sports.length > 0) {
+        countWhere.push(`sport IN (${sports.map(() => "?").join(",")})`);
+        countBinds.push(...sports);
+      }
       if (leagues.length > 0) {
-        countWhere.push(`competition IN (${leagues.map(() => "?").join(",")})`);
-        countBinds.push(...leagues);
+        const parts: string[] = [];
+        for (const l of leagues) {
+          parts.push("competition = ?");
+          countBinds.push(l);
+          parts.push("competition LIKE ?");
+          countBinds.push(`${l} - %`);
+        }
+        countWhere.push(`(${parts.join(" OR ")})`);
       }
       const countWhereClause = countWhere.length > 0 ? `WHERE ${countWhere.join(" AND ")}` : "";
       const countRows = (await prisma.$queryRawUnsafe(
@@ -337,18 +356,26 @@ export async function GET(request: Request) {
 
     let facets: {
       country: { value: string; count: number }[];
+      sport: { value: string; count: number }[];
       league: { value: string; count: number }[];
       status: { value: string; count: number }[];
     } | undefined;
 
     if (wantFacets) {
-      const [byCountry, byLeagueRaw] = await Promise.all([
+      const [byCountry, bySport, byLeagueRaw] = await Promise.all([
         prisma.matchEventSummary.groupBy({
           by: ["country"],
           where,
           _count: { _all: true },
           orderBy: { _count: { eventId: "desc" } },
           take: 30,
+        }),
+        prisma.matchEventSummary.groupBy({
+          by: ["sport"],
+          where,
+          _count: { _all: true },
+          orderBy: { _count: { eventId: "desc" } },
+          take: 20,
         }),
         // Pull more raw rows than we ultimately surface so that, after we
         // fold stage suffixes into a single root, the top-N is stable.
@@ -389,6 +416,9 @@ export async function GET(request: Request) {
         country: byCountry
           .filter((r) => r.country)
           .map((r) => ({ value: r.country as string, count: r._count._all })),
+        sport: bySport
+          .filter((r) => r.sport)
+          .map((r) => ({ value: r.sport as string, count: r._count._all })),
         league: byLeague.map(([value, count]) => ({ value, count })),
         status: Array.from(statusCounts.entries()).map(([value, count]) => ({ value, count })),
       };

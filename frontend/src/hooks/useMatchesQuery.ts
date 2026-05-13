@@ -12,6 +12,7 @@ export type MatchesSort =
 export type MatchesQueryParams = {
   q?: string;
   countries: string[];
+  sports: string[];
   leagues: string[];
   statuses: string[];
   sort: MatchesSort;
@@ -24,6 +25,7 @@ export type MatchesPage = {
   total: number;
   facets?: {
     country: { value: string; count: number }[];
+    sport: { value: string; count: number }[];
     league: { value: string; count: number }[];
     status: { value: string; count: number }[];
   };
@@ -33,6 +35,7 @@ function buildQs(p: MatchesQueryParams, cursor?: string, withFacets?: boolean) {
   const qs = new URLSearchParams();
   if (p.q && p.q.trim()) qs.set("q", p.q.trim());
   p.countries.forEach((c) => qs.append("country", c));
+  p.sports.forEach((s) => qs.append("sport", s));
   p.leagues.forEach((l) => qs.append("league", l));
   p.statuses.forEach((s) => qs.append("status", s));
   qs.set("sort", p.sort);
@@ -47,6 +50,7 @@ export function useMatchesQuery(params: MatchesQueryParams) {
     "matches",
     params.q ?? "",
     params.countries.slice().sort().join(","),
+    params.sports.slice().sort().join(","),
     params.leagues.slice().sort().join(","),
     params.statuses.slice().sort().join(","),
     params.sort,

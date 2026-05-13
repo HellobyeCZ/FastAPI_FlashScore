@@ -58,6 +58,7 @@ export function MatchesPage() {
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebounced(search, 300);
   const [countries, setCountries] = useState<string[]>([]);
+  const [sports, setSports] = useState<string[]>([]);
   const [leagues, setLeagues] = useState<string[]>([]);
   const [statuses, setStatuses] = useState<string[]>([]);
   const [sort, setSort] = useState<MatchesSort>("last_fetch_desc");
@@ -65,6 +66,7 @@ export function MatchesPage() {
   const query = useMatchesQuery({
     q: debouncedSearch,
     countries,
+    sports,
     leagues,
     statuses,
     sort,
@@ -94,6 +96,18 @@ export function MatchesPage() {
         onChange: setCountries,
       },
       {
+        key: "sport",
+        label: "Sport",
+        options:
+          facetsFromServer?.sport.map((s) => ({
+            value: s.value,
+            label: s.value,
+            count: s.count,
+          })) ?? [],
+        selected: sports,
+        onChange: setSports,
+      },
+      {
         key: "league",
         label: "League",
         options:
@@ -117,7 +131,7 @@ export function MatchesPage() {
         onChange: setStatuses,
       },
     ];
-  }, [facetsFromServer, countries, leagues, statuses]);
+  }, [facetsFromServer, countries, sports, leagues, statuses]);
 
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   // Auto-load next page when the sentinel scrolls into view.
@@ -244,7 +258,11 @@ export function MatchesPage() {
             empty={
               query.isLoading
                 ? "▸ loading…"
-                : debouncedSearch || countries.length || leagues.length || statuses.length
+                : debouncedSearch ||
+                    countries.length ||
+                    sports.length ||
+                    leagues.length ||
+                    statuses.length
                   ? "▸ no matches for current filters"
                   : "▸ no matches in db"
             }
