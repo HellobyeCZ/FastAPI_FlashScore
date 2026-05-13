@@ -120,6 +120,52 @@ function normaliseLegacyResponse(raw: RawOddsResponse, fallbackEventId: string):
   };
 }
 
+// FlashScore's structured payload labels each outcome with an opaque id
+// (e.g. "YBKVe7y0") rather than a human-readable selection name. Recover a
+// readable label from the market key + outcome position, falling back to the
+// raw label when the payload actually contains one.
+function inferOutcomeLabel(
+  marketKey: string | undefined,
+  rawLabel: string | undefined,
+  position: number,
+): string {
+  // Heuristic: when the raw label looks like an opaque id (alphanumeric, no
+  // spaces, mixed case) we replace it. "Over", "Under", "Yes", "No", "1.5",
+  // "Selection" etc. all pass through unchanged on the contains-space check
+  // first, then we still strip the "looks-like-id" forms.
+  const isOpaqueId =
+    !rawLabel ||
+    rawLabel === "Selection" ||
+    (/^[A-Za-z0-9]{6,}$/.test(rawLabel) && /[a-z]/.test(rawLabel) && /[A-Z]/.test(rawLabel));
+
+  if (!isOpaqueId) return rawLabel as string;
+
+  const key = (marketKey ?? "").toUpperCase();
+  const prefix = key.split(":")[0];
+
+  switch (prefix) {
+    case "HOME_DRAW_AWAY":
+      return ["1", "X", "2"][position] ?? `Selection ${position + 1}`;
+    case "DRAW_NO_BET":
+      return ["1", "2"][position] ?? `Selection ${position + 1}`;
+    case "DOUBLE_CHANCE":
+      return ["1X", "12", "X2"][position] ?? `Selection ${position + 1}`;
+    case "OVER_UNDER":
+    case "TOTAL_GOALS":
+      return ["Over", "Under"][position] ?? `Selection ${position + 1}`;
+    case "BOTH_TEAMS_TO_SCORE":
+    case "BTTS":
+      return ["Yes", "No"][position] ?? `Selection ${position + 1}`;
+    case "ODD_EVEN":
+      return ["Odd", "Even"][position] ?? `Selection ${position + 1}`;
+    case "ASIAN_HANDICAP":
+    case "EUROPEAN_HANDICAP":
+      return ["Home", "Away"][position] ?? `Selection ${position + 1}`;
+    default:
+      return `Selection ${position + 1}`;
+  }
+}
+
 function normaliseStructuredResponse(payload: JsonObject, fallbackEventId: string): EventOddsSummary {
   const event = isObject(payload.event) ? payload.event : {};
   const marketMap = new Map<string, MarketOdds>();
@@ -151,7 +197,9 @@ function normaliseStructuredResponse(payload: JsonObject, fallbackEventId: strin
         selections: []
       };
 
-      for (const outcomeCandidate of asArray(marketCandidate.outcomes)) {
+      const outcomes = asArray(marketCandidate.outcomes);
+      for (let position = 0; position < outcomes.length; position += 1) {
+        const outcomeCandidate = outcomes[position];
         if (!isObject(outcomeCandidate)) {
           continue;
         }
@@ -161,11 +209,19 @@ function normaliseStructuredResponse(payload: JsonObject, fallbackEventId: strin
           asString(outcomeCandidate.selection_key) ??
           `${marketId}-selection-${currentMarket.selections.length + 1}`;
 
+        const marketKey =
+          asString(marketCandidate.key) ?? asString(marketCandidate.id) ?? undefined;
+        const selectionName = inferOutcomeLabel(
+          marketKey,
+          asString(outcomeCandidate.label),
+          position,
+        );
+
         currentMarket.selections.push({
           bookmakerId,
           bookmakerName,
           selectionId: `${bookmakerId}:${outcomeId}`,
-          selectionName: asString(outcomeCandidate.label) ?? "Selection",
+          selectionName,
           odds: asNumber(outcomeCandidate.odds_decimal),
           updatedAt: asString(payload.retrieved_at)
         });

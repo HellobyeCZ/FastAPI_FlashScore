@@ -366,12 +366,56 @@ class MatchStatsClient:
         if title:
             teams = MatchStatsClient._extract_teams_from_title(title)
             if teams != (None, None):
-                return teams
+                return MatchStatsClient._sanitize_team_pair(teams)
         if og_title:
             teams = MatchStatsClient._extract_teams_from_og_title(og_title)
             if teams != (None, None):
-                return teams
+                return MatchStatsClient._sanitize_team_pair(teams)
         return (None, None)
+
+    # Match-state badges FlashScore appends to a team-name slot when the
+    # page is in-play / between periods / awaiting kick-off, etc.
+    # Treated case-insensitively and only stripped when they appear as a
+    # trailing token (so a team literally called "Liverpool" stays intact).
+    _TRAILING_BADGES: Tuple[str, ...] = (
+        "LIVE",
+        "HT",
+        "FT",
+        "AET",
+        "AP",
+        "PEN",
+        "POSTPONED",
+        "ABANDONED",
+        "INTERRUPTED",
+        "CANCELLED",
+        "DELAYED",
+        "AWARDED",
+        "WALKOVER",
+    )
+
+    @staticmethod
+    def _strip_trailing_badge(name: str) -> str:
+        # Repeatedly peel a single trailing badge token so cases like
+        # "Plzen LIVE FT" (in theory) collapse to "Plzen".
+        cleaned = name.strip()
+        while True:
+            match = re.search(r"\s+([A-Z]{2,}\.?)$", cleaned)
+            if not match:
+                break
+            token = match.group(1).rstrip(".").upper()
+            if token not in MatchStatsClient._TRAILING_BADGES:
+                break
+            cleaned = cleaned[: match.start()].rstrip()
+        return cleaned or name.strip()
+
+    @staticmethod
+    def _sanitize_team_pair(teams: Tuple[Optional[str], Optional[str]]) -> Tuple[Optional[str], Optional[str]]:
+        home, away = teams
+        if home is not None:
+            home = MatchStatsClient._strip_trailing_badge(home) or None
+        if away is not None:
+            away = MatchStatsClient._strip_trailing_badge(away) or None
+        return (home, away)
 
     @staticmethod
     def _extract_teams_from_title(title: str) -> Tuple[Optional[str], Optional[str]]:

@@ -20,21 +20,18 @@ import { FilterBar } from "@/components/picks/filters/FilterBar";
 import {
   ScatterChart,
   type ScatterPoint,
-} from "@/components/picks/charts/ScatterChart";
-import {
-  BucketedBarChart,
-  type Bucket,
-} from "@/components/picks/charts/BucketedBarChart";
+} from "@/components/terminal/charts/ScatterChart";
 import {
   HeatmapChart,
   type HeatmapCell,
-} from "@/components/picks/charts/HeatmapChart";
+} from "@/components/terminal/charts/HeatmapChart";
+import { BucketBars, type Bucket as TerminalBucket } from "@/components/terminal/BucketBars";
+import { PageHeader } from "@/components/terminal/PageHeader";
+import { Kicker } from "@/components/terminal/Kicker";
+import { MODEL_COLORS } from "@/components/terminal/charts/modelColors";
+import { competitionRoot } from "@/lib/competition";
 
-const MODEL_COLORS: Record<string, string> = {
-  dixon_coles: "#1f77b4",
-  hgb: "#ff7f0e",
-  logistic: "#d62728",
-};
+type Bucket = { label: string; value: number | null; n: number };
 
 const EDGE_BUCKETS = ["0-2", "2-5", "5-10", "10-15", "15+"] as const;
 const PRICE_BUCKETS = ["<=1.5", "1.5-2", "2-3", "3-5", "5+"] as const;
@@ -178,16 +175,36 @@ export function ExploreTab() {
     }).filter((b) => b.value !== null);
   }, [roiByPrice]);
 
-  const heatmapCells: HeatmapCell[] = useMemo(
-    () =>
-      compSel.map((r) => ({
-        row: String(r.competition ?? ""),
-        col: String(r.selection ?? ""),
-        value: r.mean_clv,
-        n: r.n,
-      })),
-    [compSel],
-  );
+  // Fold stage suffixes ("Chance Liga - Championship Group" → "Chance Liga")
+  // and re-aggregate cells that collapse onto the same (root, selection) pair.
+  const heatmapCells: HeatmapCell[] = useMemo(() => {
+    type Agg = { sumNxClv: number; n: number };
+    const merged = new Map<string, Agg>();
+    for (const r of compSel) {
+      const row = competitionRoot(String(r.competition ?? "")) ?? "";
+      const col = String(r.selection ?? "");
+      if (!row || !col) continue;
+      const key = `${row}::${col}`;
+      const cur = merged.get(key) ?? { sumNxClv: 0, n: 0 };
+      const clv = r.mean_clv;
+      if (clv !== null && clv !== undefined) {
+        cur.sumNxClv += clv * r.n;
+      }
+      cur.n += r.n;
+      merged.set(key, cur);
+    }
+    const out: HeatmapCell[] = [];
+    for (const [key, agg] of merged.entries()) {
+      const [row, col] = key.split("::");
+      out.push({
+        row,
+        col,
+        value: agg.n > 0 ? agg.sumNxClv / agg.n : null,
+        n: agg.n,
+      });
+    }
+    return out;
+  }, [compSel]);
 
   const heatmapRows = useMemo(
     () =>
@@ -204,16 +221,23 @@ export function ExploreTab() {
     [heatmapCells],
   );
 
+  const toTerminalBuckets = (bs: Bucket[]): TerminalBucket[] =>
+    bs.map((b) => ({ label: b.label, value: b.value ?? 0 }));
+
   if (error) {
     return (
-      <div className="rounded-2xl border border-[color:var(--color-brand-outline)] bg-[color:var(--color-brand-surface)] p-6 text-sm">
-        {t("picks.error")}: {error}
+      <div className="flex flex-col gap-4">
+        <PageHeader kicker="Picks · explore" />
+        <div className="border border-border p-6 font-mono text-[12px] text-text">
+          {t("picks.error")}: {error}
+        </div>
       </div>
     );
   }
 
   return (
     <div className="flex flex-col gap-4">
+      <PageHeader kicker="Picks · explore" />
       <FilterBar
         fields={[
           "date",
@@ -230,10 +254,8 @@ export function ExploreTab() {
         ]}
       />
 
-      <section className="rounded-2xl border border-[color:var(--color-brand-outline)] bg-[color:var(--color-brand-surface)] p-4">
-        <h2 className="mb-3 text-sm font-semibold text-[color:var(--color-text-muted)]">
-          {t("picks.scatter.title")}
-        </h2>
+      <section className="border border-border p-4">
+        <Kicker className="mb-3 block">{t("picks.scatter.title")}</Kicker>
         <ScatterChart
           points={scatterPoints}
           colorByCategory={MODEL_COLORS}
@@ -243,25 +265,19 @@ export function ExploreTab() {
       </section>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <section className="rounded-2xl border border-[color:var(--color-brand-outline)] bg-[color:var(--color-brand-surface)] p-4">
-          <h2 className="mb-3 text-sm font-semibold text-[color:var(--color-text-muted)]">
-            {t("picks.buckets.hitByEdge")}
-          </h2>
-          <BucketedBarChart buckets={hitByEdgeBuckets} />
+        <section className="border border-border p-4">
+          <Kicker className="mb-3 block">{t("picks.buckets.hitByEdge")}</Kicker>
+          <BucketBars buckets={toTerminalBuckets(hitByEdgeBuckets)} height={140} />
         </section>
 
-        <section className="rounded-2xl border border-[color:var(--color-brand-outline)] bg-[color:var(--color-brand-surface)] p-4">
-          <h2 className="mb-3 text-sm font-semibold text-[color:var(--color-text-muted)]">
-            {t("picks.buckets.roiByPrice")}
-          </h2>
-          <BucketedBarChart buckets={roiByPriceBuckets} referenceY={0} />
+        <section className="border border-border p-4">
+          <Kicker className="mb-3 block">{t("picks.buckets.roiByPrice")}</Kicker>
+          <BucketBars buckets={toTerminalBuckets(roiByPriceBuckets)} height={140} signed />
         </section>
       </div>
 
-      <section className="rounded-2xl border border-[color:var(--color-brand-outline)] bg-[color:var(--color-brand-surface)] p-4">
-        <h2 className="mb-3 text-sm font-semibold text-[color:var(--color-text-muted)]">
-          {t("picks.heatmap.competitionSelection")}
-        </h2>
+      <section className="border border-border p-4">
+        <Kicker className="mb-3 block">{t("picks.heatmap.competitionSelection")}</Kicker>
         <HeatmapChart
           cells={heatmapCells}
           rows={heatmapRows}
@@ -270,60 +286,50 @@ export function ExploreTab() {
         />
       </section>
 
-      <section className="rounded-2xl border border-[color:var(--color-brand-outline)] bg-[color:var(--color-brand-surface)] p-4">
-        <h2 className="mb-3 text-sm font-semibold text-[color:var(--color-text-muted)]">
-          {t("picks.drilldown.title")}
-        </h2>
+      <section className="border border-border p-4">
+        <Kicker className="mb-3 block">{t("picks.drilldown.title")}</Kicker>
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm">
-            <thead className="text-xs uppercase text-[color:var(--color-text-muted)]">
-              <tr>
-                <th className="px-2 py-2">event</th>
-                <th className="px-2 py-2">model</th>
-                <th className="px-2 py-2">market</th>
-                <th className="px-2 py-2">sel</th>
-                <th className="px-2 py-2">price</th>
-                <th className="px-2 py-2">edge</th>
-                <th className="px-2 py-2">result</th>
-                <th className="px-2 py-2">pnl</th>
-                <th className="px-2 py-2">clv</th>
+          <table className="w-full border-collapse text-left font-mono text-[12px]">
+            <thead>
+              <tr className="border-b border-border">
+                <th className="px-2 py-2 font-sans text-[10px] uppercase text-text-dim" style={{ letterSpacing: "var(--track-wide)" }}>event</th>
+                <th className="px-2 py-2 font-sans text-[10px] uppercase text-text-dim" style={{ letterSpacing: "var(--track-wide)" }}>model</th>
+                <th className="px-2 py-2 font-sans text-[10px] uppercase text-text-dim" style={{ letterSpacing: "var(--track-wide)" }}>market</th>
+                <th className="px-2 py-2 font-sans text-[10px] uppercase text-text-dim" style={{ letterSpacing: "var(--track-wide)" }}>sel</th>
+                <th className="px-2 py-2 font-sans text-[10px] uppercase text-text-dim" style={{ letterSpacing: "var(--track-wide)" }}>price</th>
+                <th className="px-2 py-2 font-sans text-[10px] uppercase text-text-dim" style={{ letterSpacing: "var(--track-wide)" }}>edge</th>
+                <th className="px-2 py-2 font-sans text-[10px] uppercase text-text-dim" style={{ letterSpacing: "var(--track-wide)" }}>result</th>
+                <th className="px-2 py-2 font-sans text-[10px] uppercase text-text-dim" style={{ letterSpacing: "var(--track-wide)" }}>pnl</th>
+                <th className="px-2 py-2 font-sans text-[10px] uppercase text-text-dim" style={{ letterSpacing: "var(--track-wide)" }}>clv</th>
               </tr>
             </thead>
             <tbody>
               {history.length === 0 ? (
                 <tr>
-                  <td
-                    className="px-2 py-3 text-[color:var(--color-text-muted)]"
-                    colSpan={9}
-                  >
+                  <td className="px-2 py-3 text-text-dim" colSpan={9}>
                     —
                   </td>
                 </tr>
               ) : (
                 history.slice(0, 100).map((row) => (
-                  <tr
-                    key={row.id}
-                    className="border-t border-[color:var(--color-brand-outline)]"
-                  >
-                    <td className="px-2 py-2 font-mono text-xs">
-                      {row.event_id}
-                    </td>
+                  <tr key={row.id} className="border-b border-border/60">
+                    <td className="px-2 py-2 text-[11px] text-text-dim">{row.event_id}</td>
                     <td className="px-2 py-2">{row.model}</td>
                     <td className="px-2 py-2">{row.market}</td>
                     <td className="px-2 py-2">{row.selection}</td>
+                    <td className="px-2 py-2 tabular-nums">{fmtNum(row.price_at_recommendation, 2)}</td>
+                    <td className="px-2 py-2 tabular-nums">{fmtPct(row.edge)}</td>
                     <td className="px-2 py-2">
-                      {fmtNum(row.price_at_recommendation, 2)}
+                      {row.result === null || row.result === undefined ? (
+                        <span className="text-text-dim">—</span>
+                      ) : row.result === 1 ? (
+                        <span className="text-pos">W</span>
+                      ) : (
+                        <span className="text-neg">L</span>
+                      )}
                     </td>
-                    <td className="px-2 py-2">{fmtPct(row.edge)}</td>
-                    <td className="px-2 py-2">
-                      {row.result === null || row.result === undefined
-                        ? "—"
-                        : row.result === 1
-                          ? "W"
-                          : "L"}
-                    </td>
-                    <td className="px-2 py-2">{fmtNum(row.pnl, 2)}</td>
-                    <td className="px-2 py-2">{fmtNum(row.clv, 4)}</td>
+                    <td className="px-2 py-2 tabular-nums">{fmtNum(row.pnl, 2)}</td>
+                    <td className="px-2 py-2 tabular-nums">{fmtNum(row.clv, 4)}</td>
                   </tr>
                 ))
               )}

@@ -1,211 +1,444 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/server/prisma";
+import type { Prisma } from "@prisma/client";
 import type { ScrapedMatchSummary } from "@/types/scraped-matches";
 
 export const runtime = "nodejs";
 
-type JsonObject = Record<string, unknown>;
+type SortKey = "last_fetch_desc" | "kickoff_desc" | "kickoff_asc" | "snaps_desc";
 
-function isObject(value: unknown): value is JsonObject {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+// "last fetch" in the UI is max(latestOdds, latestStats, updatedAt).
+// SQLite via Prisma can't express GREATEST(...) directly in orderBy, so
+// approximate it: order by the strictly-newer of the two scrape timestamps
+// first (nulls last so rows that have only one column populated still rank
+// by the populated one), then fall back to updatedAt. This matches what
+// the displayed value resolves to for ~all rows in practice.
+const SORT_KEYS: Record<SortKey, Prisma.MatchEventSummaryOrderByWithRelationInput[]> = {
+  last_fetch_desc: [
+    { latestOddsFetchedAt: { sort: "desc", nulls: "last" } },
+    { latestStatsFetchedAt: { sort: "desc", nulls: "last" } },
+    { updatedAt: "desc" },
+    { eventId: "desc" },
+  ],
+  kickoff_desc: [{ startTimeUtc: "desc" }, { eventId: "desc" }],
+  kickoff_asc: [{ startTimeUtc: "asc" }, { eventId: "asc" }],
+  snaps_desc: [{ oddsSnapshotCount: "desc" }, { eventId: "desc" }],
+};
+
+function statusToKind(raw?: string | null): "LIVE" | "FT" | "SCHED" {
+  const s = (raw ?? "").toLowerCase();
+  if (s.includes("live") || s.includes("in_play") || s.includes("running")) return "LIVE";
+  if (s.includes("finished") || s.includes("ft") || s.includes("ended") || s.includes("completed"))
+    return "FT";
+  return "SCHED";
 }
 
-function asString(value: unknown): string | undefined {
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    return trimmed.length > 0 ? trimmed : undefined;
-  }
-  return undefined;
+// FlashScore writes the competition stage into the `competition` text itself
+// (e.g. "NHL - Play Offs", "Extraliga - Relegation"), in addition to the
+// dedicated `competition_stage` column. For grouping + filtering we strip the
+// suffix so a single "NHL" facet covers regular season + every play-off stage.
+function competitionRoot(c: string | null | undefined): string | undefined {
+  if (!c) return undefined;
+  const idx = c.indexOf(" - ");
+  return idx > 0 ? c.slice(0, idx) : c;
 }
 
-function parseObjectPayload(payload: string): JsonObject | undefined {
-  try {
-    const parsed = JSON.parse(payload) as unknown;
-    return isObject(parsed) ? parsed : undefined;
-  } catch {
-    return undefined;
-  }
+function fallbackName(s: ScrapedMatchSummary): string {
+  if (s.homeTeam && s.awayTeam) return `${s.homeTeam} vs ${s.awayTeam}`;
+  return `Event ${s.eventId}`;
 }
 
-function extractOddsEventName(payload: string): string | undefined {
-  const parsed = parseObjectPayload(payload);
-  if (!parsed) {
-    return undefined;
-  }
-
-  const event = isObject(parsed.event) ? parsed.event : undefined;
-  return asString(event?.event_name) ?? asString(event?.name);
-}
-
-function extractMatchMetadata(payload: string): Partial<ScrapedMatchSummary> {
-  const parsed = parseObjectPayload(payload);
-  if (!parsed) {
-    return {};
-  }
-
-  const event = isObject(parsed.event) ? parsed.event : undefined;
-  if (!event) {
-    return {};
-  }
-
-  return {
-    homeTeam: asString(event.home_team),
-    awayTeam: asString(event.away_team),
-    sport: asString(event.sport),
-    country: asString(event.country),
-    competition: asString(event.competition),
-    competitionStage: asString(event.competition_stage),
-    competitionPath: asString(event.competition_path),
-    startTimeUtc: asString(event.start_time_utc),
-    status: asString(event.status),
-    statusDetail: asString(event.status_detail),
-    outcome: asString(event.outcome)
+function toSummary(r: {
+  eventId: string;
+  eventName: string | null;
+  homeTeam: string | null;
+  awayTeam: string | null;
+  sport: string | null;
+  country: string | null;
+  competition: string | null;
+  competitionStage: string | null;
+  competitionPath: string | null;
+  startTimeUtc: string | null;
+  status: string | null;
+  statusDetail: string | null;
+  outcome: string | null;
+  oddsSnapshotCount: number;
+  statsSnapshotCount: number;
+  latestOddsFetchedAt: string | null;
+  latestStatsFetchedAt: string | null;
+  updatedAt: string;
+}): ScrapedMatchSummary {
+  const latestOdds = r.latestOddsFetchedAt ?? undefined;
+  const latestStats = r.latestStatsFetchedAt ?? undefined;
+  // Display value matches the sort expression: max of all three timestamps.
+  // updatedAt is bumped on any change to the summary row, including backfills
+  // that touch teams/competition without re-fetching odds/stats — so it can be
+  // newer than either latestOdds or latestStats.
+  const candidates = [latestOdds, latestStats, r.updatedAt].filter(
+    (v): v is string => typeof v === "string" && v.length > 0,
+  );
+  const lastFetchedAt =
+    candidates.length > 0
+      ? candidates.reduce((max, v) => (v > max ? v : max))
+      : r.updatedAt;
+  const item: ScrapedMatchSummary = {
+    eventId: r.eventId,
+    lastFetchedAt,
+    statsSnapshotCount: r.statsSnapshotCount,
+    oddsSnapshotCount: r.oddsSnapshotCount,
+    latestOddsFetchedAt: latestOdds,
+    latestStatsFetchedAt: latestStats,
+    eventName: r.eventName ?? undefined,
+    homeTeam: r.homeTeam ?? undefined,
+    awayTeam: r.awayTeam ?? undefined,
+    sport: r.sport ?? undefined,
+    country: r.country ?? undefined,
+    competition: r.competition ?? undefined,
+    competitionStage: r.competitionStage ?? undefined,
+    competitionPath: r.competitionPath ?? undefined,
+    startTimeUtc: r.startTimeUtc ?? undefined,
+    status: r.status ?? undefined,
+    statusDetail: r.statusDetail ?? undefined,
+    outcome: r.outcome ?? undefined,
   };
+  item.eventName = item.eventName ?? fallbackName(item);
+  return item;
 }
 
-function toIso(value: Date | null): string | undefined {
-  return value ? value.toISOString() : undefined;
-}
+function buildWhere(opts: {
+  q?: string;
+  countries: string[];
+  leagues: string[];
+  statuses: string[];
+  sports: string[];
+}): Prisma.MatchEventSummaryWhereInput {
+  const where: Prisma.MatchEventSummaryWhereInput = {};
+  const and: Prisma.MatchEventSummaryWhereInput[] = [];
 
-function updateLastFetched(item: ScrapedMatchSummary, candidate: string | undefined): void {
-  if (!candidate) {
-    return;
-  }
-
-  if (!item.lastFetchedAt || new Date(candidate).getTime() > new Date(item.lastFetchedAt).getTime()) {
-    item.lastFetchedAt = candidate;
-  }
-}
-
-function buildFallbackName(item: ScrapedMatchSummary): string {
-  if (item.homeTeam && item.awayTeam) {
-    return `${item.homeTeam} vs ${item.awayTeam}`;
-  }
-  return `Event ${item.eventId}`;
-}
-
-function byLastFetchedDesc(a: ScrapedMatchSummary, b: ScrapedMatchSummary): number {
-  return new Date(b.lastFetchedAt).getTime() - new Date(a.lastFetchedAt).getTime();
-}
-
-export async function GET() {
-  try {
-    const [oddsCounts, statsCounts, latestOddsRows, latestStatsRows] = await Promise.all([
-      prisma.oddsSnapshot.groupBy({
-        by: ["eventId"],
-        _count: { _all: true },
-        _max: { fetchedAt: true }
-      }),
-      prisma.matchStatsSnapshot.groupBy({
-        by: ["eventId"],
-        _count: { _all: true },
-        _max: { fetchedAt: true }
-      }),
-      prisma.oddsSnapshot.findMany({
-        distinct: ["eventId"],
-        orderBy: [{ eventId: "asc" }, { fetchedAt: "desc" }, { id: "desc" }],
-        select: {
-          eventId: true,
-          fetchedAt: true,
-          oddsPayloadJson: true
-        }
-      }),
-      prisma.matchStatsSnapshot.findMany({
-        distinct: ["eventId"],
-        orderBy: [{ eventId: "asc" }, { fetchedAt: "desc" }, { id: "desc" }],
-        select: {
-          eventId: true,
-          fetchedAt: true,
-          matchStatsPayloadJson: true
-        }
-      })
-    ]);
-
-    const byEvent = new Map<string, ScrapedMatchSummary>();
-
-    const getOrCreate = (eventId: string): ScrapedMatchSummary => {
-      const existing = byEvent.get(eventId);
-      if (existing) {
-        return existing;
-      }
-
-      const created: ScrapedMatchSummary = {
-        eventId,
-        lastFetchedAt: new Date(0).toISOString(),
-        statsSnapshotCount: 0,
-        oddsSnapshotCount: 0
-      };
-      byEvent.set(eventId, created);
-      return created;
-    };
-
-    for (const row of oddsCounts) {
-      const item = getOrCreate(row.eventId);
-      item.oddsSnapshotCount = row._count._all;
-      item.latestOddsFetchedAt = toIso(row._max.fetchedAt);
-      updateLastFetched(item, item.latestOddsFetchedAt);
-    }
-
-    for (const row of statsCounts) {
-      const item = getOrCreate(row.eventId);
-      item.statsSnapshotCount = row._count._all;
-      item.latestStatsFetchedAt = toIso(row._max.fetchedAt);
-      updateLastFetched(item, item.latestStatsFetchedAt);
-    }
-
-    for (const row of latestOddsRows) {
-      const item = getOrCreate(row.eventId);
-      const eventName = extractOddsEventName(row.oddsPayloadJson);
-      if (eventName && !item.eventName) {
-        item.eventName = eventName;
-      }
-      updateLastFetched(item, row.fetchedAt.toISOString());
-    }
-
-    for (const row of latestStatsRows) {
-      const item = getOrCreate(row.eventId);
-      const metadata = extractMatchMetadata(row.matchStatsPayloadJson);
-      Object.assign(item, {
-        homeTeam: metadata.homeTeam ?? item.homeTeam,
-        awayTeam: metadata.awayTeam ?? item.awayTeam,
-        sport: metadata.sport ?? item.sport,
-        country: metadata.country ?? item.country,
-        competition: metadata.competition ?? item.competition,
-        competitionStage: metadata.competitionStage ?? item.competitionStage,
-        competitionPath: metadata.competitionPath ?? item.competitionPath,
-        startTimeUtc: metadata.startTimeUtc ?? item.startTimeUtc,
-        status: metadata.status ?? item.status,
-        statusDetail: metadata.statusDetail ?? item.statusDetail,
-        outcome: metadata.outcome ?? item.outcome
-      });
-
-      if (!item.eventName && metadata.homeTeam && metadata.awayTeam) {
-        item.eventName = `${metadata.homeTeam} vs ${metadata.awayTeam}`;
-      }
-      updateLastFetched(item, row.fetchedAt.toISOString());
-    }
-
-    const matches = Array.from(byEvent.values())
-      .map((item) => ({
-        ...item,
-        eventName: item.eventName ?? buildFallbackName(item)
-      }))
-      .sort(byLastFetchedDesc);
-
-    return NextResponse.json({
-      total: matches.length,
-      matches
+  if (opts.q && opts.q.trim()) {
+    const q = opts.q.trim();
+    and.push({
+      OR: [
+        { homeTeam: { contains: q } },
+        { awayTeam: { contains: q } },
+        { competition: { contains: q } },
+        { eventName: { contains: q } },
+        { eventId: { contains: q } },
+      ],
     });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to load scraped matches.";
+  }
+  if (opts.countries.length > 0) {
+    and.push({ country: { in: opts.countries } });
+  }
+  if (opts.sports.length > 0) {
+    and.push({ sport: { in: opts.sports } });
+  }
+  if (opts.leagues.length > 0) {
+    // Match the league root and any stage-suffixed variant
+    // ("NHL", "NHL - Play Offs", ...).
+    and.push({
+      OR: opts.leagues.flatMap((l) => [
+        { competition: l },
+        { competition: { startsWith: `${l} - ` } },
+      ]),
+    });
+  }
+  // status filter is post-query because we normalize raw strings to LIVE/FT/SCHED
+  // and the raw `status` text is too varied to map via SQL. The route applies
+  // it after fetching one page.
+
+  if (and.length > 0) where.AND = and;
+  return where;
+}
+
+export async function GET(request: Request) {
+  const url = new URL(request.url);
+  const params = url.searchParams;
+
+  const q = params.get("q") ?? undefined;
+  const countries = params.getAll("country");
+  const leagues = params.getAll("league");
+  const statuses = params.getAll("status"); // LIVE | FT | SCHED
+  const sports = params.getAll("sport");
+  const sort = (params.get("sort") ?? "last_fetch_desc") as SortKey;
+  const limit = Math.min(Math.max(Number(params.get("limit") ?? "50"), 1), 200);
+  const cursor = params.get("cursor") ?? undefined;
+  const wantFacets = params.get("withFacets") === "1";
+  const orderBy = SORT_KEYS[sort] ?? SORT_KEYS.last_fetch_desc;
+
+  const where = buildWhere({ q, countries, leagues, statuses, sports });
+
+  try {
+    let rows: Awaited<ReturnType<typeof prisma.matchEventSummary.findMany>>;
+    let totalUnfiltered: number;
+
+    if (sort === "last_fetch_desc") {
+      // Sort by the same expression the UI displays as "last fetch":
+      // max(latest_odds_fetched_at, latest_stats_fetched_at, updated_at).
+      // Prisma's typed orderBy can't express GREATEST(...), so use raw SQL.
+      // Keyset pagination by (last_fetch_value, event_id) keeps it O(limit)
+      // even on huge tables.
+      const sqlWhere: string[] = [];
+      const sqlBinds: (string | number)[] = [];
+
+      if (q && q.trim()) {
+        const like = `%${q.trim()}%`;
+        sqlWhere.push(
+          "(home_team LIKE ? OR away_team LIKE ? OR competition LIKE ? OR event_name LIKE ? OR event_id LIKE ?)",
+        );
+        sqlBinds.push(like, like, like, like, like);
+      }
+      if (countries.length > 0) {
+        sqlWhere.push(`country IN (${countries.map(() => "?").join(",")})`);
+        sqlBinds.push(...countries);
+      }
+      if (sports.length > 0) {
+        sqlWhere.push(`sport IN (${sports.map(() => "?").join(",")})`);
+        sqlBinds.push(...sports);
+      }
+      if (leagues.length > 0) {
+        const parts: string[] = [];
+        for (const l of leagues) {
+          parts.push("competition = ?");
+          sqlBinds.push(l);
+          parts.push("competition LIKE ?");
+          sqlBinds.push(`${l} - %`);
+        }
+        sqlWhere.push(`(${parts.join(" OR ")})`);
+      }
+
+      const LAST_FETCH = `MAX(
+        COALESCE(latest_odds_fetched_at, ''),
+        COALESCE(latest_stats_fetched_at, ''),
+        COALESCE(updated_at, '')
+      )`;
+
+      if (cursor) {
+        // cursor format: "<lastFetchISO>|<eventId>" (URI-encoded by caller)
+        const decoded = decodeURIComponent(cursor);
+        const sep = decoded.lastIndexOf("|");
+        if (sep > 0) {
+          const cursorLast = decoded.slice(0, sep);
+          const cursorEventId = decoded.slice(sep + 1);
+          sqlWhere.push(
+            `(${LAST_FETCH} < ? OR (${LAST_FETCH} = ? AND event_id < ?))`,
+          );
+          sqlBinds.push(cursorLast, cursorLast, cursorEventId);
+        }
+      }
+
+      const whereClause = sqlWhere.length > 0 ? `WHERE ${sqlWhere.join(" AND ")}` : "";
+
+      // Fetch one extra row to detect next page.
+      const sql = `
+        SELECT event_id AS eventId,
+               event_name AS eventName,
+               home_team AS homeTeam,
+               away_team AS awayTeam,
+               sport,
+               country,
+               competition,
+               competition_stage AS competitionStage,
+               competition_path AS competitionPath,
+               start_time_utc AS startTimeUtc,
+               status,
+               status_detail AS statusDetail,
+               outcome,
+               odds_snapshot_count AS oddsSnapshotCount,
+               stats_snapshot_count AS statsSnapshotCount,
+               latest_odds_fetched_at AS latestOddsFetchedAt,
+               latest_stats_fetched_at AS latestStatsFetchedAt,
+               updated_at AS updatedAt
+        FROM match_event_summaries
+        ${whereClause}
+        ORDER BY ${LAST_FETCH} DESC, event_id DESC
+        LIMIT ?
+      `;
+      const fetched = (await prisma.$queryRawUnsafe(sql, ...sqlBinds, limit + 1)) as Array<{
+        eventId: string;
+        eventName: string | null;
+        homeTeam: string | null;
+        awayTeam: string | null;
+        sport: string | null;
+        country: string | null;
+        competition: string | null;
+        competitionStage: string | null;
+        competitionPath: string | null;
+        startTimeUtc: string | null;
+        status: string | null;
+        statusDetail: string | null;
+        outcome: string | null;
+        oddsSnapshotCount: number | bigint;
+        statsSnapshotCount: number | bigint;
+        latestOddsFetchedAt: string | null;
+        latestStatsFetchedAt: string | null;
+        updatedAt: string;
+      }>;
+
+      // Normalize bigints from raw query.
+      rows = fetched.map((r) => ({
+        ...r,
+        oddsSnapshotCount: Number(r.oddsSnapshotCount),
+        statsSnapshotCount: Number(r.statsSnapshotCount),
+      }));
+
+      // Total count uses the same filter set (no cursor).
+      const countSql = `SELECT COUNT(*) AS c FROM match_event_summaries ${whereClause.replace(/\bAND \(MAX\([^)]*\)[^)]*\)[^)]*\)/, "")}`;
+      // Strip the cursor predicate from the count: simpler to rebuild it.
+      const countWhere: string[] = [];
+      const countBinds: (string | number)[] = [];
+      if (q && q.trim()) {
+        const like = `%${q.trim()}%`;
+        countWhere.push(
+          "(home_team LIKE ? OR away_team LIKE ? OR competition LIKE ? OR event_name LIKE ? OR event_id LIKE ?)",
+        );
+        countBinds.push(like, like, like, like, like);
+      }
+      if (countries.length > 0) {
+        countWhere.push(`country IN (${countries.map(() => "?").join(",")})`);
+        countBinds.push(...countries);
+      }
+      if (sports.length > 0) {
+        countWhere.push(`sport IN (${sports.map(() => "?").join(",")})`);
+        countBinds.push(...sports);
+      }
+      if (leagues.length > 0) {
+        const parts: string[] = [];
+        for (const l of leagues) {
+          parts.push("competition = ?");
+          countBinds.push(l);
+          parts.push("competition LIKE ?");
+          countBinds.push(`${l} - %`);
+        }
+        countWhere.push(`(${parts.join(" OR ")})`);
+      }
+      const countWhereClause = countWhere.length > 0 ? `WHERE ${countWhere.join(" AND ")}` : "";
+      const countRows = (await prisma.$queryRawUnsafe(
+        `SELECT COUNT(*) AS c FROM match_event_summaries ${countWhereClause}`,
+        ...countBinds,
+      )) as Array<{ c: number | bigint }>;
+      totalUnfiltered = Number(countRows[0]?.c ?? 0);
+    } else {
+      // Other sorts: typed Prisma path with eventId-only keyset cursor.
+      const args: Prisma.MatchEventSummaryFindManyArgs = {
+        where,
+        orderBy,
+        take: limit + 1,
+      };
+      if (cursor) {
+        args.cursor = { eventId: decodeURIComponent(cursor) };
+        args.skip = 1;
+      }
+      [rows, totalUnfiltered] = await Promise.all([
+        prisma.matchEventSummary.findMany(args),
+        prisma.matchEventSummary.count({ where }),
+      ]);
+    }
+
+    let summaries = rows.map(toSummary);
+    if (statuses.length > 0) {
+      const allow = new Set(statuses.map((s) => s.toUpperCase()));
+      summaries = summaries.filter((m) => allow.has(statusToKind(m.status)));
+    }
+
+    let nextCursor: string | null = null;
+    if (summaries.length > limit) {
+      const next = summaries[limit];
+      if (sort === "last_fetch_desc") {
+        // Composite cursor: <lastFetchValue>|<eventId>, URI-encoded so
+        // a possible '|' in the timestamp can't confuse the parser.
+        nextCursor = encodeURIComponent(`${next.lastFetchedAt}|${next.eventId}`);
+      } else {
+        nextCursor = encodeURIComponent(next.eventId);
+      }
+      summaries = summaries.slice(0, limit);
+    }
+
+    let facets: {
+      country: { value: string; count: number }[];
+      sport: { value: string; count: number }[];
+      league: { value: string; count: number }[];
+      status: { value: string; count: number }[];
+    } | undefined;
+
+    if (wantFacets) {
+      const [byCountry, bySport, byLeagueRaw] = await Promise.all([
+        prisma.matchEventSummary.groupBy({
+          by: ["country"],
+          where,
+          _count: { _all: true },
+          orderBy: { _count: { eventId: "desc" } },
+          take: 30,
+        }),
+        prisma.matchEventSummary.groupBy({
+          by: ["sport"],
+          where,
+          _count: { _all: true },
+          orderBy: { _count: { eventId: "desc" } },
+          take: 20,
+        }),
+        // Pull more raw rows than we ultimately surface so that, after we
+        // fold stage suffixes into a single root, the top-N is stable.
+        prisma.matchEventSummary.groupBy({
+          by: ["competition"],
+          where,
+          _count: { _all: true },
+          orderBy: { _count: { eventId: "desc" } },
+          take: 300,
+        }),
+      ]);
+
+      // Collapse "NHL", "NHL - Play Offs", "NHL - Pre-season", ... into "NHL".
+      const rootCounts = new Map<string, number>();
+      for (const row of byLeagueRaw) {
+        const root = competitionRoot(row.competition);
+        if (!root) continue;
+        rootCounts.set(root, (rootCounts.get(root) ?? 0) + row._count._all);
+      }
+      const byLeague = Array.from(rootCounts.entries())
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 50);
+
+      // For status we only need the three tokens; compute from a small sample of
+      // recent rows. groupBy on raw status would explode into dozens of variants.
+      const sample = await prisma.matchEventSummary.findMany({
+        where,
+        select: { status: true },
+        take: 2000,
+      });
+      const statusCounts = new Map<string, number>();
+      for (const s of sample) {
+        const kind = statusToKind(s.status);
+        statusCounts.set(kind, (statusCounts.get(kind) ?? 0) + 1);
+      }
+
+      facets = {
+        country: byCountry
+          .filter((r) => r.country)
+          .map((r) => ({ value: r.country as string, count: r._count._all })),
+        sport: bySport
+          .filter((r) => r.sport)
+          .map((r) => ({ value: r.sport as string, count: r._count._all })),
+        league: byLeague.map(([value, count]) => ({ value, count })),
+        status: Array.from(statusCounts.entries()).map(([value, count]) => ({ value, count })),
+      };
+    }
+
     return NextResponse.json(
       {
-        error: {
-          code: "scraped_matches_load_failed",
-          message
-        }
+        matches: summaries,
+        nextCursor,
+        total: totalUnfiltered,
+        facets,
       },
-      { status: 500 }
+      { headers: { "Cache-Control": "private, max-age=15" } },
+    );
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Failed to load scraped matches.";
+    return NextResponse.json(
+      { error: { code: "scraped_matches_load_failed", message } },
+      { status: 500 },
     );
   }
 }

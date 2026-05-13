@@ -9,6 +9,9 @@ import {
   type StatsRow,
   type HistoryResponse,
 } from "@/lib/api-picks";
+import { PageHeader } from "@/components/terminal/PageHeader";
+import { Stat } from "@/components/terminal/Stat";
+import { Kicker } from "@/components/terminal/Kicker";
 
 type LoadState =
   | { kind: "loading" }
@@ -87,15 +90,21 @@ export function HealthTab() {
 
   if (state.kind === "loading") {
     return (
-      <div className="rounded-2xl border border-[color:var(--color-brand-outline)] bg-[color:var(--color-brand-surface)] p-6 text-sm text-[color:var(--color-text-muted)]">
-        {t("picks.loading")}
+      <div className="flex flex-col gap-4">
+        <PageHeader kicker="Picks · health" />
+        <div className="border border-border p-6 font-mono text-[12px] text-text-dim">
+          {t("picks.loading")}
+        </div>
       </div>
     );
   }
   if (state.kind === "error") {
     return (
-      <div className="rounded-2xl border border-[color:var(--color-brand-outline)] bg-[color:var(--color-brand-surface)] p-6 text-sm">
-        {t("picks.error")}: {state.message}
+      <div className="flex flex-col gap-4">
+        <PageHeader kicker="Picks · health" />
+        <div className="border border-border p-6 font-mono text-[12px] text-text">
+          {t("picks.error")}: {state.message}
+        </div>
       </div>
     );
   }
@@ -130,73 +139,69 @@ export function HealthTab() {
 
   return (
     <div className="flex flex-col gap-4">
-      <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <PageHeader kicker="Picks · health" />
+      <section className="grid grid-cols-2 gap-px border border-border bg-border sm:grid-cols-4">
         {kpis.map((k) => (
-          <div
-            key={k.label}
-            className="rounded-2xl border border-[color:var(--color-brand-outline)] bg-[color:var(--color-brand-surface)] p-4"
-          >
-            <div className="text-xs text-[color:var(--color-text-muted)]">{k.label}</div>
-            <div className="mt-1 text-2xl font-bold text-[color:var(--color-text-high)]">{k.value}</div>
+          <div key={k.label} className="bg-bg">
+            <Stat label={k.label} value={k.value} />
           </div>
         ))}
       </section>
 
-      <section className="rounded-2xl border border-[color:var(--color-brand-outline)] bg-[color:var(--color-brand-surface)] p-4">
-        <h2 className="mb-3 text-sm font-semibold text-[color:var(--color-text-muted)]">
-          {t("picks.freshness.title")}
-        </h2>
-        <div className="grid grid-cols-1 gap-2 text-xs sm:grid-cols-3">
+      <section className="border border-border p-4">
+        <Kicker className="mb-3 block">{t("picks.freshness.title")}</Kicker>
+        <div className="grid grid-cols-1 gap-2 font-mono text-[12px] text-text sm:grid-cols-3">
           <div>
-            {t("picks.freshness.recordPicks")}: <b>{fmtRelativeTime(latestRecommended)}</b>
+            <span className="text-text-dim">{t("picks.freshness.recordPicks")}:</span>{" "}
+            <b className="tabular-nums">{fmtRelativeTime(latestRecommended)}</b>
           </div>
           <div>
-            {t("picks.freshness.settle")}: <b>{fmtRelativeTime(latestSettled)}</b>
+            <span className="text-text-dim">{t("picks.freshness.settle")}:</span>{" "}
+            <b className="tabular-nums">{fmtRelativeTime(latestSettled)}</b>
           </div>
           <div>
-            {t("picks.freshness.pending")}: <b>{totalPending}</b>
+            <span className="text-text-dim">{t("picks.freshness.pending")}:</span>{" "}
+            <b className="tabular-nums">{totalPending}</b>
           </div>
         </div>
       </section>
 
-      <section className="rounded-2xl border border-[color:var(--color-brand-outline)] bg-[color:var(--color-brand-surface)] p-4">
-        <h2 className="mb-3 text-sm font-semibold text-[color:var(--color-text-muted)]">
-          {t("picks.snapshot.title")}
-        </h2>
-        <table className="w-full text-left text-sm">
-          <thead className="text-xs uppercase text-[color:var(--color-text-muted)]">
-            <tr>
-              <th className="px-2 py-2">{t("picks.filter.model")}</th>
-              <th className="px-2 py-2">n</th>
-              <th className="px-2 py-2">{t("picks.deepDive.kpi.hitRate")}</th>
-              <th className="px-2 py-2">{t("picks.deepDive.kpi.roi")}</th>
-              <th className="px-2 py-2">{t("picks.deepDive.kpi.meanClv")}</th>
+      <section className="border border-border p-4">
+        <Kicker className="mb-3 block">{t("picks.snapshot.title")}</Kicker>
+        <table className="w-full border-collapse text-left font-mono text-[12px]">
+          <thead>
+            <tr className="border-b border-border">
+              <th className="px-2 py-2 font-sans text-[10px] uppercase text-text-dim" style={{ letterSpacing: "var(--track-wide)" }}>{t("picks.filter.model")}</th>
+              <th className="px-2 py-2 font-sans text-[10px] uppercase text-text-dim" style={{ letterSpacing: "var(--track-wide)" }}>n</th>
+              <th className="px-2 py-2 font-sans text-[10px] uppercase text-text-dim" style={{ letterSpacing: "var(--track-wide)" }}>{t("picks.deepDive.kpi.hitRate")}</th>
+              <th className="px-2 py-2 font-sans text-[10px] uppercase text-text-dim" style={{ letterSpacing: "var(--track-wide)" }}>{t("picks.deepDive.kpi.roi")}</th>
+              <th className="px-2 py-2 font-sans text-[10px] uppercase text-text-dim" style={{ letterSpacing: "var(--track-wide)" }}>{t("picks.deepDive.kpi.meanClv")}</th>
             </tr>
           </thead>
           <tbody>
             {state.perModelSevenDay.length === 0 ? (
               <tr>
-                <td className="px-2 py-3 text-[color:var(--color-text-muted)]" colSpan={5}>
+                <td className="px-2 py-3 text-text-dim" colSpan={5}>
                   —
                 </td>
               </tr>
             ) : (
               state.perModelSevenDay.map((row) => (
-                <tr key={String(row.model)} className="border-t border-[color:var(--color-brand-outline)]">
-                  <td className="px-2 py-2 font-semibold text-[color:var(--color-text-high)]">
+                <tr key={String(row.model)} className="border-b border-border/60">
+                  <td className="px-2 py-2 text-text">
                     <Link
                       href={
                         `/${locale}/picks/model/${row.model}` as unknown as Parameters<typeof Link>[0]["href"]
                       }
-                      className="underline"
+                      className="text-accent hover:underline"
                     >
                       {String(row.model)}
                     </Link>
                   </td>
-                  <td className="px-2 py-2">{row.n}</td>
-                  <td className="px-2 py-2">{fmtPct(row.hit_rate)}</td>
-                  <td className="px-2 py-2">{fmtPct(row.roi)}</td>
-                  <td className="px-2 py-2">{fmtNum(row.mean_clv, 4)}</td>
+                  <td className="px-2 py-2 tabular-nums">{row.n}</td>
+                  <td className="px-2 py-2 tabular-nums">{fmtPct(row.hit_rate)}</td>
+                  <td className="px-2 py-2 tabular-nums">{fmtPct(row.roi)}</td>
+                  <td className="px-2 py-2 tabular-nums">{fmtNum(row.mean_clv, 4)}</td>
                 </tr>
               ))
             )}

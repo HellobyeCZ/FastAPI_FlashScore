@@ -46,7 +46,7 @@ ML / scripts workflow runs against system Python (the documented venv lacks pyte
 
 - Tables: `bet_labels`, `closing_odds`, `team_elo_history`, `paper_bets`, `upcoming_fixtures`, `live_odds_snapshots`, `match_event_summaries` (legacy, NOT in Prisma). Several are read by many modules but written only by Phase 0/1 backfill scripts or the live `SnapshotStore` — if a table looks stale, check who writes to it before adding reads.
 - `FOOTBALL_PHASE1_SCOPE` in `app/ml/labels.py` is the canonical (country, competition) allowlist for labels + closing_odds backfill. FlashScore reports stage variants (e.g. `Chance Liga - Relegation Group`) as distinct strings — add explicitly.
-- Two odds sources: `odds_snapshots` (archive, rich JSON, `build_closing_odds`) vs `live_odds_snapshots` (live pipeline, flat per-bookmaker rows, `build_closing_from_live` fallback).
+- Two odds sources: `odds_snapshots` (archive, rich JSON, `build_closing_odds`, written on every `GET /odds/{event_id}` and frozen once terminal) vs `live_odds_snapshots` (live pipeline, flat per-bookmaker rows, `build_closing_from_live` fallback, written by `LiveOddsScheduler.run_once()`). The frontend "Snapshots" strip on the match detail page reads `live_odds_snapshots` via `/api/snapshots/[eventId]` — NOT `odds_snapshots`.
 - Case-folding mismatch: `upcoming_fixtures.country` is lowercase, `match_event_summaries.country` is UPPERCASE. Scope predicates use uppercase.
 - Settler pipeline: `record_picks` → `build_phase1` (labels + closing_odds + elo) → `settle_paper_bets`. Skipping any step zeroes the dashboard.
 
@@ -77,3 +77,6 @@ When changing `frontend/prisma/schema.prisma`, run `prisma:migrate` in dev to cr
 - `useEffect`/`useMemo` deps split arrays via `.join(",")` to keep primitives in dep arrays — ESLint warns; the warnings are sanctioned. Don't "fix" them by adding the arrays directly.
 - Transient `ENOENT: _ssgManifest.js` during `npm run build` in a worktree is a known race; safe to ignore if "Compiled successfully" printed first.
 - Playwright cross-browser: firefox/webkit binaries aren't installed locally by default (`npx playwright install` to fix). Tests routinely chromium-only on dev machines.
+- `competitionRoot()` in `frontend/src/lib/competition.ts` folds stage suffixes ("NHL - Play Offs" → "NHL"). Use it anywhere league names are grouped/displayed; pairs with `FOOTBALL_PHASE1_SCOPE` in `app/ml/labels.py` which is the canonical allowlist for the unfolded variants.
+- Terminal charts in `frontend/src/components/terminal/charts/` size to their parent via `useElementWidth` (ResizeObserver hook in `frontend/src/hooks/useElementWidth.ts`) — don't hard-pin `width={720}`. Pass an explicit `width` prop only for fixed-size fixtures.
+- Next.js dev keeps compile errors in its log buffer after the file becomes valid again — `preview_console_logs(level:error)` can show stale syntax errors even after a successful render. Trust the rendered DOM (or `preview_eval`) over the error buffer when they disagree.

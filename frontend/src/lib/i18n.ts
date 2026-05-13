@@ -179,7 +179,28 @@ const enMessages = {
   "picks.deepDive.kpi.hitRate": "Hit %",
   "picks.deepDive.kpi.roi": "ROI",
   "picks.deepDive.kpi.meanClv": "Mean CLV",
-  "picks.empty.smallSample": "n too small — need more bets"
+  "picks.empty.smallSample": "n too small — need more bets",
+  "nav.today": "Today",
+  "nav.odds": "Odds",
+  "nav.matches": "Matches",
+  "nav.picks": "Picks",
+  "nav.health": "Health",
+  "nav.models": "Models",
+  "nav.explore": "Explore",
+  "nav.jobs": "Jobs",
+  "nav.settings": "Settings",
+  "today.title": "Today · Cockpit",
+  "today.heroPnl": "Model P&L · trailing 30d",
+  "today.heroOpen": "Today · open picks",
+  "today.heroQueue": "Scrape queue",
+  "today.slate": "Today · slate",
+  "settings.title": "Settings",
+  "settings.locale": "Locale",
+  "settings.refresh": "Auto-refresh",
+  "settings.scanlines": "CRT scanlines",
+  "empty.noPicks": "no open picks for today",
+  "empty.loading": "loading…",
+  "empty.noJobs": "no jobs"
 };
 
 export type MessageKey = keyof typeof enMessages;
@@ -358,7 +379,28 @@ const csMessages: MessageCatalog = {
   "picks.deepDive.kpi.hitRate": "Uspesnost %",
   "picks.deepDive.kpi.roi": "ROI",
   "picks.deepDive.kpi.meanClv": "Prumerny CLV",
-  "picks.empty.smallSample": "Maly vzorek - potrebujeme vice tipu"
+  "picks.empty.smallSample": "Maly vzorek - potrebujeme vice tipu",
+  "nav.today": "Dnes",
+  "nav.odds": "Kurzy",
+  "nav.matches": "Zapasy",
+  "nav.picks": "Tipy",
+  "nav.health": "Stav",
+  "nav.models": "Modely",
+  "nav.explore": "Pruzkum",
+  "nav.jobs": "Ulohy",
+  "nav.settings": "Nastaveni",
+  "today.title": "Dnes · Kokpit",
+  "today.heroPnl": "Model P&L · poslednich 30 dni",
+  "today.heroOpen": "Dnes · otevrene tipy",
+  "today.heroQueue": "Fronta scrapovani",
+  "today.slate": "Dnes · seznam",
+  "settings.title": "Nastaveni",
+  "settings.locale": "Jazyk",
+  "settings.refresh": "Automaticka obnova",
+  "settings.scanlines": "CRT radkovani",
+  "empty.noPicks": "zadne otevrene tipy",
+  "empty.loading": "nacitani…",
+  "empty.noJobs": "zadne ulohy"
 };
 
 const catalogs: Record<Locale, MessageCatalog> = {

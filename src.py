@@ -25,6 +25,7 @@ from app.services.bulk_scrape import (
     LiveOddsScheduler,
     build_live_odds_scheduler_from_settings,
 )
+from app.services.refresh_now import RefreshNowManager
 from app.services.match_stats import map_match_stats_payload
 from app.services.odds import map_odds_payload
 from app.services.odds_client import OddsAPIError, OddsClient, build_odds_client
@@ -292,6 +293,15 @@ def snapshot_store_dependency() -> SnapshotStore:
 
 def bulk_scrape_manager_dependency() -> BulkScrapeManager:
     return _get_bulk_scrape_manager()
+
+
+@lru_cache()
+def _get_refresh_now_manager() -> RefreshNowManager:
+    return RefreshNowManager()
+
+
+def refresh_now_manager_dependency() -> RefreshNowManager:
+    return _get_refresh_now_manager()
 
 
 @lru_cache()
@@ -715,6 +725,55 @@ async def get_bulk_scrape_job(
         job["events"] = []
 
     return BulkScrapeJobDetail(**job)
+
+
+# ---------------------------------------------------------------------------
+# One-button refresh: scrape upcoming → settle pending → predict + record
+# ---------------------------------------------------------------------------
+
+@app.post("/refresh-now")
+async def start_refresh_now(
+    window_days: int = Query(default=7, ge=1, le=30),
+    max_concurrency: int = Query(default=4, ge=1, le=16),
+    hours_ahead: int = Query(default=72, ge=1, le=240),
+    min_edge: float = Query(default=0.02, ge=0.0, le=1.0),
+    manager: RefreshNowManager = Depends(refresh_now_manager_dependency),
+) -> dict[str, object]:
+    """Kick off the scrape → settle → predict pipeline in the background.
+
+    Returns immediately with a ``run_id`` the caller can poll. If a refresh is
+    already running, returns that run instead of starting a second one.
+    """
+    run = manager.start(
+        window_days=window_days,
+        max_concurrency=max_concurrency,
+        hours_ahead=hours_ahead,
+        min_edge=min_edge,
+    )
+    return run.to_dict()
+
+
+@app.get("/refresh-now")
+async def list_refresh_now(
+    manager: RefreshNowManager = Depends(refresh_now_manager_dependency),
+) -> dict[str, object]:
+    runs = manager.recent(limit=10)
+    active = manager.active_run()
+    return {
+        "active_run_id": active.run_id if active is not None else None,
+        "runs": [r.to_dict() for r in runs],
+    }
+
+
+@app.get("/refresh-now/{run_id}")
+async def get_refresh_now(
+    run_id: str,
+    manager: RefreshNowManager = Depends(refresh_now_manager_dependency),
+) -> dict[str, object]:
+    run = manager.get(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Refresh run not found.")
+    return run.to_dict()
 
 
 # ---------------------------------------------------------------------------
