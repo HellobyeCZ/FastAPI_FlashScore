@@ -33,6 +33,16 @@ function statusToKind(raw?: string | null): "LIVE" | "FT" | "SCHED" {
   return "SCHED";
 }
 
+// FlashScore writes the competition stage into the `competition` text itself
+// (e.g. "NHL - Play Offs", "Extraliga - Relegation"), in addition to the
+// dedicated `competition_stage` column. For grouping + filtering we strip the
+// suffix so a single "NHL" facet covers regular season + every play-off stage.
+function competitionRoot(c: string | null | undefined): string | undefined {
+  if (!c) return undefined;
+  const idx = c.indexOf(" - ");
+  return idx > 0 ? c.slice(0, idx) : c;
+}
+
 function fallbackName(s: ScrapedMatchSummary): string {
   if (s.homeTeam && s.awayTeam) return `${s.homeTeam} vs ${s.awayTeam}`;
   return `Event ${s.eventId}`;
@@ -120,7 +130,14 @@ function buildWhere(opts: {
     and.push({ country: { in: opts.countries } });
   }
   if (opts.leagues.length > 0) {
-    and.push({ competition: { in: opts.leagues } });
+    // Match the league root and any stage-suffixed variant
+    // ("NHL", "NHL - Play Offs", ...).
+    and.push({
+      OR: opts.leagues.flatMap((l) => [
+        { competition: l },
+        { competition: { startsWith: `${l} - ` } },
+      ]),
+    });
   }
   // status filter is post-query because we normalize raw strings to LIVE/FT/SCHED
   // and the raw `status` text is too varied to map via SQL. The route applies
@@ -171,8 +188,14 @@ export async function GET(request: Request) {
         sqlBinds.push(...countries);
       }
       if (leagues.length > 0) {
-        sqlWhere.push(`competition IN (${leagues.map(() => "?").join(",")})`);
-        sqlBinds.push(...leagues);
+        const parts: string[] = [];
+        for (const l of leagues) {
+          parts.push("competition = ?");
+          sqlBinds.push(l);
+          parts.push("competition LIKE ?");
+          sqlBinds.push(`${l} - %`);
+        }
+        sqlWhere.push(`(${parts.join(" OR ")})`);
       }
 
       const LAST_FETCH = `MAX(
@@ -319,7 +342,7 @@ export async function GET(request: Request) {
     } | undefined;
 
     if (wantFacets) {
-      const [byCountry, byLeague] = await Promise.all([
+      const [byCountry, byLeagueRaw] = await Promise.all([
         prisma.matchEventSummary.groupBy({
           by: ["country"],
           where,
@@ -327,14 +350,27 @@ export async function GET(request: Request) {
           orderBy: { _count: { eventId: "desc" } },
           take: 30,
         }),
+        // Pull more raw rows than we ultimately surface so that, after we
+        // fold stage suffixes into a single root, the top-N is stable.
         prisma.matchEventSummary.groupBy({
           by: ["competition"],
           where,
           _count: { _all: true },
           orderBy: { _count: { eventId: "desc" } },
-          take: 50,
+          take: 300,
         }),
       ]);
+
+      // Collapse "NHL", "NHL - Play Offs", "NHL - Pre-season", ... into "NHL".
+      const rootCounts = new Map<string, number>();
+      for (const row of byLeagueRaw) {
+        const root = competitionRoot(row.competition);
+        if (!root) continue;
+        rootCounts.set(root, (rootCounts.get(root) ?? 0) + row._count._all);
+      }
+      const byLeague = Array.from(rootCounts.entries())
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 50);
 
       // For status we only need the three tokens; compute from a small sample of
       // recent rows. groupBy on raw status would explode into dozens of variants.
@@ -353,9 +389,7 @@ export async function GET(request: Request) {
         country: byCountry
           .filter((r) => r.country)
           .map((r) => ({ value: r.country as string, count: r._count._all })),
-        league: byLeague
-          .filter((r) => r.competition)
-          .map((r) => ({ value: r.competition as string, count: r._count._all })),
+        league: byLeague.map(([value, count]) => ({ value, count })),
         status: Array.from(statusCounts.entries()).map(([value, count]) => ({ value, count })),
       };
     }
