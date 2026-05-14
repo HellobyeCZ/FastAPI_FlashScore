@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useLocale } from "@/contexts/LocaleContext";
 import {
@@ -35,6 +35,10 @@ import { Chip } from "@/components/terminal/Chip";
 import { DataTable, type Column } from "@/components/terminal/DataTable";
 import { Stat } from "@/components/terminal/Stat";
 import { colorForModel } from "@/components/terminal/charts/modelColors";
+import { DataSourcePicker } from "@/components/picks/DataSourcePicker";
+import { RunBacktestButton } from "@/components/picks/RunBacktestButton";
+import { BacktestAdvancedDialog } from "@/components/picks/BacktestAdvancedDialog";
+import { BacktestRunsPanel } from "@/components/picks/BacktestRunsPanel";
 
 type CompareView = "pnl" | "clv" | "market" | "competition";
 
@@ -81,6 +85,20 @@ export function ModelsTab() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<CompareView>("pnl");
+  const [dialogOpen, setDialogOpen] = useState(false);
+
+  const source = (searchParams.get("source") as "live" | "backtest" | "both") ?? "live";
+  const runId = searchParams.get("run_id") ?? undefined;
+
+  const handleSelectRun = useCallback(
+    (id: string) => {
+      const sp = new URLSearchParams(searchParams.toString());
+      sp.set("source", source === "live" ? "backtest" : source);
+      sp.set("run_id", id);
+      router.replace(`?${sp.toString()}`);
+    },
+    [router, searchParams, source],
+  );
 
   const apiFilters: StatsFilters = useMemo(() => {
     const out: StatsFilters = { status: filters.status };
@@ -118,11 +136,11 @@ export function ModelsTab() {
       try {
         const [byModel, byModelDay, byModelMarket, byModelComp, history] =
           await Promise.all([
-            fetchStats(["model"], apiFilters),
-            fetchStats(["model", "day"], apiFilters),
-            fetchStats(["model", "market"], apiFilters),
-            fetchStats(["model", "competition"], apiFilters),
-            fetchHistory({ status: "settled", limit: 5000 }),
+            fetchStats(["model"], apiFilters, source, runId),
+            fetchStats(["model", "day"], apiFilters, source, runId),
+            fetchStats(["model", "market"], apiFilters, source, runId),
+            fetchStats(["model", "competition"], apiFilters, source, runId),
+            fetchHistory({ status: "settled", limit: 5000, source, run_id: runId }),
           ]);
         if (cancelled) return;
 
@@ -222,6 +240,8 @@ export function ModelsTab() {
     apiFilters.selection?.join(","),
     apiFilters.edgeMin,
     apiFilters.edgeMax,
+    source,
+    runId,
   ]);
 
   const models = useMemo(
@@ -366,6 +386,21 @@ export function ModelsTab() {
   return (
     <div className="flex flex-col gap-6">
       <PageHeader kicker="Picks · models" />
+
+      {/* Backtest controls */}
+      <div className="flex justify-between items-center mb-3">
+        <DataSourcePicker />
+        <RunBacktestButton
+          onCreated={handleSelectRun}
+          onAdvanced={() => setDialogOpen(true)}
+        />
+      </div>
+      <BacktestRunsPanel onSelect={handleSelectRun} />
+      <BacktestAdvancedDialog
+        open={dialogOpen}
+        onClose={() => setDialogOpen(false)}
+        onCreated={handleSelectRun}
+      />
 
       {/* KPI strip */}
       <section className="grid grid-cols-2 divide-x divide-y divide-border border border-border md:grid-cols-4 md:divide-y-0">

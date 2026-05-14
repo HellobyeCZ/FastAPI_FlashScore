@@ -111,23 +111,32 @@ function buildQuery(
 
 export async function fetchStats(
   groupBy: StatsGroupBy[],
-  filters: StatsFilters = {}
+  filters: StatsFilters = {},
+  source?: "live" | "backtest" | "both",
+  run_id?: string
 ): Promise<StatsResponse> {
   const qs = buildQuery(groupBy, filters);
-  const r = await fetch(`/api/picks/stats?${qs}`, { cache: "no-store" });
+  const params = new URLSearchParams(qs);
+  if (source) params.set("source", source);
+  if (run_id) params.set("run_id", run_id);
+  const r = await fetch(`/api/picks/stats?${params.toString()}`, { cache: "no-store" });
   if (!r.ok) throw new Error(`stats: HTTP ${r.status}`);
   return (await r.json()) as StatsResponse;
 }
 
 export async function fetchCalibration(
   model: string,
-  filters: StatsFilters = {}
+  filters: StatsFilters = {},
+  source?: "live" | "backtest" | "both",
+  run_id?: string
 ): Promise<CalibrationResponse> {
   const params = new URLSearchParams({ model });
   if (filters.dateFrom) params.set("date_from", filters.dateFrom);
   if (filters.dateTo) params.set("date_to", filters.dateTo);
   if (filters.market?.length) params.set("market", filters.market.join(","));
   if (filters.competition?.length) params.set("competition", filters.competition.join(","));
+  if (source) params.set("source", source);
+  if (run_id) params.set("run_id", run_id);
   const r = await fetch(`/api/picks/stats/calibration?${params.toString()}`, { cache: "no-store" });
   if (!r.ok) throw new Error(`calibration: HTTP ${r.status}`);
   return (await r.json()) as CalibrationResponse;
@@ -136,10 +145,14 @@ export async function fetchCalibration(
 export async function fetchHistory(opts: {
   status?: "settled" | "pending" | "voided";
   limit?: number;
+  source?: "live" | "backtest" | "both";
+  run_id?: string;
 } = {}): Promise<HistoryResponse> {
   const params = new URLSearchParams();
   if (opts.status) params.set("status", opts.status);
   if (opts.limit) params.set("limit", String(opts.limit));
+  if (opts.source) params.set("source", opts.source);
+  if (opts.run_id) params.set("run_id", opts.run_id);
   const r = await fetch(`/api/picks/history?${params.toString()}`, { cache: "no-store" });
   if (!r.ok) throw new Error(`history: HTTP ${r.status}`);
   return (await r.json()) as HistoryResponse;
