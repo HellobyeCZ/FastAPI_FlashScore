@@ -316,6 +316,11 @@ class BacktestManager:
             conn.commit()
 
     def _mark_failed_sync(self, run_id: str, error: str) -> None:
+        # Multi-statement, single-connection: update_run_status commits internally,
+        # then we commit the stage=NULL clear. A reader in the tiny window between
+        # them could observe status=failed but stage still set. Under single-writer
+        # SQLite + asyncio this window is sub-millisecond and benign. If it ever
+        # matters, fold stage into update_run_status's UPDATE.
         with _connect() as conn:
             update_run_status(
                 conn, run_id,
@@ -335,6 +340,12 @@ class BacktestManager:
         report: BacktestReport,
         bet_rows: Sequence[BetRow],
     ) -> None:
+        # Multi-statement, single-connection: the storage helpers (insert_bets,
+        # finalize_run) each commit internally. A reader in the tiny window
+        # between them could observe partial state (e.g. status=completed but
+        # stage=backtesting). Under single-writer SQLite + asyncio this window
+        # is sub-millisecond and benign. If it ever matters, fold stage into
+        # finalize_run's UPDATE.
         with _connect() as conn:
             insert_bets(conn, bet_rows)
             summary = {
