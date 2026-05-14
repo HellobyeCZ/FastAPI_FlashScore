@@ -98,9 +98,44 @@ def test_stats_source_backtest_requires_run_id(client: TestClient):
     assert resp.status_code == 400
 
 
-def test_stats_source_both_returns_400_until_task_10(client: TestClient):
+def test_stats_source_both_unions_with_origin(client: TestClient):
+    """source=both returns live rows + backtest rows, each tagged with origin."""
+    import sqlite3, os
+    db = os.environ["APP_STORAGE_DB_PATH"]
+    # Seed one live paper_bet matching the same event so we can union.
+    from app.ml.paper_trade import _ensure_paper_bets_table
+    _ensure_paper_bets_table()
+    with sqlite3.connect(db) as c:
+        # Inspect columns
+        cols = [r[1] for r in c.execute("PRAGMA table_info(paper_bets)").fetchall()]
+        row = {
+            "event_id": "E1",
+            "recommended_at": "2024-08-10T14:55:00Z",
+            "bet_ts": "2024-08-10T14:55:00Z",
+            "market": "1x2_ft",
+            "selection": "home",
+            "model": "market_implied",
+            "model_prob": 0.55,
+            "price_at_recommendation": 2.1,
+            "edge": 0.09,
+            "kelly_full": 0.04,
+            "status": "settled",
+            "result": 1.0,
+            "pnl": 0.044,
+            "clv": 0.0,
+        }
+        used = [k for k in row if k in cols]
+        c.execute(
+            f"INSERT INTO paper_bets ({','.join(used)}) VALUES ({','.join('?' for _ in used)})",
+            tuple(row[k] for k in used),
+        )
+        c.commit()
+
     resp = client.get(
         "/picks/stats",
         params={"source": "both", "run_id": "r1"},
     )
-    assert resp.status_code == 400
+    assert resp.status_code == 200, resp.text
+    rows = resp.json()["rows"]
+    origins = {r.get("origin") for r in rows}
+    assert origins == {"live", "backtest"}

@@ -1149,10 +1149,93 @@ async def picks_stats(
             "rows": rows,
         }
 
-    if source == "both":
-        raise HTTPException(status_code=400, detail="source=both not implemented in this task")
-
     from app.ml.paper_trade_stats import StatsFilter, StatsRequest, aggregate
+
+    if source == "both":
+        if not run_id:
+            raise HTTPException(status_code=400, detail="run_id required when source=both")
+
+        # Live side
+        try:
+            live_req = StatsRequest(
+                group_by=_csv(group_by),
+                filters=StatsFilter(
+                    status=status,
+                    date_from=date_from,
+                    date_to=date_to,
+                    model=_csv(model),
+                    market=_csv(market),
+                    sport=_csv(sport),
+                    country=_csv(country),
+                    competition=_csv(competition),
+                    selection=_csv(selection),
+                    edge_min=edge_min,
+                    edge_max=edge_max,
+                    price_min=price_min,
+                    price_max=price_max,
+                ),
+                min_n_per_group=min_n_per_group,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        live_rows = aggregate(live_req)
+        for r in live_rows:
+            r["origin"] = "live"
+
+        # Backtest side
+        from app.ml.backtest_stats import (
+            aggregate_backtest,
+            BacktestStatsRequest,
+            BacktestStatsFilter,
+        )
+        gb_tuple = tuple(t for t in _csv(group_by) if t != "model")
+        try:
+            bt_req = BacktestStatsRequest(
+                run_id=run_id,
+                filters=BacktestStatsFilter(
+                    market=_csv(market),
+                    sport=_csv(sport),
+                    country=_csv(country),
+                    competition=_csv(competition),
+                    selection=_csv(selection),
+                    edge_min=edge_min,
+                    edge_max=edge_max,
+                    price_min=price_min,
+                    price_max=price_max,
+                    date_from=date_from,
+                    date_to=date_to,
+                ),
+                group_by=gb_tuple,
+                min_n_per_group=min_n_per_group,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        bt_rows = aggregate_backtest(bt_req)
+        mgr = _get_backtest_manager()
+        run = await mgr.get_run(run_id)
+        for r in bt_rows:
+            r["origin"] = "backtest"
+            r["model"] = (run.model + " (backtest)") if run else None
+
+        return {
+            "group_by": list(_csv(group_by)),
+            "filters": {
+                "status": status,
+                "date_from": date_from,
+                "date_to": date_to,
+                "model": list(_csv(model)),
+                "market": list(_csv(market)),
+                "sport": list(_csv(sport)),
+                "country": list(_csv(country)),
+                "competition": list(_csv(competition)),
+                "selection": list(_csv(selection)),
+                "edge_min": edge_min,
+                "edge_max": edge_max,
+                "price_min": price_min,
+                "price_max": price_max,
+            },
+            "rows": live_rows + bt_rows,
+        }
 
     try:
         request = StatsRequest(
