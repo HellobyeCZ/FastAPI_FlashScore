@@ -104,7 +104,9 @@ export function FilterBar({ fields, options }: FilterBarProps) {
               className={SELECT_CLS}
             >
               <option value="">{t("picks.filter.all")}</option>
-              {((options?.[`${field}s` as keyof typeof options] ?? []) as string[]).map((v) => (
+              {(((field === "country"
+                ? options?.countries
+                : options?.[`${field}s` as keyof typeof options]) ?? []) as string[]).map((v) => (
                 <option key={v} value={v}>{v}</option>
               ))}
             </select>
