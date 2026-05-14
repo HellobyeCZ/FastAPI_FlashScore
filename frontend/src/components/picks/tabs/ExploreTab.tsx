@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useLocale } from "@/contexts/LocaleContext";
+import { DataSourcePicker } from "@/components/picks/DataSourcePicker";
+import { usePicksFacets } from "@/hooks/usePicksFacets";
 import {
   fetchStats,
   fetchHistory,
@@ -49,6 +51,10 @@ function fmtPct(v: number | null | undefined): string {
 export function ExploreTab() {
   const { t } = useLocale();
   const searchParams = useSearchParams();
+  const source = (searchParams.get("source") as "live" | "backtest" | "both") ?? "live";
+  const runId = searchParams.get("run_id") ?? undefined;
+  const needsRun = source !== "live" && !runId;
+  const facets = usePicksFacets(source, runId);
   const filters = useMemo(
     () => filtersFromSearchParams(new URLSearchParams(searchParams.toString())),
     [searchParams],
@@ -104,12 +110,11 @@ export function ExploreTab() {
     async function load() {
       try {
         const [hist, byEdge, byPrice, byCompSel] = await Promise.all([
-          // RAW unfiltered history: scatter shows the raw realized-return
-          // point cloud, intentionally not driven by the FilterBar.
-          fetchHistory({ status: "settled", limit: 1000 }),
-          fetchStats(["edge_bucket"], apiFilters),
-          fetchStats(["price_bucket"], apiFilters),
-          fetchStats(["competition", "selection"], apiFilters),
+          // Raw history — unfiltered by FilterBar, but honors the active data source.
+          fetchHistory({ status: "settled", limit: 1000, source, run_id: runId }),
+          fetchStats(["edge_bucket"], apiFilters, source, runId),
+          fetchStats(["price_bucket"], apiFilters, source, runId),
+          fetchStats(["competition", "selection"], apiFilters, source, runId),
         ]);
         if (cancelled) return;
         setHistory(hist.rows);
@@ -140,6 +145,8 @@ export function ExploreTab() {
     apiFilters.edgeMax,
     apiFilters.priceMin,
     apiFilters.priceMax,
+    source,
+    runId,
   ]);
 
   const scatterPoints: ScatterPoint[] = useMemo(() => {
@@ -224,6 +231,22 @@ export function ExploreTab() {
   const toTerminalBuckets = (bs: Bucket[]): TerminalBucket[] =>
     bs.map((b) => ({ label: b.label, value: b.value ?? 0 }));
 
+  if (needsRun) {
+    return (
+      <div className="flex flex-col gap-4">
+        <PageHeader kicker="Picks · explore" />
+        <div className="flex justify-between items-center">
+          <DataSourcePicker />
+        </div>
+        <div className="border border-zinc-700 bg-bg p-4 font-mono text-[12px] text-zinc-400">
+          ▸ no backtest run selected. Open the{" "}
+          <a href="/picks/models" className="text-zinc-200 underline">Models</a> tab
+          to queue or pick a run.
+        </div>
+      </div>
+    );
+  }
+
   if (error) {
     return (
       <div className="flex flex-col gap-4">
@@ -238,6 +261,9 @@ export function ExploreTab() {
   return (
     <div className="flex flex-col gap-4">
       <PageHeader kicker="Picks · explore" />
+      <div className="flex justify-between items-center">
+        <DataSourcePicker />
+      </div>
       <FilterBar
         fields={[
           "date",
@@ -252,6 +278,14 @@ export function ExploreTab() {
           "price",
           "bookmaker",
         ]}
+        options={{
+          models: facets.models,
+          markets: facets.markets,
+          sports: facets.sports,
+          countries: facets.countries,
+          competitions: facets.competitions,
+          selections: facets.selections,
+        }}
       />
 
       <section className="border border-border p-4">
