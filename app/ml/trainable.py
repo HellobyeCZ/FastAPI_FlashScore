@@ -47,7 +47,9 @@ def fit_logistic_at(train_until: str, spec: MarketSpec) -> ModelFn:
         if ts < train_until
     ]
     if len(pre) < 100:
-        # Not enough pre-cutoff data — fit uncalibrated.
+        # Not enough pre-cutoff data for a held-out calib slice — train
+        # uncalibrated on the train portion. (chronological_split discards
+        # post-cutoff rows; the empty calib slice is intentional and unused.)
         split = chronological_split(
             matrix, train_until=train_until, calib_until=train_until
         )
