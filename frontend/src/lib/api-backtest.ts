@@ -48,6 +48,7 @@ export type CreateBacktestRequest = {
   force_bets?: boolean;
   label?: string | null;
   scope?: [string, string][] | null;
+  market_spec?: string | null;
 };
 
 export async function listBacktestRuns(): Promise<BacktestRunSummary[]> {

@@ -796,18 +796,19 @@ async def create_backtest_run(
     body: CreateBacktestRunRequest,
     mgr: BacktestManager = Depends(backtest_manager_dependency),
 ) -> dict:
-    run_id = await mgr.create_run(
-        CreateRunParams(
-            model=body.model,
-            train_until=body.train_until,
-            test_until=body.test_until,
-            min_edge=body.min_edge,
-            kelly_fraction=body.kelly_fraction,
-            force_bets=body.force_bets,
-            label=body.label,
-            scope=body.scope,
-        )
+    params_kwargs = dict(
+        model=body.model,
+        train_until=body.train_until,
+        test_until=body.test_until,
+        min_edge=body.min_edge,
+        kelly_fraction=body.kelly_fraction,
+        force_bets=body.force_bets,
+        label=body.label,
+        scope=body.scope,
     )
+    if body.market_spec is not None:
+        params_kwargs["market_spec"] = body.market_spec
+    run_id = await mgr.create_run(CreateRunParams(**params_kwargs))
     return {"id": run_id}
 
 

@@ -124,6 +124,49 @@ def test_models_endpoint_lists_registry(app_client: TestClient):
     assert "market_implied" in names
 
 
+def test_create_run_accepts_market_spec(app_client: TestClient):
+    """POST body's market_spec is honored and persisted on the run."""
+    resp = app_client.post(
+        "/backtest/runs",
+        json={
+            "model": "market_implied",
+            "train_until": "2024-08-01T00:00:00Z",
+            "market_spec": "football_1x2_ft",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    run_id = resp.json()["id"]
+
+    detail = _wait_completed(app_client, run_id)
+    assert detail["market_spec"] == "football_1x2_ft"
+
+
+def test_create_run_rejects_unknown_market_spec(app_client: TestClient):
+    """A market_spec value that doesn't resolve should surface as a failed run."""
+    import time
+
+    resp = app_client.post(
+        "/backtest/runs",
+        json={
+            "model": "market_implied",
+            "train_until": "2024-08-01T00:00:00Z",
+            "market_spec": "does_not_exist",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    run_id = resp.json()["id"]
+
+    for _ in range(50):
+        r = app_client.get(f"/backtest/runs/{run_id}").json()
+        if r["status"] == "failed":
+            break
+        time.sleep(0.05)
+
+    r = app_client.get(f"/backtest/runs/{run_id}").json()
+    assert r["status"] == "failed"
+    assert "market_spec" in (r["error"] or "").lower()
+
+
 def test_delete_refuses_running_run(app_client: TestClient, monkeypatch):
     """DELETE on a queued/running run returns 409."""
     import time

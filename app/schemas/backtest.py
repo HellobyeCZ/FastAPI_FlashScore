@@ -27,6 +27,7 @@ class CreateBacktestRunRequest(BaseModel):
     force_bets: bool = False
     label: Optional[str] = None
     scope: Optional[List[Tuple[str, str]]] = None
+    market_spec: Optional[str] = None
 
     @field_validator("train_until")
     @classmethod
