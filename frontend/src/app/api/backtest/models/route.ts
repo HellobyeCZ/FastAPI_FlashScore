@@ -8,31 +8,37 @@ function resolveBackendBaseUrl(): string {
   return configured.replace(/\/+$/, "");
 }
 
-export async function GET(request: Request): Promise<NextResponse> {
-  const url = new URL(request.url);
-  const backendUrl = `${resolveBackendBaseUrl()}/picks/history?${url.searchParams.toString()}`;
+export async function GET(_req: Request) {
+  const backendUrl = `${resolveBackendBaseUrl()}/backtest/models`;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
   try {
     const upstreamResponse = await fetch(backendUrl, {
       method: "GET",
-      headers: { Accept: "application/json" },
+      headers: {
+        Accept: "application/json"
+      },
       cache: "no-store",
       signal: controller.signal
     });
 
-    const contentType = upstreamResponse.headers.get("content-type") ?? "application/json";
     const body = await upstreamResponse.text();
-
     return new NextResponse(body, {
       status: upstreamResponse.status,
-      headers: { "content-type": contentType }
+      headers: {
+        "content-type": upstreamResponse.headers.get("content-type") ?? "application/json"
+      }
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to reach picks backend.";
+    const message = error instanceof Error ? error.message : "Failed to reach backtest backend.";
     return NextResponse.json(
-      { error: { code: "picks_backend_unreachable", message } },
+      {
+        error: {
+          code: "backtest_backend_unreachable",
+          message
+        }
+      },
       { status: 502 }
     );
   } finally {

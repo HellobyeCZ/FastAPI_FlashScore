@@ -1,3 +1,4 @@
+import json
 import logging
 import logging.config
 import os
@@ -36,6 +37,18 @@ from app.services.stats_client import (
     StatsAPIError,
     build_match_stats_client,
 )
+from app.services.backtest_manager import BacktestManager, CreateRunParams
+from app.schemas.backtest import (
+    CreateBacktestRunRequest,
+    BacktestRunSummary,
+    BacktestRunDetail,
+    BacktestRunListResponse,
+    BacktestBetDTO,
+    BacktestBetListResponse,
+    ReliabilityBucketDTO,
+)
+from app.ml.models import names as analytic_model_names
+from app.ml.trainable import TRAINABLE
 
 try:
     from opentelemetry import metrics, trace
@@ -312,11 +325,21 @@ def _get_ml_artifacts():
     return load_models()
 
 
+@lru_cache(maxsize=1)
+def _get_backtest_manager() -> BacktestManager:
+    return BacktestManager()
+
+
+def backtest_manager_dependency() -> BacktestManager:
+    return _get_backtest_manager()
+
+
 @app.on_event("startup")
 async def startup_snapshot_store() -> None:
     await _get_snapshot_store().initialize()
     await _get_bulk_scrape_manager().start()
     await _get_live_odds_scheduler().start()
+    await _get_backtest_manager().start()
     # Pre-warm the model artifacts so the first /predict request doesn't
     # pay the load latency. Failing to load is non-fatal — the endpoint
     # returns the available subset.
@@ -330,6 +353,7 @@ async def startup_snapshot_store() -> None:
 async def shutdown_odds_client() -> None:
     await _get_live_odds_scheduler().shutdown()
     await _get_bulk_scrape_manager().shutdown()
+    await _get_backtest_manager().shutdown()
     await _get_odds_client().aclose()
     await _get_match_stats_client().aclose()
     await _get_snapshot_store().aclose()
@@ -728,6 +752,140 @@ async def get_bulk_scrape_job(
 
 
 # ---------------------------------------------------------------------------
+# Backtest routes
+# ---------------------------------------------------------------------------
+
+def _run_row_to_summary(row) -> BacktestRunSummary:
+    return BacktestRunSummary(
+        id=row.id,
+        label=row.label,
+        model=row.model,
+        status=row.status,
+        created_at=row.created_at,
+        train_until=row.train_until,
+        test_until=row.test_until,
+        started_at=row.started_at,
+        finished_at=row.finished_at,
+        error=row.error,
+        test_events=row.test_events,
+        total_bets=row.total_bets,
+        hit_rate=row.hit_rate,
+        roi=row.roi,
+        mean_clv=row.mean_clv,
+        brier=row.brier,
+        log_loss=row.log_loss,
+        max_drawdown=row.max_drawdown,
+        stage=row.stage,
+        market_spec=row.market_spec,
+    )
+
+
+@app.get("/backtest/models")
+async def list_backtest_models() -> dict:
+    items = [
+        {"name": name, "kind": "analytic"} for name in analytic_model_names()
+    ]
+    items.extend(
+        {"name": name, "kind": "trainable"} for name in sorted(TRAINABLE.keys())
+    )
+    return {"items": items}
+
+
+@app.post("/backtest/runs")
+async def create_backtest_run(
+    body: CreateBacktestRunRequest,
+    mgr: BacktestManager = Depends(backtest_manager_dependency),
+) -> dict:
+    params_kwargs = dict(
+        model=body.model,
+        train_until=body.train_until,
+        test_until=body.test_until,
+        min_edge=body.min_edge,
+        kelly_fraction=body.kelly_fraction,
+        force_bets=body.force_bets,
+        label=body.label,
+        scope=body.scope,
+    )
+    if body.market_spec is not None:
+        params_kwargs["market_spec"] = body.market_spec
+    run_id = await mgr.create_run(CreateRunParams(**params_kwargs))
+    return {"id": run_id}
+
+
+@app.get("/backtest/runs", response_model=BacktestRunListResponse)
+async def list_backtest_runs(
+    limit: int = 50,
+    mgr: BacktestManager = Depends(backtest_manager_dependency),
+) -> BacktestRunListResponse:
+    rows = await mgr.list_runs(limit=limit)
+    return BacktestRunListResponse(items=[_run_row_to_summary(r) for r in rows])
+
+
+@app.get("/backtest/runs/{run_id}", response_model=BacktestRunDetail)
+async def get_backtest_run(
+    run_id: str,
+    mgr: BacktestManager = Depends(backtest_manager_dependency),
+) -> BacktestRunDetail:
+    row = await mgr.get_run(run_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    summary = _run_row_to_summary(row).model_dump()
+    reliability = []
+    if row.reliability_json:
+        reliability = [ReliabilityBucketDTO(**b) for b in json.loads(row.reliability_json)]
+    scope = [tuple(x) for x in json.loads(row.scope_json)]
+    return BacktestRunDetail(
+        **summary,
+        min_edge=row.min_edge,
+        kelly_fraction=row.kelly_fraction,
+        force_bets=bool(row.force_bets),
+        scope=scope,
+        reliability_buckets=reliability,
+    )
+
+
+@app.get("/backtest/runs/{run_id}/bets", response_model=BacktestBetListResponse)
+async def list_backtest_bets(
+    run_id: str,
+    offset: int = 0,
+    limit: int = 200,
+    mgr: BacktestManager = Depends(backtest_manager_dependency),
+) -> BacktestBetListResponse:
+    rows, total = await mgr.list_bets(run_id, offset=offset, limit=limit)
+    return BacktestBetListResponse(
+        items=[BacktestBetDTO(
+            run_id=r.run_id, event_id=r.event_id, bet_ts=r.bet_ts,
+            kickoff_ts=r.kickoff_ts, market=r.market, selection=r.selection,
+            price_taken=r.price_taken, closing_price=r.closing_price,
+            model_prob=r.model_prob, implied_prob=r.implied_prob,
+            devigged_prob=r.devigged_prob, edge=r.edge,
+            stake_kelly_fraction=r.stake_kelly_fraction,
+            result=r.result, pnl=r.pnl, clv=r.clv,
+        ) for r in rows],
+        total=total,
+        offset=offset,
+        limit=limit,
+    )
+
+
+@app.delete("/backtest/runs/{run_id}")
+async def delete_backtest_run(
+    run_id: str,
+    mgr: BacktestManager = Depends(backtest_manager_dependency),
+) -> dict:
+    row = await mgr.get_run(run_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    if row.status in ("queued", "running"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"cannot delete a run with status={row.status!r}; cancel first",
+        )
+    await mgr.delete_run(run_id)
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
 # One-button refresh: scrape upcoming → settle pending → predict + record
 # ---------------------------------------------------------------------------
 
@@ -864,8 +1022,42 @@ async def picks_upcoming(
 async def picks_history(
     status: Optional[str] = Query(default=None, description="pending|settled|voided"),
     limit: int = Query(default=200, ge=1, le=5000),
+    source: str = Query(default="live"),
+    run_id: Optional[str] = Query(default=None),
 ) -> dict:
-    """Return paper_bets rows for the dashboard. Filterable by status."""
+    """Return paper_bets rows for the dashboard. Filterable by status.
+
+    Pass ``source=backtest`` and ``run_id=<id>`` to read from a backtest run
+    instead of live paper bets. ``source=both`` is reserved for Task 10.
+    """
+    if source in ("backtest", "both"):
+        if not run_id:
+            raise HTTPException(status_code=400, detail="run_id required when source=backtest|both")
+        mgr = _get_backtest_manager()
+        run = await mgr.get_run(run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail=f"backtest run {run_id!r} not found")
+        bets, _total = await mgr.list_bets(run_id, offset=0, limit=limit)
+        rows = [
+            {
+                "id": f"{b.event_id}_{b.market}_{b.selection}",
+                "event_id": b.event_id,
+                "market": b.market,
+                "selection": b.selection,
+                "recommended_at": b.bet_ts,
+                "price_at_recommendation": b.price_taken,
+                "model_prob": b.model_prob,
+                "edge": b.edge,
+                "result": b.result,
+                "pnl": b.pnl,
+                "clv": b.clv,
+                "status": "settled",
+                "model": run.model,
+            }
+            for b in bets
+        ]
+        return {"count": len(rows), "rows": rows}
+
     from app.ml.paper_trade import fetch_paper_bets
 
     rows = fetch_paper_bets(status=status, limit=limit)
@@ -899,15 +1091,164 @@ async def picks_stats(
     price_min: Optional[float] = Query(default=None),
     price_max: Optional[float] = Query(default=None),
     min_n_per_group: int = Query(default=1, ge=1),
+    source: str = Query(default="live"),
+    run_id: Optional[str] = Query(default=None),
 ) -> dict:
     """Aggregation over paper_bets. ``group_by`` is a comma-separated
-    list of dimensions; multi-value filters are comma-separated too."""
-    from app.ml.paper_trade_stats import StatsFilter, StatsRequest, aggregate
+    list of dimensions; multi-value filters are comma-separated too.
 
+    Pass ``source=backtest`` and ``run_id=<id>`` to aggregate over a backtest
+    run instead of live paper bets. ``source=both`` is reserved for Task 10.
+    """
     def _csv(value: Optional[str]) -> tuple:
         if not value:
             return ()
         return tuple(v.strip() for v in value.split(",") if v.strip())
+
+    if source == "backtest":
+        if not run_id:
+            raise HTTPException(status_code=400, detail="run_id required when source=backtest")
+        from app.ml.backtest_stats import (
+            aggregate_backtest,
+            BacktestStatsRequest,
+            BacktestStatsFilter,
+        )
+        gb_tuple = tuple(t for t in _csv(group_by) if t != "model")
+        try:
+            bt_req = BacktestStatsRequest(
+                run_id=run_id,
+                filters=BacktestStatsFilter(
+                    market=_csv(market),
+                    sport=_csv(sport),
+                    country=_csv(country),
+                    competition=_csv(competition),
+                    selection=_csv(selection),
+                    edge_min=edge_min,
+                    edge_max=edge_max,
+                    price_min=price_min,
+                    price_max=price_max,
+                    date_from=date_from,
+                    date_to=date_to,
+                ),
+                group_by=gb_tuple,
+                min_n_per_group=min_n_per_group,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        rows = aggregate_backtest(bt_req)
+        # Stamp model so the leaderboard table can label rows.
+        mgr = _get_backtest_manager()
+        run = await mgr.get_run(run_id)
+        if run is not None:
+            for r in rows:
+                r["model"] = run.model
+        return {
+            "group_by": list(bt_req.group_by),
+            "filters": {
+                "status": "settled",
+                "date_from": date_from,
+                "date_to": date_to,
+                "model": [],
+                "market": list(bt_req.filters.market),
+                "sport": list(bt_req.filters.sport),
+                "country": list(bt_req.filters.country),
+                "competition": list(bt_req.filters.competition),
+                "selection": list(bt_req.filters.selection),
+                "edge_min": edge_min,
+                "edge_max": edge_max,
+                "price_min": price_min,
+                "price_max": price_max,
+            },
+            "rows": rows,
+        }
+
+    from app.ml.paper_trade_stats import StatsFilter, StatsRequest, aggregate
+
+    if source == "both":
+        if not run_id:
+            raise HTTPException(status_code=400, detail="run_id required when source=both")
+
+        # Live side
+        try:
+            live_req = StatsRequest(
+                group_by=_csv(group_by),
+                filters=StatsFilter(
+                    status=status,
+                    date_from=date_from,
+                    date_to=date_to,
+                    model=_csv(model),
+                    market=_csv(market),
+                    sport=_csv(sport),
+                    country=_csv(country),
+                    competition=_csv(competition),
+                    selection=_csv(selection),
+                    edge_min=edge_min,
+                    edge_max=edge_max,
+                    price_min=price_min,
+                    price_max=price_max,
+                ),
+                min_n_per_group=min_n_per_group,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        live_rows = aggregate(live_req)
+        for r in live_rows:
+            r["origin"] = "live"
+
+        # Backtest side
+        from app.ml.backtest_stats import (
+            aggregate_backtest,
+            BacktestStatsRequest,
+            BacktestStatsFilter,
+        )
+        gb_tuple = tuple(t for t in _csv(group_by) if t != "model")
+        try:
+            bt_req = BacktestStatsRequest(
+                run_id=run_id,
+                filters=BacktestStatsFilter(
+                    market=_csv(market),
+                    sport=_csv(sport),
+                    country=_csv(country),
+                    competition=_csv(competition),
+                    selection=_csv(selection),
+                    edge_min=edge_min,
+                    edge_max=edge_max,
+                    price_min=price_min,
+                    price_max=price_max,
+                    date_from=date_from,
+                    date_to=date_to,
+                ),
+                group_by=gb_tuple,
+                min_n_per_group=min_n_per_group,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        bt_rows = aggregate_backtest(bt_req)
+        mgr = _get_backtest_manager()
+        run = await mgr.get_run(run_id)
+        for r in bt_rows:
+            r["origin"] = "backtest"
+            r["model"] = (run.model + " (backtest)") if run else None
+
+        return {
+            "group_by": list(_csv(group_by)),
+            "filters": {
+                "status": status,
+                "date_from": date_from,
+                "date_to": date_to,
+                "model": list(_csv(model)),
+                "market": list(_csv(market)),
+                "sport": list(_csv(sport)),
+                "country": list(_csv(country)),
+                "competition": list(_csv(competition)),
+                "selection": list(_csv(selection)),
+                "edge_min": edge_min,
+                "edge_max": edge_max,
+                "price_min": price_min,
+                "price_max": price_max,
+            },
+            "rows": live_rows + bt_rows,
+        }
 
     try:
         request = StatsRequest(
@@ -975,6 +1316,45 @@ async def picks_stats_calibration(
     )
     buckets = calibration_buckets(model=model, filters=filters, n_buckets=n_buckets)
     return {"model": model, "n_buckets": n_buckets, "buckets": buckets}
+
+
+from app.ml.picks_facets import (  # noqa: E402
+    FacetsResponse,
+    facets_for_live,
+    facets_for_backtest,
+    facets_for_both,
+)
+
+
+@app.get("/picks/facets")
+async def picks_facets(source: str = "live", run_id: Optional[str] = None) -> dict:
+    """Return distinct filter-dimension values for the picks filter bar.
+
+    ``source`` controls which data is scanned:
+    - ``live`` — ``paper_bets`` (default)
+    - ``backtest`` — ``backtest_bets`` for the given ``run_id``
+    - ``both`` — union of live + backtest (``run_id`` required)
+    """
+    if source == "live":
+        f = facets_for_live()
+    elif source == "backtest":
+        if not run_id:
+            raise HTTPException(status_code=400, detail="run_id required when source=backtest")
+        f = facets_for_backtest(run_id)
+    elif source == "both":
+        if not run_id:
+            raise HTTPException(status_code=400, detail="run_id required when source=both")
+        f = facets_for_both(run_id)
+    else:
+        raise HTTPException(status_code=400, detail=f"unknown source={source!r}")
+    return {
+        "models": f.models,
+        "markets": f.markets,
+        "sports": f.sports,
+        "countries": f.countries,
+        "competitions": f.competitions,
+        "selections": f.selections,
+    }
 
 
 # You can include routers here

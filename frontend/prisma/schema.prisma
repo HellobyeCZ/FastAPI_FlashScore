@@ -154,3 +154,60 @@ model MatchEventSummary {
 
   @@map("match_event_summaries")
 }
+
+model BacktestRun {
+  id              String   @id
+  label           String
+  model           String
+  trainUntil      String   @map("train_until")
+  testUntil       String?  @map("test_until")
+  minEdge         Float    @map("min_edge")
+  kellyFraction   Float    @map("kelly_fraction")
+  forceBets       Int      @map("force_bets")
+  scopeJson       String   @map("scope_json")
+  status          String
+  createdAt       String   @map("created_at")
+  startedAt       String?  @map("started_at")
+  finishedAt      String?  @map("finished_at")
+  error           String?
+  testEvents      Int?     @map("test_events")
+  totalBets       Int?     @map("total_bets")
+  hitRate         Float?   @map("hit_rate")
+  roi             Float?
+  meanClv         Float?   @map("mean_clv")
+  brier           Float?
+  logLoss         Float?   @map("log_loss")
+  maxDrawdown     Float?   @map("max_drawdown")
+  reliabilityJson String?  @map("reliability_json")
+  stage           String?
+  marketSpec      String   @default("football_1x2_ft") @map("market_spec")
+  bets            BacktestBet[]
+
+  @@index([status, createdAt(sort: Desc)], map: "idx_backtest_runs_status_time")
+  @@map("backtest_runs")
+}
+
+model BacktestBet {
+  runId               String  @map("run_id")
+  eventId             String  @map("event_id")
+  betTs               String  @map("bet_ts")
+  kickoffTs           String  @map("kickoff_ts")
+  market              String
+  selection           String
+  priceTaken          Float   @map("price_taken")
+  closingPrice        Float   @map("closing_price")
+  modelProb           Float   @map("model_prob")
+  impliedProb         Float   @map("implied_prob")
+  deviggedProb        Float   @map("devigged_prob")
+  edge                Float
+  stakeKellyFraction  Float   @map("stake_kelly_fraction")
+  result              Float
+  pnl                 Float
+  clv                 Float?
+  run                 BacktestRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@id([runId, eventId, market, selection])
+  @@index([runId], map: "idx_backtest_bets_run")
+  @@index([eventId], map: "idx_backtest_bets_event")
+  @@map("backtest_bets")
+}

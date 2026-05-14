@@ -32,6 +32,7 @@ from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Seque
 from app.ml import db as ml_db
 from app.ml.features import CLOSING_LINE_BUFFER, get_features
 from app.ml.labels import FOOTBALL_PHASE1_SCOPE
+from app.ml.market_spec import FOOTBALL_1X2_FT, MarketSpec
 from app.ml.models import ModelFn, get as get_model
 
 
@@ -250,6 +251,7 @@ def run_backtest(
     min_edge: float = 0.02,
     kelly_fraction: float = 0.25,
     force_bets: bool = False,
+    market_spec: MarketSpec = FOOTBALL_1X2_FT,
 ) -> BacktestReport:
     """Run a walk-forward backtest. ``model`` is either a registered name
     or a callable. ``force_bets=True`` disables the edge gate — used by
@@ -285,6 +287,7 @@ def run_backtest(
             if label_row is None:
                 continue
             outcome = label_row["outcome_1x2"]
+            results = market_spec.label_fn({"outcome_1x2": outcome})
 
             market_ctx = {
                 "implied_prob_home": market.implied["home"],
@@ -298,10 +301,10 @@ def run_backtest(
                 probs = model_fn(features, market_ctx)
             except Exception:
                 continue
-            if not _valid_prob_dict(probs):
+            if not _valid_prob_dict(probs, market_spec.selections):
                 continue
 
-            for sel in SELECTIONS:
+            for sel in market_spec.selections:
                 model_p = float(probs[sel])
                 price = market.prices[sel]
                 implied = market.implied[sel]
@@ -314,7 +317,7 @@ def run_backtest(
                     continue
                 if force_bets and stake <= 0:
                     stake = 1.0  # a unit stake to exercise the metrics path
-                result = 1.0 if outcome == sel else 0.0
+                result = results[sel]
                 pnl = stake * (price - 1.0) if result == 1.0 else -stake
                 pnl_running += pnl
                 total_stake += stake
@@ -376,8 +379,8 @@ def _parse_iso(ts: str) -> datetime:
     return dt
 
 
-def _valid_prob_dict(probs: Mapping[str, float]) -> bool:
-    if set(probs.keys()) != set(SELECTIONS):
+def _valid_prob_dict(probs: Mapping[str, float], selections: Sequence[str] = SELECTIONS) -> bool:
+    if set(probs.keys()) != set(selections):
         return False
     s = sum(probs.values())
     return 0.99 <= s <= 1.01
