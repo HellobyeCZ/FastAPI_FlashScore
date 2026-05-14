@@ -35,7 +35,8 @@ def conn(tmp_path: Path) -> Iterator[sqlite3.Connection]:
             started_at TEXT, finished_at TEXT, error TEXT,
             test_events INTEGER, total_bets INTEGER, hit_rate REAL,
             roi REAL, mean_clv REAL, brier REAL, log_loss REAL,
-            max_drawdown REAL, reliability_json TEXT
+            max_drawdown REAL, reliability_json TEXT,
+            stage TEXT, market_spec TEXT NOT NULL DEFAULT 'football_1x2_ft'
         );
         CREATE TABLE backtest_bets (
             run_id TEXT, event_id TEXT, bet_ts TEXT, kickoff_ts TEXT,
@@ -139,3 +140,13 @@ def test_delete_run_cascades(conn):
     delete_run(conn, "r1")
     assert get_run(conn, "r1") is None
     assert list_bets(conn, "r1", offset=0, limit=10) == []
+
+
+def test_run_row_round_trips_stage_and_market_spec(conn):
+    """RunRow defaults: stage=None, market_spec='football_1x2_ft'."""
+    row = _run()  # the helper defined earlier in the file
+    insert_run(conn, row)
+    fetched = get_run(conn, "r1")
+    assert fetched is not None
+    assert fetched.stage is None
+    assert fetched.market_spec == "football_1x2_ft"

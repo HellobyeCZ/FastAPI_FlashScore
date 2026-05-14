@@ -1560,6 +1560,15 @@ class SnapshotStore:
             "CREATE INDEX IF NOT EXISTS idx_backtest_bets_event "
             "ON backtest_bets(event_id)"
         )
+        existing_cols = {
+            row[1] for row in connection.execute("PRAGMA table_info(backtest_runs)").fetchall()
+        }
+        if "stage" not in existing_cols:
+            connection.execute("ALTER TABLE backtest_runs ADD COLUMN stage TEXT")
+        if "market_spec" not in existing_cols:
+            connection.execute(
+                "ALTER TABLE backtest_runs ADD COLUMN market_spec TEXT NOT NULL DEFAULT 'football_1x2_ft'"
+            )
         connection.commit()
 
     @staticmethod

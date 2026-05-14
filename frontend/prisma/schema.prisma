@@ -179,6 +179,8 @@ model BacktestRun {
   logLoss         Float?   @map("log_loss")
   maxDrawdown     Float?   @map("max_drawdown")
   reliabilityJson String?  @map("reliability_json")
+  stage           String?
+  marketSpec      String   @default("football_1x2_ft") @map("market_spec")
   bets            BacktestBet[]
 
   @@index([status, createdAt(sort: Desc)], map: "idx_backtest_runs_status_time")
