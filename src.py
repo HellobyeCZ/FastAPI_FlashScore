@@ -1,3 +1,4 @@
+import json
 import logging
 import logging.config
 import os
@@ -36,6 +37,17 @@ from app.services.stats_client import (
     StatsAPIError,
     build_match_stats_client,
 )
+from app.services.backtest_manager import BacktestManager, CreateRunParams
+from app.schemas.backtest import (
+    CreateBacktestRunRequest,
+    BacktestRunSummary,
+    BacktestRunDetail,
+    BacktestRunListResponse,
+    BacktestBetDTO,
+    BacktestBetListResponse,
+    ReliabilityBucketDTO,
+)
+from app.ml.models import names as model_names
 
 try:
     from opentelemetry import metrics, trace
@@ -312,11 +324,21 @@ def _get_ml_artifacts():
     return load_models()
 
 
+@lru_cache(maxsize=1)
+def _get_backtest_manager() -> BacktestManager:
+    return BacktestManager()
+
+
+def backtest_manager_dependency() -> BacktestManager:
+    return _get_backtest_manager()
+
+
 @app.on_event("startup")
 async def startup_snapshot_store() -> None:
     await _get_snapshot_store().initialize()
     await _get_bulk_scrape_manager().start()
     await _get_live_odds_scheduler().start()
+    await _get_backtest_manager().start()
     # Pre-warm the model artifacts so the first /predict request doesn't
     # pay the load latency. Failing to load is non-fatal — the endpoint
     # returns the available subset.
@@ -330,6 +352,7 @@ async def startup_snapshot_store() -> None:
 async def shutdown_odds_client() -> None:
     await _get_live_odds_scheduler().shutdown()
     await _get_bulk_scrape_manager().shutdown()
+    await _get_backtest_manager().shutdown()
     await _get_odds_client().aclose()
     await _get_match_stats_client().aclose()
     await _get_snapshot_store().aclose()
@@ -725,6 +748,126 @@ async def get_bulk_scrape_job(
         job["events"] = []
 
     return BulkScrapeJobDetail(**job)
+
+
+# ---------------------------------------------------------------------------
+# Backtest routes
+# ---------------------------------------------------------------------------
+
+def _run_row_to_summary(row) -> BacktestRunSummary:
+    return BacktestRunSummary(
+        id=row.id,
+        label=row.label,
+        model=row.model,
+        status=row.status,
+        created_at=row.created_at,
+        train_until=row.train_until,
+        test_until=row.test_until,
+        started_at=row.started_at,
+        finished_at=row.finished_at,
+        error=row.error,
+        test_events=row.test_events,
+        total_bets=row.total_bets,
+        hit_rate=row.hit_rate,
+        roi=row.roi,
+        mean_clv=row.mean_clv,
+        brier=row.brier,
+        log_loss=row.log_loss,
+        max_drawdown=row.max_drawdown,
+    )
+
+
+@app.get("/backtest/models")
+async def list_backtest_models() -> dict:
+    return {"names": list(model_names())}
+
+
+@app.post("/backtest/runs")
+async def create_backtest_run(
+    body: CreateBacktestRunRequest,
+    mgr: BacktestManager = Depends(backtest_manager_dependency),
+) -> dict:
+    run_id = await mgr.create_run(
+        CreateRunParams(
+            model=body.model,
+            train_until=body.train_until,
+            test_until=body.test_until,
+            min_edge=body.min_edge,
+            kelly_fraction=body.kelly_fraction,
+            force_bets=body.force_bets,
+            label=body.label,
+            scope=body.scope,
+        )
+    )
+    return {"id": run_id}
+
+
+@app.get("/backtest/runs", response_model=BacktestRunListResponse)
+async def list_backtest_runs(
+    limit: int = 50,
+    mgr: BacktestManager = Depends(backtest_manager_dependency),
+) -> BacktestRunListResponse:
+    rows = await mgr.list_runs(limit=limit)
+    return BacktestRunListResponse(items=[_run_row_to_summary(r) for r in rows])
+
+
+@app.get("/backtest/runs/{run_id}", response_model=BacktestRunDetail)
+async def get_backtest_run(
+    run_id: str,
+    mgr: BacktestManager = Depends(backtest_manager_dependency),
+) -> BacktestRunDetail:
+    row = await mgr.get_run(run_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    summary = _run_row_to_summary(row).model_dump()
+    reliability = []
+    if row.reliability_json:
+        reliability = [ReliabilityBucketDTO(**b) for b in json.loads(row.reliability_json)]
+    scope = [tuple(x) for x in json.loads(row.scope_json)]
+    return BacktestRunDetail(
+        **summary,
+        min_edge=row.min_edge,
+        kelly_fraction=row.kelly_fraction,
+        force_bets=bool(row.force_bets),
+        scope=scope,
+        reliability_buckets=reliability,
+    )
+
+
+@app.get("/backtest/runs/{run_id}/bets", response_model=BacktestBetListResponse)
+async def list_backtest_bets(
+    run_id: str,
+    offset: int = 0,
+    limit: int = 200,
+    mgr: BacktestManager = Depends(backtest_manager_dependency),
+) -> BacktestBetListResponse:
+    rows, total = await mgr.list_bets(run_id, offset=offset, limit=limit)
+    return BacktestBetListResponse(
+        items=[BacktestBetDTO(
+            run_id=r.run_id, event_id=r.event_id, bet_ts=r.bet_ts,
+            kickoff_ts=r.kickoff_ts, market=r.market, selection=r.selection,
+            price_taken=r.price_taken, closing_price=r.closing_price,
+            model_prob=r.model_prob, implied_prob=r.implied_prob,
+            devigged_prob=r.devigged_prob, edge=r.edge,
+            stake_kelly_fraction=r.stake_kelly_fraction,
+            result=r.result, pnl=r.pnl, clv=r.clv,
+        ) for r in rows],
+        total=total,
+        offset=offset,
+        limit=limit,
+    )
+
+
+@app.delete("/backtest/runs/{run_id}")
+async def delete_backtest_run(
+    run_id: str,
+    mgr: BacktestManager = Depends(backtest_manager_dependency),
+) -> dict:
+    row = await mgr.get_run(run_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    await mgr.delete_run(run_id)
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------
