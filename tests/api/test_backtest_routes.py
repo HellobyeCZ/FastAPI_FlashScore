@@ -117,7 +117,22 @@ def test_create_rejects_bad_payload(app_client: TestClient):
 
 
 def test_models_endpoint_lists_registry(app_client: TestClient):
+    """Names appear in items[]."""
     resp = app_client.get("/backtest/models")
     assert resp.status_code == 200
-    names = resp.json()["names"]
+    names = [it["name"] for it in resp.json()["items"]]
     assert "market_implied" in names
+
+
+def test_models_endpoint_returns_items_with_kind(app_client: TestClient):
+    """Items include analytic and trainable kinds with correct labels."""
+    resp = app_client.get("/backtest/models")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "items" in body
+    kinds_by_name = {it["name"]: it["kind"] for it in body["items"]}
+    # Analytic baselines
+    assert kinds_by_name.get("market_implied") == "analytic"
+    # Trainable
+    assert kinds_by_name.get("logistic") == "trainable"
+    assert kinds_by_name.get("dixon_coles") == "trainable"

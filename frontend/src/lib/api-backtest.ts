@@ -80,5 +80,6 @@ export async function deleteBacktestRun(id: string): Promise<void> {
 export async function listBacktestModels(): Promise<string[]> {
   const r = await fetch("/api/backtest/models", { cache: "no-store" });
   if (!r.ok) throw new Error(await r.text());
-  return (await r.json()).names;
+  const body = await r.json();
+  return (body.items as Array<{ name: string; kind: string }>).map((x) => x.name);
 }

@@ -47,7 +47,8 @@ from app.schemas.backtest import (
     BacktestBetListResponse,
     ReliabilityBucketDTO,
 )
-from app.ml.models import names as model_names
+from app.ml.models import names as analytic_model_names
+from app.ml.trainable import TRAINABLE
 
 try:
     from opentelemetry import metrics, trace
@@ -781,7 +782,13 @@ def _run_row_to_summary(row) -> BacktestRunSummary:
 
 @app.get("/backtest/models")
 async def list_backtest_models() -> dict:
-    return {"names": list(model_names())}
+    items = [
+        {"name": name, "kind": "analytic"} for name in analytic_model_names()
+    ]
+    items.extend(
+        {"name": name, "kind": "trainable"} for name in sorted(TRAINABLE.keys())
+    )
+    return {"items": items}
 
 
 @app.post("/backtest/runs")
