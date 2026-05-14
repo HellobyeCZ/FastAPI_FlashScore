@@ -1007,8 +1007,44 @@ async def picks_upcoming(
 async def picks_history(
     status: Optional[str] = Query(default=None, description="pending|settled|voided"),
     limit: int = Query(default=200, ge=1, le=5000),
+    source: str = Query(default="live"),
+    run_id: Optional[str] = Query(default=None),
 ) -> dict:
-    """Return paper_bets rows for the dashboard. Filterable by status."""
+    """Return paper_bets rows for the dashboard. Filterable by status.
+
+    Pass ``source=backtest`` and ``run_id=<id>`` to read from a backtest run
+    instead of live paper bets. ``source=both`` is reserved for Task 10.
+    """
+    if source == "backtest":
+        if not run_id:
+            raise HTTPException(status_code=400, detail="run_id required when source=backtest")
+        mgr = _get_backtest_manager()
+        run = await mgr.get_run(run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail=f"backtest run {run_id!r} not found")
+        bets, _total = await mgr.list_bets(run_id, offset=0, limit=limit)
+        rows = [
+            {
+                "event_id": b.event_id,
+                "market": b.market,
+                "selection": b.selection,
+                "recommended_at": b.bet_ts,
+                "price_at_recommendation": b.price_taken,
+                "model_prob": b.model_prob,
+                "edge": b.edge,
+                "result": b.result,
+                "pnl": b.pnl,
+                "clv": b.clv,
+                "status": "settled",
+                "model": run.model,
+            }
+            for b in bets
+        ]
+        return {"count": len(rows), "rows": rows}
+
+    if source == "both":
+        raise HTTPException(status_code=400, detail="source=both not implemented in this task")
+
     from app.ml.paper_trade import fetch_paper_bets
 
     rows = fetch_paper_bets(status=status, limit=limit)
@@ -1042,15 +1078,81 @@ async def picks_stats(
     price_min: Optional[float] = Query(default=None),
     price_max: Optional[float] = Query(default=None),
     min_n_per_group: int = Query(default=1, ge=1),
+    source: str = Query(default="live"),
+    run_id: Optional[str] = Query(default=None),
 ) -> dict:
     """Aggregation over paper_bets. ``group_by`` is a comma-separated
-    list of dimensions; multi-value filters are comma-separated too."""
-    from app.ml.paper_trade_stats import StatsFilter, StatsRequest, aggregate
+    list of dimensions; multi-value filters are comma-separated too.
 
+    Pass ``source=backtest`` and ``run_id=<id>`` to aggregate over a backtest
+    run instead of live paper bets. ``source=both`` is reserved for Task 10.
+    """
     def _csv(value: Optional[str]) -> tuple:
         if not value:
             return ()
         return tuple(v.strip() for v in value.split(",") if v.strip())
+
+    if source == "backtest":
+        if not run_id:
+            raise HTTPException(status_code=400, detail="run_id required when source=backtest")
+        from app.ml.backtest_stats import (
+            aggregate_backtest,
+            BacktestStatsRequest,
+            BacktestStatsFilter,
+        )
+        gb_tuple = tuple(t for t in _csv(group_by) if t != "model")
+        try:
+            bt_req = BacktestStatsRequest(
+                run_id=run_id,
+                filters=BacktestStatsFilter(
+                    market=_csv(market),
+                    sport=_csv(sport),
+                    country=_csv(country),
+                    competition=_csv(competition),
+                    selection=_csv(selection),
+                    edge_min=edge_min,
+                    edge_max=edge_max,
+                    price_min=price_min,
+                    price_max=price_max,
+                    date_from=date_from,
+                    date_to=date_to,
+                ),
+                group_by=gb_tuple,
+                min_n_per_group=min_n_per_group,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        rows = aggregate_backtest(bt_req)
+        # Stamp model so the leaderboard table can label rows.
+        mgr = _get_backtest_manager()
+        run = await mgr.get_run(run_id)
+        if run is not None:
+            for r in rows:
+                r["model"] = run.model
+        return {
+            "group_by": list(bt_req.group_by),
+            "filters": {
+                "status": "settled",
+                "date_from": date_from,
+                "date_to": date_to,
+                "model": [],
+                "market": list(bt_req.filters.market),
+                "sport": list(bt_req.filters.sport),
+                "country": list(bt_req.filters.country),
+                "competition": list(bt_req.filters.competition),
+                "selection": list(bt_req.filters.selection),
+                "edge_min": edge_min,
+                "edge_max": edge_max,
+                "price_min": price_min,
+                "price_max": price_max,
+            },
+            "rows": rows,
+        }
+
+    if source == "both":
+        raise HTTPException(status_code=400, detail="source=both not implemented in this task")
+
+    from app.ml.paper_trade_stats import StatsFilter, StatsRequest, aggregate
 
     try:
         request = StatsRequest(
