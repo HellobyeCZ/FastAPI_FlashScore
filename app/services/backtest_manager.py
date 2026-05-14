@@ -39,7 +39,6 @@ from app.ml.backtest_storage import (
 )
 from app.ml.labels import FOOTBALL_PHASE1_SCOPE
 from app.ml.market_spec import get_spec
-from app.ml.models import get as get_model
 from app.ml.trainable import TRAINABLE, resolve_model_for_backtest
 
 logger = logging.getLogger(__name__)
