@@ -19,6 +19,8 @@ export type BacktestRunSummary = {
   brier: number | null;
   log_loss: number | null;
   max_drawdown: number | null;
+  stage: string | null;
+  market_spec: string;
 };
 
 export type ReliabilityBucket = {

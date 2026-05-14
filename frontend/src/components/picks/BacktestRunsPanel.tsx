@@ -69,7 +69,10 @@ export function BacktestRunsPanel({ onSelect }: { onSelect: (id: string) => void
                     {r.label}
                   </button>
                 </td>
-                <td align="center">{r.status}</td>
+                <td align="center">
+                  {r.status}
+                  {r.stage ? <span className="text-zinc-500"> · {r.stage}</span> : null}
+                </td>
                 <td align="right">{r.total_bets ?? "—"}</td>
                 <td align="right">
                   {r.roi !== null ? `${(r.roi * 100).toFixed(1)}%` : "—"}

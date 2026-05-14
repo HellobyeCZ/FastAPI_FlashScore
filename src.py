@@ -774,6 +774,8 @@ def _run_row_to_summary(row) -> BacktestRunSummary:
         brier=row.brier,
         log_loss=row.log_loss,
         max_drawdown=row.max_drawdown,
+        stage=row.stage,
+        market_spec=row.market_spec,
     )
 
 

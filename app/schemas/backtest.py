@@ -60,6 +60,8 @@ class BacktestRunSummary(BaseModel):
     brier: Optional[float] = None
     log_loss: Optional[float] = None
     max_drawdown: Optional[float] = None
+    stage: Optional[str] = None
+    market_spec: str = "football_1x2_ft"
 
 
 class ReliabilityBucketDTO(BaseModel):
