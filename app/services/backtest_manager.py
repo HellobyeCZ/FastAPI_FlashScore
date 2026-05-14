@@ -62,6 +62,11 @@ def _now_iso() -> str:
 
 
 def _connect() -> sqlite3.Connection:
+    # Pydantic v1/v2 quirk: get_settings().storage_db_path may return a
+    # FieldInfo wrapper instead of a resolved string. We fall back to the
+    # raw env var first (which storage.py:build_snapshot_store also does)
+    # and only consult settings for the default. This keeps the manager
+    # and storage layer in agreement on path resolution.
     settings = get_settings()
     db_path = os.environ.get(
         "APP_STORAGE_DB_PATH",
