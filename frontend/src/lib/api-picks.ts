@@ -57,7 +57,7 @@ export type CalibrationResponse = {
 };
 
 export type HistoryRow = {
-  id: number;
+  id: number | string;
   event_id: string;
   model: string;
   market: string;

@@ -1015,9 +1015,9 @@ async def picks_history(
     Pass ``source=backtest`` and ``run_id=<id>`` to read from a backtest run
     instead of live paper bets. ``source=both`` is reserved for Task 10.
     """
-    if source == "backtest":
+    if source in ("backtest", "both"):
         if not run_id:
-            raise HTTPException(status_code=400, detail="run_id required when source=backtest")
+            raise HTTPException(status_code=400, detail="run_id required when source=backtest|both")
         mgr = _get_backtest_manager()
         run = await mgr.get_run(run_id)
         if run is None:
@@ -1025,6 +1025,7 @@ async def picks_history(
         bets, _total = await mgr.list_bets(run_id, offset=0, limit=limit)
         rows = [
             {
+                "id": f"{b.event_id}_{b.market}_{b.selection}",
                 "event_id": b.event_id,
                 "market": b.market,
                 "selection": b.selection,
@@ -1041,9 +1042,6 @@ async def picks_history(
             for b in bets
         ]
         return {"count": len(rows), "rows": rows}
-
-    if source == "both":
-        raise HTTPException(status_code=400, detail="source=both not implemented in this task")
 
     from app.ml.paper_trade import fetch_paper_bets
 

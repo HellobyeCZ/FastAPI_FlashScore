@@ -10,15 +10,7 @@ function resolveBackendBaseUrl(): string {
 
 export async function GET(request: Request): Promise<NextResponse> {
   const url = new URL(request.url);
-  const status = url.searchParams.get("status");
-  const limit = url.searchParams.get("limit") ?? "200";
-
-  const params = new URLSearchParams({ limit });
-  if (status) {
-    params.set("status", status);
-  }
-
-  const backendUrl = `${resolveBackendBaseUrl()}/picks/history?${params.toString()}`;
+  const backendUrl = `${resolveBackendBaseUrl()}/picks/history?${url.searchParams.toString()}`;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 

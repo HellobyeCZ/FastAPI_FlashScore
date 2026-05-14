@@ -139,3 +139,32 @@ def test_stats_source_both_unions_with_origin(client: TestClient):
     rows = resp.json()["rows"]
     origins = {r.get("origin") for r in rows}
     assert origins == {"live", "backtest"}
+
+
+def test_history_source_backtest_returns_rows(client: TestClient):
+    """GET /picks/history?source=backtest&run_id=r1 returns settled backtest rows."""
+    resp = client.get("/picks/history", params={"source": "backtest", "run_id": "r1"})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["count"] == 1
+    row = body["rows"][0]
+    assert row["model"] == "market_implied"
+    assert row["status"] == "settled"
+    assert row["id"] == "E1_1x2_ft_home"
+
+
+def test_history_source_both_returns_backtest_rows(client: TestClient):
+    """GET /picks/history?source=both&run_id=r1 returns backtest rows (not a 400)."""
+    resp = client.get("/picks/history", params={"source": "both", "run_id": "r1"})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["count"] == 1
+    row = body["rows"][0]
+    assert row["model"] == "market_implied"
+    assert row["status"] == "settled"
+
+
+def test_history_source_both_requires_run_id(client: TestClient):
+    """GET /picks/history?source=both without run_id returns 400."""
+    resp = client.get("/picks/history", params={"source": "both"})
+    assert resp.status_code == 400
