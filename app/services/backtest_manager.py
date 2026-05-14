@@ -74,18 +74,30 @@ def _connect() -> sqlite3.Connection:
 
 
 class BacktestManager:
-    """Async background worker. The factory in src.py wraps it in lru_cache."""
+    """Async background worker. The factory in src.py wraps it in lru_cache.
+
+    Note on event-loop binding: the asyncio.Queue and Lock are created
+    lazily in :meth:`start` so they bind to the running event loop at
+    that moment, not to whichever loop happened to be active when the
+    lru_cache'd factory was first called. This matters for tests that
+    construct BacktestManager() outside a running loop or across
+    multiple TestClient sessions in the same process.
+    """
 
     def __init__(self) -> None:
-        self._queue: asyncio.Queue[str] = asyncio.Queue()
+        self._queue: Optional[asyncio.Queue[str]] = None
         self._worker_task: Optional[asyncio.Task] = None
         self._started = False
-        self._lock = asyncio.Lock()
+        self._lock: Optional[asyncio.Lock] = None
 
     async def start(self) -> None:
+        if self._lock is None:
+            self._lock = asyncio.Lock()
         async with self._lock:
             if self._started:
                 return
+            if self._queue is None:
+                self._queue = asyncio.Queue()
             self._worker_task = asyncio.create_task(self._worker_loop())
             self._started = True
 
@@ -120,6 +132,7 @@ class BacktestManager:
         )
         await asyncio.to_thread(self._insert_run_sync, row)
         await self.start()
+        assert self._queue is not None  # guaranteed by start()
         await self._queue.put(run_id)
         return run_id
 
@@ -164,6 +177,7 @@ class BacktestManager:
     # --- worker ---
 
     async def _worker_loop(self) -> None:
+        assert self._queue is not None  # set in start() before this task is created
         while True:
             run_id = await self._queue.get()
             try:
