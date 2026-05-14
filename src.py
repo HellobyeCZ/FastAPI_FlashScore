@@ -875,6 +875,11 @@ async def delete_backtest_run(
     row = await mgr.get_run(run_id)
     if row is None:
         raise HTTPException(status_code=404, detail="run not found")
+    if row.status in ("queued", "running"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"cannot delete a run with status={row.status!r}; cancel first",
+        )
     await mgr.delete_run(run_id)
     return {"ok": True}
 

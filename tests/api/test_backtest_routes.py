@@ -124,6 +124,35 @@ def test_models_endpoint_lists_registry(app_client: TestClient):
     assert "market_implied" in names
 
 
+def test_delete_refuses_running_run(app_client: TestClient, monkeypatch):
+    """DELETE on a queued/running run returns 409."""
+    import time
+
+    # The worker calls run_backtest in a thread, so we need a sync stub that blocks.
+    def slow_sync(**kw):
+        time.sleep(60)
+
+    monkeypatch.setattr("app.services.backtest_manager.run_backtest", slow_sync)
+
+    resp = app_client.post(
+        "/backtest/runs",
+        json={"model": "market_implied", "train_until": "2024-08-01T00:00:00Z"},
+    )
+    run_id = resp.json()["id"]
+
+    # Wait briefly for status to flip from queued to running.
+    for _ in range(50):
+        r = app_client.get(f"/backtest/runs/{run_id}").json()
+        if r["status"] in ("queued", "running"):
+            break
+        time.sleep(0.05)
+
+    # DELETE should refuse.
+    d = app_client.delete(f"/backtest/runs/{run_id}")
+    assert d.status_code == 409, f"expected 409 got {d.status_code} body={d.text}"
+    assert "cancel" in d.json()["detail"].lower() or "running" in d.json()["detail"].lower()
+
+
 def test_models_endpoint_returns_items_with_kind(app_client: TestClient):
     """Items include analytic and trainable kinds with correct labels."""
     resp = app_client.get("/backtest/models")
