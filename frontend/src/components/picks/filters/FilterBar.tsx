@@ -13,6 +13,15 @@ import type { MessageKey } from "@/lib/i18n";
 
 const DATE_PRESETS: DateRangePreset[] = ["24h", "7d", "30d", "90d", "all"];
 
+// Plural overrides for fields whose plural isn't `${field}s`.
+const PLURAL_OVERRIDES: Record<string, keyof NonNullable<FilterBarProps["options"]>> = {
+  country: "countries",
+};
+
+function pluralKey(field: string): keyof NonNullable<FilterBarProps["options"]> {
+  return (PLURAL_OVERRIDES[field] ?? (`${field}s` as keyof NonNullable<FilterBarProps["options"]>));
+}
+
 const SELECT_CLS =
   "border border-border bg-bg px-2 py-1 font-mono text-[11px] text-text focus:border-accent focus:outline-none";
 const LABEL_CLS = "font-sans text-[10px] uppercase text-text-dim";
@@ -104,9 +113,7 @@ export function FilterBar({ fields, options }: FilterBarProps) {
               className={SELECT_CLS}
             >
               <option value="">{t("picks.filter.all")}</option>
-              {(((field === "country"
-                ? options?.countries
-                : options?.[`${field}s` as keyof typeof options]) ?? []) as string[]).map((v) => (
+              {((options?.[pluralKey(field)] ?? []) as string[]).map((v) => (
                 <option key={v} value={v}>{v}</option>
               ))}
             </select>
