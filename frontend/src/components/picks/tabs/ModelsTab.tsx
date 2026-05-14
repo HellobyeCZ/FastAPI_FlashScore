@@ -39,6 +39,7 @@ import { DataSourcePicker } from "@/components/picks/DataSourcePicker";
 import { RunBacktestButton } from "@/components/picks/RunBacktestButton";
 import { BacktestAdvancedDialog } from "@/components/picks/BacktestAdvancedDialog";
 import { BacktestRunsPanel } from "@/components/picks/BacktestRunsPanel";
+import { listBacktestRuns } from "@/lib/api-backtest";
 
 type CompareView = "pnl" | "clv" | "market" | "competition";
 
@@ -129,7 +130,36 @@ export function ModelsTab() {
     filters.edge,
   ]);
 
+  const needsRun = source !== "live" && !runId;
+
   useEffect(() => {
+    if (!needsRun) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const runs = await listBacktestRuns();
+        if (cancelled) return;
+        const latest = runs.find((r) => r.status === "completed");
+        if (latest) {
+          const sp = new URLSearchParams(searchParams.toString());
+          sp.set("run_id", latest.id);
+          router.replace(`?${sp.toString()}`);
+        }
+      } catch {
+        /* ignore — empty state will render */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [needsRun, router, searchParams]);
+
+  useEffect(() => {
+    if (needsRun) {
+      setLoading(false);
+      setError(null);
+      return;
+    }
     let cancelled = false;
     setLoading(true);
     async function load() {
@@ -242,6 +272,7 @@ export function ModelsTab() {
     apiFilters.edgeMax,
     source,
     runId,
+    needsRun,
   ]);
 
   const models = useMemo(
@@ -371,6 +402,31 @@ export function ModelsTab() {
       sort: (a, b) => (a.max_drawdown ?? 0) - (b.max_drawdown ?? 0),
     },
   ];
+
+  if (needsRun) {
+    return (
+      <div className="flex flex-col gap-4">
+        <PageHeader kicker="Picks · models" />
+        <div className="flex justify-between items-center">
+          <DataSourcePicker />
+          <RunBacktestButton
+            onCreated={handleSelectRun}
+            onAdvanced={() => setDialogOpen(true)}
+          />
+        </div>
+        <div className="border border-zinc-700 bg-bg p-4 font-mono text-[12px] text-zinc-400">
+          ▸ no backtest run selected. Click <span className="text-zinc-200">Run backtest</span> to queue one,
+          or pick an existing run below.
+        </div>
+        <BacktestRunsPanel onSelect={handleSelectRun} />
+        <BacktestAdvancedDialog
+          open={dialogOpen}
+          onClose={() => setDialogOpen(false)}
+          onCreated={handleSelectRun}
+        />
+      </div>
+    );
+  }
 
   if (error) {
     return (
