@@ -196,7 +196,7 @@ model BacktestBet {
   closingPrice        Float   @map("closing_price")
   modelProb           Float   @map("model_prob")
   impliedProb         Float   @map("implied_prob")
-  devigedProb         Float   @map("devigged_prob")
+  deviggedProb        Float   @map("devigged_prob")
   edge                Float
   stakeKellyFraction  Float   @map("stake_kelly_fraction")
   result              Float
