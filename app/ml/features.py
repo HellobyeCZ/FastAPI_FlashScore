@@ -121,11 +121,21 @@ def _team_days_rest(
     return (now - prev).total_seconds() / 86400.0
 
 
-def _pre_match_elo(conn, event_id: str, team: str) -> Optional[float]:
+def _pre_match_elo(
+    conn,
+    event_id: str,
+    team: str,
+    as_of_ts: Optional[str] = None,
+) -> Optional[float]:
     """Return the team's pre-match Elo for ``event_id`` if the event was
     in the training set. For unseen (upcoming) events, fall back to the
-    team's latest post-match Elo — which IS their pre-match Elo for
-    their next game by definition."""
+    team's latest post-match Elo from a match that finished strictly
+    before ``as_of_ts`` — never from the test event itself, never from
+    the future.
+
+    When ``as_of_ts`` is ``None`` (forward prediction), the fallback
+    returns the team's unconditionally latest post-match Elo, which is
+    correct for live/upcoming events where no future data exists yet."""
     row = conn.execute(
         """
         SELECT pre_elo
@@ -136,16 +146,30 @@ def _pre_match_elo(conn, event_id: str, team: str) -> Optional[float]:
     ).fetchone()
     if row is not None:
         return float(row["pre_elo"])
-    fallback = conn.execute(
-        """
-        SELECT post_elo
-        FROM team_elo_history
-        WHERE team = ?
-        ORDER BY start_time_utc DESC
-        LIMIT 1
-        """,
-        (team,),
-    ).fetchone()
+    if as_of_ts is None:
+        fallback = conn.execute(
+            """
+            SELECT post_elo
+            FROM team_elo_history
+            WHERE team = ?
+            ORDER BY start_time_utc DESC
+            LIMIT 1
+            """,
+            (team,),
+        ).fetchone()
+    else:
+        fallback = conn.execute(
+            """
+            SELECT post_elo
+            FROM team_elo_history
+            WHERE team = ?
+              AND event_id != ?
+              AND start_time_utc < ?
+            ORDER BY start_time_utc DESC
+            LIMIT 1
+            """,
+            (team, event_id, as_of_ts),
+        ).fetchone()
     return float(fallback["post_elo"]) if fallback else None
 
 
@@ -323,8 +347,8 @@ def get_features(
         away_form = _team_form(conn, away, as_of_ts, form_window, event_id) if away else TeamFormResult(0.0, 0)
         home_rest = _team_days_rest(conn, home, as_of_ts, event_id) if home else None
         away_rest = _team_days_rest(conn, away, as_of_ts, event_id) if away else None
-        home_elo = _pre_match_elo(conn, event_id, home) if home else None
-        away_elo = _pre_match_elo(conn, event_id, away) if away else None
+        home_elo = _pre_match_elo(conn, event_id, home, as_of_ts=as_of_ts) if home else None
+        away_elo = _pre_match_elo(conn, event_id, away, as_of_ts=as_of_ts) if away else None
         mp_h, mp_d, mp_a = _market_probs_at_or_before(conn, event_id, as_of_ts, home, away)
 
         home_ppg = home_form.points / home_form.matches if home_form.matches else None
