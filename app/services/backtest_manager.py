@@ -38,7 +38,9 @@ from app.ml.backtest_storage import (
     update_run_status,
 )
 from app.ml.labels import FOOTBALL_PHASE1_SCOPE
+from app.ml.market_spec import get_spec
 from app.ml.models import get as get_model
+from app.ml.trainable import TRAINABLE, resolve_model_for_backtest
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +55,7 @@ class CreateRunParams:
     force_bets: bool = False
     label: Optional[str] = None
     scope: Optional[Sequence[Tuple[str, str]]] = None
+    market_spec: str = "football_1x2_ft"
 
 
 def _now_iso() -> str:
@@ -113,6 +116,8 @@ class BacktestManager:
             scope_json=json.dumps([[c, t] for c, t in scope]),
             status="queued",
             created_at=_now_iso(),
+            stage=None,
+            market_spec=params.market_spec,
         )
         await asyncio.to_thread(self._insert_run_sync, row)
         await self.start()
@@ -174,28 +179,45 @@ class BacktestManager:
         if row is None or row.status == "cancelled":
             return
 
-        # Validate model name before doing any work.
+        # Resolve the MarketSpec.
         try:
-            get_model(row.model)
+            spec = get_spec(row.market_spec or "football_1x2_ft")
         except KeyError as e:
             await asyncio.to_thread(
-                self._mark_failed_sync, run_id, f"unknown model: {e}"
+                self._mark_failed_sync, run_id, f"unknown market_spec: {e}"
             )
             return
 
         await asyncio.to_thread(self._mark_running_sync, run_id, _now_iso())
 
         try:
+            # For trainable models, mark stage='training' and resolve in a thread.
+            if row.model in TRAINABLE:
+                await asyncio.to_thread(self._mark_stage_sync, run_id, "training")
+            try:
+                model_fn = await asyncio.to_thread(
+                    resolve_model_for_backtest, row.model, row.train_until, spec
+                )
+            except KeyError as e:
+                await asyncio.to_thread(
+                    self._mark_failed_sync, run_id, f"unknown model: {e}"
+                )
+                return
+
+            # Mark stage='backtesting' before run_backtest.
+            await asyncio.to_thread(self._mark_stage_sync, run_id, "backtesting")
+
             scope: List[Tuple[str, str]] = [tuple(x) for x in json.loads(row.scope_json)]
             report: BacktestReport = await asyncio.to_thread(
                 run_backtest,
-                model=row.model,
+                model=model_fn,
                 scope=scope,
                 train_until=row.train_until,
                 test_until=row.test_until,
                 min_edge=row.min_edge,
                 kelly_fraction=row.kelly_fraction,
                 force_bets=bool(row.force_bets),
+                market_spec=spec,
             )
             kickoffs = await asyncio.to_thread(
                 self._kickoff_map_for, [b.event_id for b in report.bets]
@@ -267,6 +289,14 @@ class BacktestManager:
         with _connect() as conn:
             update_run_status(conn, run_id, status="running", started_at=started_at)
 
+    def _mark_stage_sync(self, run_id: str, stage: Optional[str]) -> None:
+        with _connect() as conn:
+            conn.execute(
+                "UPDATE backtest_runs SET stage = ? WHERE id = ?",
+                (stage, run_id),
+            )
+            conn.commit()
+
     def _mark_failed_sync(self, run_id: str, error: str) -> None:
         with _connect() as conn:
             update_run_status(
@@ -275,6 +305,11 @@ class BacktestManager:
                 finished_at=_now_iso(),
                 error=error[:4000],
             )
+            conn.execute(
+                "UPDATE backtest_runs SET stage = NULL WHERE id = ?",
+                (run_id,),
+            )
+            conn.commit()
 
     def _persist_completed_sync(
         self,
@@ -298,3 +333,8 @@ class BacktestManager:
                 ),
             }
             finalize_run(conn, run_id, finished_at=_now_iso(), summary=summary)
+            conn.execute(
+                "UPDATE backtest_runs SET stage = NULL WHERE id = ?",
+                (run_id,),
+            )
+            conn.commit()
