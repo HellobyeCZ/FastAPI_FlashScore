@@ -1312,6 +1312,45 @@ async def picks_stats_calibration(
     return {"model": model, "n_buckets": n_buckets, "buckets": buckets}
 
 
+from app.ml.picks_facets import (  # noqa: E402
+    FacetsResponse,
+    facets_for_live,
+    facets_for_backtest,
+    facets_for_both,
+)
+
+
+@app.get("/picks/facets")
+async def picks_facets(source: str = "live", run_id: Optional[str] = None) -> dict:
+    """Return distinct filter-dimension values for the picks filter bar.
+
+    ``source`` controls which data is scanned:
+    - ``live`` — ``paper_bets`` (default)
+    - ``backtest`` — ``backtest_bets`` for the given ``run_id``
+    - ``both`` — union of live + backtest (``run_id`` required)
+    """
+    if source == "live":
+        f = facets_for_live()
+    elif source == "backtest":
+        if not run_id:
+            raise HTTPException(status_code=400, detail="run_id required when source=backtest")
+        f = facets_for_backtest(run_id)
+    elif source == "both":
+        if not run_id:
+            raise HTTPException(status_code=400, detail="run_id required when source=both")
+        f = facets_for_both(run_id)
+    else:
+        raise HTTPException(status_code=400, detail=f"unknown source={source!r}")
+    return {
+        "models": f.models,
+        "markets": f.markets,
+        "sports": f.sports,
+        "countries": f.countries,
+        "competitions": f.competitions,
+        "selections": f.selections,
+    }
+
+
 # You can include routers here
 # from app.routers import items_router
 # app.include_router(items_router.router, prefix="/items", tags=["items"])
