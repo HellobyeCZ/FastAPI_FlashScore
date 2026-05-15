@@ -137,6 +137,45 @@ def fit_dixon_coles_at(train_until: str, spec: MarketSpec) -> ModelFn:
     return make_dixon_coles_model_fn(rates_by_event, cfg, temperature=T)
 
 
+def fit_hgb_at(train_until: str, spec: MarketSpec) -> ModelFn:
+    """Train a fresh HistGradientBoostingClassifier on events strictly
+    before ``train_until``, scoped to ``spec.scope``. Uses
+    ``HGB_FEATURE_COLUMNS`` (BASE 9 + market 3 = 12 columns). Returns a
+    calibrated ModelFn when ≥100 pre-cutoff events exist; otherwise
+    falls through uncalibrated."""
+    from app.ml.training import (
+        HGB_FEATURE_COLUMNS,
+        build_feature_matrix,
+        chronological_split,
+        isotonic_calibrate,
+        train_hgb,
+    )
+
+    matrix = build_feature_matrix(
+        sport=spec.sport, scope=spec.scope, columns=HGB_FEATURE_COLUMNS,
+    )
+    pre = [
+        (ev, ts) for ev, ts in zip(matrix.event_ids, matrix.kickoffs)
+        if ts < train_until
+    ]
+    if len(pre) < 100:
+        split = chronological_split(
+            matrix, train_until=train_until, calib_until=train_until,
+        )
+        raw = train_hgb(split.train)
+        from app.ml.models import make_trained_model_fn
+        return make_trained_model_fn(raw, calibrated=False, name_prefix="hgb")
+
+    calib_until = sorted(ts for _, ts in pre)[int(len(pre) * 0.75)]
+    split = chronological_split(
+        matrix, train_until=calib_until, calib_until=train_until,
+    )
+    raw = train_hgb(split.train)
+    cal = isotonic_calibrate(raw, split.calib)
+    from app.ml.models import make_trained_model_fn
+    return make_trained_model_fn(cal, calibrated=True, name_prefix="hgb")
+
+
 def _fit_and_apply_preprocessor(train: "FeatureMatrix"):
     """Fit StandardScaler+PCA(0.95) on ``train.X``. Returns the fitted
     sklearn Pipeline and a new FeatureMatrix with the projected X and
