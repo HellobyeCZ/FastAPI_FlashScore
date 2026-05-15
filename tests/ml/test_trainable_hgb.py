@@ -404,3 +404,6 @@ def test_fit_hgb_pca_at_predict_proba_calibrated_sums_to_one(db_with_events):
     out = fn(features, market)
     assert set(out) == {"home", "draw", "away"}
     assert pytest.approx(sum(out.values()), abs=1e-3) == 1.0
+    # Defensive: catch the uniform-1/3 fallback (was a real bug pre-fix).
+    assert not all(abs(v - 1/3) < 1e-9 for v in out.values()), \
+        "predictions equal uniform 1/3 — feature extraction is hitting the None guard"

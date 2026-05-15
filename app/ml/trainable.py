@@ -240,6 +240,10 @@ def fit_hgb_pca_at(train_until: str, spec: MarketSpec) -> ModelFn:
         )
         prep, transformed_train = _fit_and_apply_preprocessor(split.train)
         raw = train_hgb(transformed_train)
+        # train_hgb sets feature_columns to the projected pc1..pcK names.
+        # Restore the raw 12-column names so make_trained_model_fn can
+        # extract the correct values from runtime feature dicts at predict time.
+        raw.feature_columns = HGB_FEATURE_COLUMNS
         raw.preprocessor = prep
         from app.ml.models import make_trained_model_fn
         return make_trained_model_fn(raw, calibrated=False, name_prefix="hgb_pca")
@@ -251,6 +255,11 @@ def fit_hgb_pca_at(train_until: str, spec: MarketSpec) -> ModelFn:
     prep, transformed_train = _fit_and_apply_preprocessor(split.train)
     transformed_calib = _apply_preprocessor(prep, split.calib)
     raw = train_hgb(transformed_train)
+    # train_hgb sets feature_columns to the projected pc1..pcK names.
+    # Restore the raw 12-column names BEFORE isotonic_calibrate so the
+    # calibrated copy inherits them and make_trained_model_fn can extract
+    # the correct values from runtime feature dicts at predict time.
+    raw.feature_columns = HGB_FEATURE_COLUMNS
     # Calibrate against the already-projected calib slice. raw.preprocessor
     # is still None at this point — isotonic_calibrate's predict_proba call
     # must NOT re-transform an already-transformed matrix. Attach prep AFTER
