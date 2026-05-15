@@ -213,6 +213,55 @@ def _apply_preprocessor(prep, fm: "FeatureMatrix"):
     )
 
 
+def fit_hgb_pca_at(train_until: str, spec: MarketSpec) -> ModelFn:
+    """Same chronological discipline as fit_hgb_at, with a frozen
+    StandardScaler+PCA(0.95) preprocessor fitted on the train block.
+    The preprocessor is attached to the returned TrainedHGB so calls
+    to predict_proba(raw_12_col_X) project before the classifier runs."""
+    from app.ml.training import (
+        HGB_FEATURE_COLUMNS,
+        build_feature_matrix,
+        chronological_split,
+        isotonic_calibrate,
+        train_hgb,
+    )
+
+    matrix = build_feature_matrix(
+        sport=spec.sport, scope=spec.scope, columns=HGB_FEATURE_COLUMNS,
+    )
+    pre = [
+        (ev, ts) for ev, ts in zip(matrix.event_ids, matrix.kickoffs)
+        if ts < train_until
+    ]
+
+    if len(pre) < 100:
+        split = chronological_split(
+            matrix, train_until=train_until, calib_until=train_until,
+        )
+        prep, transformed_train = _fit_and_apply_preprocessor(split.train)
+        raw = train_hgb(transformed_train)
+        raw.preprocessor = prep
+        from app.ml.models import make_trained_model_fn
+        return make_trained_model_fn(raw, calibrated=False, name_prefix="hgb_pca")
+
+    calib_until = sorted(ts for _, ts in pre)[int(len(pre) * 0.75)]
+    split = chronological_split(
+        matrix, train_until=calib_until, calib_until=train_until,
+    )
+    prep, transformed_train = _fit_and_apply_preprocessor(split.train)
+    transformed_calib = _apply_preprocessor(prep, split.calib)
+    raw = train_hgb(transformed_train)
+    # Calibrate against the already-projected calib slice. raw.preprocessor
+    # is still None at this point — isotonic_calibrate's predict_proba call
+    # must NOT re-transform an already-transformed matrix. Attach prep AFTER
+    # calibration completes. (Task 2's isotonic_calibrate change copies
+    # preprocessor across, but raw still has None here — by design.)
+    cal = isotonic_calibrate(raw, transformed_calib)
+    cal.preprocessor = prep
+    from app.ml.models import make_trained_model_fn
+    return make_trained_model_fn(cal, calibrated=True, name_prefix="hgb_pca")
+
+
 TRAINABLE: Dict[str, Callable[[str, MarketSpec], ModelFn]] = {
     "logistic": fit_logistic_at,
     "dixon_coles": fit_dixon_coles_at,

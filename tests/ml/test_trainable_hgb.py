@@ -350,3 +350,57 @@ def test_apply_preprocessor_uses_existing_fit():
     out = _apply_preprocessor(prep, calib)
     assert out.X.shape[0] == 30
     assert out.X.shape[1] == prep.named_steps["pca"].n_components_
+
+
+def test_fit_hgb_pca_at_returns_calibrated_model_fn(db_with_events):
+    """≥100 pre-cutoff events → calibrated path with PCA preprocessor."""
+    from app.ml.market_spec import FOOTBALL_1X2_FT
+    from app.ml.trainable import fit_hgb_pca_at
+
+    fn = fit_hgb_pca_at("2024-08-01", FOOTBALL_1X2_FT)
+    assert callable(fn)
+    assert fn.__name__.endswith("_calibrated")
+
+
+def test_fit_hgb_pca_at_attaches_preprocessor(db_with_events):
+    """The PCA variant must store a fitted scaler+PCA pipeline on the
+    TrainedHGB."""
+    from app.ml.market_spec import FOOTBALL_1X2_FT
+    from app.ml.trainable import fit_hgb_pca_at
+    from app.ml.training import TrainedHGB
+
+    fn = fit_hgb_pca_at("2024-08-01", FOOTBALL_1X2_FT)
+    trained = next(
+        cell.cell_contents for cell in fn.__closure__
+        if isinstance(cell.cell_contents, TrainedHGB)
+    )
+    assert trained.preprocessor is not None
+    pca = trained.preprocessor.named_steps["pca"]
+    assert pca.n_components_ <= 12
+    assert pca.n_components_ >= 1
+
+
+def test_fit_hgb_pca_at_predict_proba_calibrated_sums_to_one(db_with_events):
+    """End-to-end: raw 12-col input → scaler → PCA → HGB → isotonic →
+    normalized 3-class output."""
+    from app.ml.market_spec import FOOTBALL_1X2_FT
+    from app.ml.trainable import fit_hgb_pca_at
+
+    fn = fit_hgb_pca_at("2024-08-01", FOOTBALL_1X2_FT)
+    # Build a synthetic feature dict + market context the closure can
+    # consume. make_trained_model_fn reads feature_columns from the
+    # captured trained model — for hgb_pca that's HGB_FEATURE_COLUMNS.
+    features = {
+        "home_elo": 1500.0, "away_elo": 1500.0, "elo_diff": 0.0,
+        "home_form_ppg": 1.4, "away_form_ppg": 1.4,
+        "home_form_matches": 5, "away_form_matches": 5,
+        "home_days_rest": 7, "away_days_rest": 7,
+    }
+    market = {
+        "devigged_prob_home": 0.45,
+        "devigged_prob_draw": 0.27,
+        "devigged_prob_away": 0.28,
+    }
+    out = fn(features, market)
+    assert set(out) == {"home", "draw", "away"}
+    assert pytest.approx(sum(out.values()), abs=1e-3) == 1.0
