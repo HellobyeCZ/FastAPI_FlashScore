@@ -42,3 +42,33 @@ def test_trained_hgb_predict_proba_applies_preprocessor_when_set():
     th = TrainedHGB(model=FakeModel(), preprocessor=FakePrep())
     th.predict_proba(np.zeros((2, 12)))
     assert FakeModel.last_X_shape == (2, 6)
+
+
+def test_isotonic_calibrate_preserves_preprocessor_on_trained_hgb():
+    """isotonic_calibrate(TrainedHGB) returns a new TrainedHGB; the
+    preprocessor must be carried over."""
+    from app.ml.training import FeatureMatrix, isotonic_calibrate
+
+    class FakePrep:
+        def transform(self, X):
+            return X[:, :6]
+
+    class FakeModel:
+        def predict_proba(self, X):
+            # Calibration needs distinct prob values per row to fit
+            # IsotonicRegression — synthesize a small spread.
+            n = len(X)
+            base = np.linspace(0.2, 0.8, n)
+            return np.stack([base, 1 - base - 0.1, np.full(n, 0.1)], axis=1)
+
+    raw = TrainedHGB(model=FakeModel(), preprocessor=FakePrep())
+    calib = FeatureMatrix(
+        X=np.zeros((30, 12)),
+        y=np.array([0, 1, 2] * 10),
+        event_ids=[f"E{i}" for i in range(30)],
+        kickoffs=[f"2024-08-{i+1:02d}T15:00:00Z" for i in range(30)],
+    )
+    cal = isotonic_calibrate(raw, calib)
+    assert isinstance(cal, TrainedHGB)
+    assert cal.preprocessor is raw.preprocessor  # same fitted object
+    assert cal.calibrators is not None

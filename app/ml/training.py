@@ -299,6 +299,7 @@ def isotonic_calibrate(
             model=model.model,
             calibrators=tuple(calibrators),
             feature_columns=model.feature_columns,
+            preprocessor=getattr(model, "preprocessor", None),  # NEW
         )
     return TrainedLogistic(
         pipeline=model.pipeline,
