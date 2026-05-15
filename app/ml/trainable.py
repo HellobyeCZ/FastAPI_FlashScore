@@ -137,6 +137,43 @@ def fit_dixon_coles_at(train_until: str, spec: MarketSpec) -> ModelFn:
     return make_dixon_coles_model_fn(rates_by_event, cfg, temperature=T)
 
 
+def _fit_and_apply_preprocessor(train: "FeatureMatrix"):
+    """Fit StandardScaler+PCA(0.95) on ``train.X``. Returns the fitted
+    sklearn Pipeline and a new FeatureMatrix with the projected X and
+    synthesized ``pc1..pcK`` column names. ``y``, ``event_ids``, and
+    ``kickoffs`` carry over unchanged."""
+    from sklearn.decomposition import PCA
+    from sklearn.pipeline import Pipeline
+    from sklearn.preprocessing import StandardScaler
+
+    from app.ml.training import FeatureMatrix
+
+    prep = Pipeline([
+        ("scaler", StandardScaler()),
+        ("pca", PCA(n_components=0.95, svd_solver="full")),
+    ])
+    Xp = prep.fit_transform(train.X)
+    proj_cols = tuple(f"pc{i+1}" for i in range(Xp.shape[1]))
+    return prep, FeatureMatrix(
+        X=Xp, y=train.y, event_ids=train.event_ids,
+        kickoffs=train.kickoffs, columns=proj_cols,
+    )
+
+
+def _apply_preprocessor(prep, fm: "FeatureMatrix"):
+    """Apply an already-fitted preprocessor to a FeatureMatrix. Returns
+    a new FeatureMatrix with the projected X and synthesized column
+    names. Does NOT refit."""
+    from app.ml.training import FeatureMatrix
+
+    Xp = prep.transform(fm.X)
+    proj_cols = tuple(f"pc{i+1}" for i in range(Xp.shape[1]))
+    return FeatureMatrix(
+        X=Xp, y=fm.y, event_ids=fm.event_ids, kickoffs=fm.kickoffs,
+        columns=proj_cols,
+    )
+
+
 TRAINABLE: Dict[str, Callable[[str, MarketSpec], ModelFn]] = {
     "logistic": fit_logistic_at,
     "dixon_coles": fit_dixon_coles_at,

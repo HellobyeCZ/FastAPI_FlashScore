@@ -72,3 +72,63 @@ def test_isotonic_calibrate_preserves_preprocessor_on_trained_hgb():
     assert isinstance(cal, TrainedHGB)
     assert cal.preprocessor is raw.preprocessor  # same fitted object
     assert cal.calibrators is not None
+
+
+def test_fit_and_apply_preprocessor_returns_projected_matrix():
+    """_fit_and_apply_preprocessor fits scaler+PCA(0.95) and projects."""
+    from app.ml.trainable import _fit_and_apply_preprocessor
+    from app.ml.training import FeatureMatrix, HGB_FEATURE_COLUMNS
+
+    rng = np.random.default_rng(0)
+    # Make last 6 columns near-duplicates of the first 6 so the effective
+    # rank is ~6. StandardScaler whitens all columns to unit variance, so
+    # small absolute variance doesn't help — redundancy (correlation) is
+    # what causes PCA(0.95) to drop components.
+    X = rng.normal(size=(200, 12))
+    X[:, 6:] = X[:, :6] + rng.normal(size=(200, 6)) * 0.01
+    fm = FeatureMatrix(
+        X=X,
+        y=rng.integers(0, 3, size=200),
+        event_ids=[f"E{i}" for i in range(200)],
+        kickoffs=[f"2024-08-{(i%28)+1:02d}T15:00:00Z" for i in range(200)],
+        columns=HGB_FEATURE_COLUMNS,
+    )
+
+    prep, projected = _fit_and_apply_preprocessor(fm)
+    assert projected.X.shape[0] == 200
+    assert projected.X.shape[1] < 12  # PCA(0.95) drops the redundant cols
+    # The pipeline must be runnable on new data.
+    Xnew = rng.normal(size=(5, 12))
+    Xnew[:, 6:] = Xnew[:, :6] + rng.normal(size=(5, 6)) * 0.01
+    out = prep.transform(Xnew)
+    assert out.shape == (5, projected.X.shape[1])
+    # Column names are pcN
+    assert projected.columns[0] == "pc1"
+
+
+def test_apply_preprocessor_uses_existing_fit():
+    """_apply_preprocessor must not refit."""
+    from app.ml.trainable import _apply_preprocessor, _fit_and_apply_preprocessor
+    from app.ml.training import FeatureMatrix, HGB_FEATURE_COLUMNS
+
+    rng = np.random.default_rng(0)
+    X = rng.normal(size=(200, 12))
+    X[:, 6:] = X[:, :6] + rng.normal(size=(200, 6)) * 0.01
+    fm = FeatureMatrix(
+        X=X, y=rng.integers(0, 3, size=200),
+        event_ids=[f"E{i}" for i in range(200)],
+        kickoffs=[f"2024-08-{(i%28)+1:02d}T15:00:00Z" for i in range(200)],
+        columns=HGB_FEATURE_COLUMNS,
+    )
+    prep, _ = _fit_and_apply_preprocessor(fm)
+
+    calib = FeatureMatrix(
+        X=rng.normal(size=(30, 12)),
+        y=rng.integers(0, 3, size=30),
+        event_ids=[f"C{i}" for i in range(30)],
+        kickoffs=[f"2024-09-{(i%28)+1:02d}T15:00:00Z" for i in range(30)],
+        columns=HGB_FEATURE_COLUMNS,
+    )
+    out = _apply_preprocessor(prep, calib)
+    assert out.X.shape[0] == 30
+    assert out.X.shape[1] == prep.named_steps["pca"].n_components_
