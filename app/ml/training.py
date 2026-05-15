@@ -316,8 +316,11 @@ class TrainedHGB:
     model: object  # sklearn HistGradientBoostingClassifier
     calibrators: Optional[Tuple[object, object, object]] = None
     feature_columns: Tuple[str, ...] = HGB_FEATURE_COLUMNS
+    preprocessor: Optional[object] = None  # NEW: fitted sklearn Pipeline or None
 
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
+        if self.preprocessor is not None:
+            X = self.preprocessor.transform(X)
         return self.model.predict_proba(X)
 
     def predict_proba_calibrated(self, X: np.ndarray) -> np.ndarray:
