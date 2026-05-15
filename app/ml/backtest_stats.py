@@ -15,6 +15,7 @@ from app.ml import db as ml_db
 
 
 ALLOWED_GROUP_BY = (
+    "model",
     "market", "sport", "country", "competition",
     "selection", "edge_bucket", "price_bucket", "day", "week", "month",
 )
@@ -37,12 +38,14 @@ class BacktestStatsFilter:
 
 @dataclass(frozen=True)
 class BacktestStatsRequest:
-    run_id: str
+    run_ids: Tuple[str, ...]
     filters: BacktestStatsFilter = field(default_factory=BacktestStatsFilter)
     group_by: Tuple[str, ...] = ()
     min_n_per_group: int = 1
 
     def __post_init__(self) -> None:
+        if not self.run_ids:
+            raise ValueError("run_ids must contain at least one id")
         for t in self.group_by:
             if t not in ALLOWED_GROUP_BY:
                 raise ValueError(
@@ -51,6 +54,8 @@ class BacktestStatsRequest:
 
 
 _GROUP_EXPR = {
+    # model lives on backtest_runs, joined as r.
+    "model": "r.model",
     "market": "b.market",
     "sport": "mes.sport",
     "country": "mes.country",
@@ -79,10 +84,11 @@ _GROUP_EXPR = {
 }
 
 
-def _build_where(run_id: str, f: BacktestStatsFilter) -> Tuple[str, List[Any]]:
+def _build_where(run_ids: Sequence[str], f: BacktestStatsFilter) -> Tuple[str, List[Any]]:
     """Build WHERE clause and positional parameter list."""
-    where: List[str] = ["b.run_id = ?"]
-    params: List[Any] = [run_id]
+    placeholders = ",".join("?" for _ in run_ids)
+    where: List[str] = [f"b.run_id IN ({placeholders})"]
+    params: List[Any] = list(run_ids)
 
     for col, values in [
         ("b.market", f.market),
@@ -126,7 +132,7 @@ def aggregate_backtest(req: BacktestStatsRequest) -> List[Dict[str, Any]]:
     brier, max_drawdown). max_drawdown is computed in Python from a
     second pass over matching rows ordered chronologically.
     """
-    where_clause, where_params = _build_where(req.run_id, req.filters)
+    where_clause, where_params = _build_where(req.run_ids, req.filters)
 
     select_parts: List[str] = []
     group_parts: List[str] = []
@@ -156,6 +162,7 @@ def aggregate_backtest(req: BacktestStatsRequest) -> List[Dict[str, Any]]:
         sql = f"""
             SELECT {select_clause}
             FROM backtest_bets b
+            JOIN backtest_runs r ON r.id = b.run_id
             LEFT JOIN match_event_summaries mes ON mes.event_id = b.event_id
             WHERE {where_clause}
             {group_clause}
@@ -165,6 +172,7 @@ def aggregate_backtest(req: BacktestStatsRequest) -> List[Dict[str, Any]]:
         sql = f"""
             SELECT {select_clause}
             FROM backtest_bets b
+            JOIN backtest_runs r ON r.id = b.run_id
             LEFT JOIN match_event_summaries mes ON mes.event_id = b.event_id
             WHERE {where_clause}
             {group_clause}
@@ -202,6 +210,7 @@ def _attach_max_drawdown(
             f"""
             SELECT b.pnl, b.bet_ts AS t
             FROM backtest_bets b
+            JOIN backtest_runs r ON r.id = b.run_id
             LEFT JOIN match_event_summaries mes ON mes.event_id = b.event_id
             WHERE {where_clause}
             ORDER BY t ASC
@@ -220,6 +229,7 @@ def _attach_max_drawdown(
         f"""
         SELECT {group_exprs}, b.pnl, b.bet_ts AS t
         FROM backtest_bets b
+        JOIN backtest_runs r ON r.id = b.run_id
         LEFT JOIN match_event_summaries mes ON mes.event_id = b.event_id
         WHERE {where_clause}
         ORDER BY t ASC

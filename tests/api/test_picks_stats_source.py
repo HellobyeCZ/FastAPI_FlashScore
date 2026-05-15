@@ -150,7 +150,8 @@ def test_history_source_backtest_returns_rows(client: TestClient):
     row = body["rows"][0]
     assert row["model"] == "market_implied"
     assert row["status"] == "settled"
-    assert row["id"] == "E1_1x2_ft_home"
+    # id is now namespaced by run_id to avoid collisions across runs.
+    assert row["id"] == "r1_E1_1x2_ft_home"
 
 
 def test_history_source_both_returns_backtest_rows(client: TestClient):

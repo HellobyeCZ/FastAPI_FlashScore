@@ -95,7 +95,7 @@ def test_facets_for_live_returns_only_live_facets(db):
 
 
 def test_facets_for_backtest_returns_only_run_facets(db):
-    f = facets_for_backtest("r1")
+    f = facets_for_backtest(("r1",))
     assert f.countries == ["SPAIN"]
     assert f.competitions == ["LaLiga"]
     assert f.models == ["market_implied"]
@@ -104,12 +104,12 @@ def test_facets_for_backtest_returns_only_run_facets(db):
 
 
 def test_facets_for_both_unions(db):
-    f = facets_for_both("r1")
+    f = facets_for_both(("r1",))
     assert set(f.countries) == {"ENGLAND", "GERMANY", "SPAIN"}
     assert set(f.models) == {"logistic", "dixon_coles", "market_implied"}
 
 
 def test_facets_for_backtest_unknown_run_returns_empty(db):
-    f = facets_for_backtest("does_not_exist")
+    f = facets_for_backtest(("does_not_exist",))
     assert f.countries == []
     assert f.models == []

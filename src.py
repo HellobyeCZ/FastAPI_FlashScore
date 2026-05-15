@@ -1024,39 +1024,44 @@ async def picks_history(
     limit: int = Query(default=200, ge=1, le=5000),
     source: str = Query(default="live"),
     run_id: Optional[str] = Query(default=None),
+    run_ids: Optional[str] = Query(default=None),
 ) -> dict:
     """Return paper_bets rows for the dashboard. Filterable by status.
 
-    Pass ``source=backtest`` and ``run_id=<id>`` to read from a backtest run
-    instead of live paper bets. ``source=both`` is reserved for Task 10.
+    Pass ``source=backtest`` plus ``run_ids=<csv>`` (or single ``run_id=<id>``)
+    to read from one or more backtest runs instead of live paper bets.
+    Each row is stamped with its run's model name. ``source=both`` mixes
+    live with the named backtest runs.
     """
+    ids = _resolve_run_ids(run_ids, run_id)
     if source in ("backtest", "both"):
-        if not run_id:
-            raise HTTPException(status_code=400, detail="run_id required when source=backtest|both")
+        if not ids:
+            raise HTTPException(status_code=400, detail="run_ids required when source=backtest|both")
         mgr = _get_backtest_manager()
-        run = await mgr.get_run(run_id)
-        if run is None:
-            raise HTTPException(status_code=404, detail=f"backtest run {run_id!r} not found")
-        bets, _total = await mgr.list_bets(run_id, offset=0, limit=limit)
-        rows = [
-            {
-                "id": f"{b.event_id}_{b.market}_{b.selection}",
-                "event_id": b.event_id,
-                "market": b.market,
-                "selection": b.selection,
-                "recommended_at": b.bet_ts,
-                "price_at_recommendation": b.price_taken,
-                "model_prob": b.model_prob,
-                "edge": b.edge,
-                "result": b.result,
-                "pnl": b.pnl,
-                "clv": b.clv,
-                "status": "settled",
-                "model": run.model,
-            }
-            for b in bets
-        ]
-        return {"count": len(rows), "rows": rows}
+        all_rows: list = []
+        per_run_limit = max(1, limit // len(ids))  # roughly even share across runs
+        for rid in ids:
+            run = await mgr.get_run(rid)
+            if run is None:
+                raise HTTPException(status_code=404, detail=f"backtest run {rid!r} not found")
+            bets, _total = await mgr.list_bets(rid, offset=0, limit=per_run_limit)
+            for b in bets:
+                all_rows.append({
+                    "id": f"{rid}_{b.event_id}_{b.market}_{b.selection}",
+                    "event_id": b.event_id,
+                    "market": b.market,
+                    "selection": b.selection,
+                    "recommended_at": b.bet_ts,
+                    "price_at_recommendation": b.price_taken,
+                    "model_prob": b.model_prob,
+                    "edge": b.edge,
+                    "result": b.result,
+                    "pnl": b.pnl,
+                    "clv": b.clv,
+                    "status": "settled",
+                    "model": run.model,
+                })
+        return {"count": len(all_rows), "rows": all_rows[:limit]}
 
     from app.ml.paper_trade import fetch_paper_bets
 
@@ -1093,12 +1098,16 @@ async def picks_stats(
     min_n_per_group: int = Query(default=1, ge=1),
     source: str = Query(default="live"),
     run_id: Optional[str] = Query(default=None),
+    run_ids: Optional[str] = Query(default=None),
 ) -> dict:
     """Aggregation over paper_bets. ``group_by`` is a comma-separated
     list of dimensions; multi-value filters are comma-separated too.
 
-    Pass ``source=backtest`` and ``run_id=<id>`` to aggregate over a backtest
-    run instead of live paper bets. ``source=both`` is reserved for Task 10.
+    Pass ``source=backtest`` plus ``run_ids=<csv>`` (or ``run_id=<id>`` for a
+    single run) to aggregate over one or more backtest runs instead of live
+    paper bets. ``source=both`` overlays live with the named backtest runs.
+    When multiple backtest runs are selected, include ``"model"`` in
+    ``group_by`` so the response carries a model name per row.
     """
     def _csv(value: Optional[str]) -> tuple:
         if not value:
@@ -1106,17 +1115,18 @@ async def picks_stats(
         return tuple(v.strip() for v in value.split(",") if v.strip())
 
     if source == "backtest":
-        if not run_id:
-            raise HTTPException(status_code=400, detail="run_id required when source=backtest")
+        ids = _resolve_run_ids(run_ids, run_id)
+        if not ids:
+            raise HTTPException(status_code=400, detail="run_ids required when source=backtest")
         from app.ml.backtest_stats import (
             aggregate_backtest,
             BacktestStatsRequest,
             BacktestStatsFilter,
         )
-        gb_tuple = tuple(t for t in _csv(group_by) if t != "model")
+        gb_tuple = _csv(group_by)
         try:
             bt_req = BacktestStatsRequest(
-                run_id=run_id,
+                run_ids=ids,
                 filters=BacktestStatsFilter(
                     market=_csv(market),
                     sport=_csv(sport),
@@ -1136,12 +1146,16 @@ async def picks_stats(
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
         rows = aggregate_backtest(bt_req)
-        # Stamp model so the leaderboard table can label rows.
-        mgr = _get_backtest_manager()
-        run = await mgr.get_run(run_id)
-        if run is not None:
-            for r in rows:
-                r["model"] = run.model
+        # When model is not in group_by but exactly one run is selected,
+        # stamp the run's model so legacy single-run callers still get a
+        # labelled leaderboard row. Multi-run callers must include
+        # "model" in group_by.
+        if "model" not in gb_tuple and len(ids) == 1:
+            mgr = _get_backtest_manager()
+            run = await mgr.get_run(ids[0])
+            if run is not None:
+                for r in rows:
+                    r["model"] = run.model
         return {
             "group_by": list(bt_req.group_by),
             "filters": {
@@ -1165,8 +1179,9 @@ async def picks_stats(
     from app.ml.paper_trade_stats import StatsFilter, StatsRequest, aggregate
 
     if source == "both":
-        if not run_id:
-            raise HTTPException(status_code=400, detail="run_id required when source=both")
+        ids = _resolve_run_ids(run_ids, run_id)
+        if not ids:
+            raise HTTPException(status_code=400, detail="run_ids required when source=both")
 
         # Live side
         try:
@@ -1201,10 +1216,10 @@ async def picks_stats(
             BacktestStatsRequest,
             BacktestStatsFilter,
         )
-        gb_tuple = tuple(t for t in _csv(group_by) if t != "model")
+        gb_tuple = _csv(group_by)
         try:
             bt_req = BacktestStatsRequest(
-                run_id=run_id,
+                run_ids=ids,
                 filters=BacktestStatsFilter(
                     market=_csv(market),
                     sport=_csv(sport),
@@ -1224,11 +1239,20 @@ async def picks_stats(
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
         bt_rows = aggregate_backtest(bt_req)
-        mgr = _get_backtest_manager()
-        run = await mgr.get_run(run_id)
+        # Suffix " (backtest)" onto model labels so the same model name
+        # appearing in both live and backtest rows is visually distinct.
+        single_run_model: Optional[str] = None
+        if "model" not in gb_tuple and len(ids) == 1:
+            mgr = _get_backtest_manager()
+            single_run = await mgr.get_run(ids[0])
+            if single_run is not None:
+                single_run_model = single_run.model
         for r in bt_rows:
             r["origin"] = "backtest"
-            r["model"] = (run.model + " (backtest)") if run else None
+            if "model" in gb_tuple and r.get("model"):
+                r["model"] = f"{r['model']} (backtest)"
+            elif single_run_model is not None:
+                r["model"] = f"{single_run_model} (backtest)"
 
         return {
             "group_by": list(_csv(group_by)),
@@ -1326,25 +1350,42 @@ from app.ml.picks_facets import (  # noqa: E402
 )
 
 
+def _resolve_run_ids(run_ids: Optional[str], run_id: Optional[str]) -> tuple:
+    """Pick ``run_ids`` (CSV) if present, else fall back to single ``run_id``."""
+    if run_ids:
+        return tuple(v.strip() for v in run_ids.split(",") if v.strip())
+    if run_id:
+        return (run_id,)
+    return ()
+
+
 @app.get("/picks/facets")
-async def picks_facets(source: str = "live", run_id: Optional[str] = None) -> dict:
+async def picks_facets(
+    source: str = "live",
+    run_id: Optional[str] = None,
+    run_ids: Optional[str] = None,
+) -> dict:
     """Return distinct filter-dimension values for the picks filter bar.
 
     ``source`` controls which data is scanned:
     - ``live`` — ``paper_bets`` (default)
-    - ``backtest`` — ``backtest_bets`` for the given ``run_id``
-    - ``both`` — union of live + backtest (``run_id`` required)
+    - ``backtest`` — ``backtest_bets`` for the given run(s)
+    - ``both`` — union of live + backtest (run(s) required)
+
+    Accepts either ``run_ids=<csv>`` (preferred) or single ``run_id=<id>``
+    for back-compat.
     """
+    ids = _resolve_run_ids(run_ids, run_id)
     if source == "live":
         f = facets_for_live()
     elif source == "backtest":
-        if not run_id:
-            raise HTTPException(status_code=400, detail="run_id required when source=backtest")
-        f = facets_for_backtest(run_id)
+        if not ids:
+            raise HTTPException(status_code=400, detail="run_ids required when source=backtest")
+        f = facets_for_backtest(ids)
     elif source == "both":
-        if not run_id:
-            raise HTTPException(status_code=400, detail="run_id required when source=both")
-        f = facets_for_both(run_id)
+        if not ids:
+            raise HTTPException(status_code=400, detail="run_ids required when source=both")
+        f = facets_for_both(ids)
     else:
         raise HTTPException(status_code=400, detail=f"unknown source={source!r}")
     return {

@@ -52,9 +52,16 @@ export function ExploreTab() {
   const { t } = useLocale();
   const searchParams = useSearchParams();
   const source = (searchParams.get("source") as "live" | "backtest" | "both") ?? "live";
-  const runId = searchParams.get("run_id") ?? undefined;
-  const needsRun = source !== "live" && !runId;
-  const facets = usePicksFacets(source, runId);
+  const runIdsCsv = searchParams.get("run_ids");
+  const legacyRunId = searchParams.get("run_id");
+  const runIds = useMemo(() => {
+    if (runIdsCsv) return runIdsCsv.split(",").map((s) => s.trim()).filter(Boolean);
+    if (legacyRunId) return [legacyRunId];
+    return [] as string[];
+  }, [runIdsCsv, legacyRunId]);
+  const runIdsKey = runIds.join(",");
+  const needsRun = source !== "live" && runIds.length === 0;
+  const facets = usePicksFacets(source, runIds);
   const filters = useMemo(
     () => filtersFromSearchParams(new URLSearchParams(searchParams.toString())),
     [searchParams],
@@ -111,10 +118,10 @@ export function ExploreTab() {
       try {
         const [hist, byEdge, byPrice, byCompSel] = await Promise.all([
           // Raw history — unfiltered by FilterBar, but honors the active data source.
-          fetchHistory({ status: "settled", limit: 1000, source, run_id: runId }),
-          fetchStats(["edge_bucket"], apiFilters, source, runId),
-          fetchStats(["price_bucket"], apiFilters, source, runId),
-          fetchStats(["competition", "selection"], apiFilters, source, runId),
+          fetchHistory({ status: "settled", limit: 1000, source, runIds }),
+          fetchStats(["edge_bucket"], apiFilters, source, runIds),
+          fetchStats(["price_bucket"], apiFilters, source, runIds),
+          fetchStats(["competition", "selection"], apiFilters, source, runIds),
         ]);
         if (cancelled) return;
         setHistory(hist.rows);
@@ -146,7 +153,7 @@ export function ExploreTab() {
     apiFilters.priceMin,
     apiFilters.priceMax,
     source,
-    runId,
+    runIdsKey,
   ]);
 
   const scatterPoints: ScatterPoint[] = useMemo(() => {

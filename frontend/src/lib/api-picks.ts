@@ -113,12 +113,12 @@ export async function fetchStats(
   groupBy: StatsGroupBy[],
   filters: StatsFilters = {},
   source?: "live" | "backtest" | "both",
-  run_id?: string
+  runIds?: string | string[]
 ): Promise<StatsResponse> {
   const qs = buildQuery(groupBy, filters);
   const params = new URLSearchParams(qs);
   if (source) params.set("source", source);
-  if (run_id) params.set("run_id", run_id);
+  setRunIds(params, runIds);
   const r = await fetch(`/api/picks/stats?${params.toString()}`, { cache: "no-store" });
   if (!r.ok) throw new Error(`stats: HTTP ${r.status}`);
   return (await r.json()) as StatsResponse;
@@ -128,7 +128,7 @@ export async function fetchCalibration(
   model: string,
   filters: StatsFilters = {},
   source?: "live" | "backtest" | "both",
-  run_id?: string
+  runIds?: string | string[]
 ): Promise<CalibrationResponse> {
   const params = new URLSearchParams({ model });
   if (filters.dateFrom) params.set("date_from", filters.dateFrom);
@@ -136,7 +136,7 @@ export async function fetchCalibration(
   if (filters.market?.length) params.set("market", filters.market.join(","));
   if (filters.competition?.length) params.set("competition", filters.competition.join(","));
   if (source) params.set("source", source);
-  if (run_id) params.set("run_id", run_id);
+  setRunIds(params, runIds);
   const r = await fetch(`/api/picks/stats/calibration?${params.toString()}`, { cache: "no-store" });
   if (!r.ok) throw new Error(`calibration: HTTP ${r.status}`);
   return (await r.json()) as CalibrationResponse;
@@ -146,14 +146,26 @@ export async function fetchHistory(opts: {
   status?: "settled" | "pending" | "voided";
   limit?: number;
   source?: "live" | "backtest" | "both";
-  run_id?: string;
+  runIds?: string | string[];
 } = {}): Promise<HistoryResponse> {
   const params = new URLSearchParams();
   if (opts.status) params.set("status", opts.status);
   if (opts.limit) params.set("limit", String(opts.limit));
   if (opts.source) params.set("source", opts.source);
-  if (opts.run_id) params.set("run_id", opts.run_id);
+  setRunIds(params, opts.runIds);
   const r = await fetch(`/api/picks/history?${params.toString()}`, { cache: "no-store" });
   if (!r.ok) throw new Error(`history: HTTP ${r.status}`);
   return (await r.json()) as HistoryResponse;
+}
+
+function setRunIds(params: URLSearchParams, runIds: string | string[] | undefined): void {
+  if (!runIds) return;
+  const arr = Array.isArray(runIds) ? runIds.filter(Boolean) : [runIds];
+  if (arr.length === 0) return;
+  if (arr.length === 1) {
+    // Keep the single-id form so server logs stay readable for solo runs.
+    params.set("run_id", arr[0]);
+  } else {
+    params.set("run_ids", arr.join(","));
+  }
 }

@@ -72,7 +72,7 @@ def db(tmp_path: Path, monkeypatch) -> Iterator[Path]:
 
 def test_aggregate_returns_one_row_no_groupby(db):
     req = BacktestStatsRequest(
-        run_id="r1",
+        run_ids=("r1",),
         filters=BacktestStatsFilter(),
     )
     rows = aggregate_backtest(req)
@@ -87,7 +87,7 @@ def test_aggregate_returns_one_row_no_groupby(db):
 
 def test_aggregate_group_by_selection(db):
     req = BacktestStatsRequest(
-        run_id="r1",
+        run_ids=("r1",),
         filters=BacktestStatsFilter(),
         group_by=("selection",),
     )

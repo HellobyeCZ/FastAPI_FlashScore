@@ -39,7 +39,6 @@ import { DataSourcePicker } from "@/components/picks/DataSourcePicker";
 import { RunBacktestButton } from "@/components/picks/RunBacktestButton";
 import { BacktestAdvancedDialog } from "@/components/picks/BacktestAdvancedDialog";
 import { BacktestRunsPanel } from "@/components/picks/BacktestRunsPanel";
-import { listBacktestRuns } from "@/lib/api-backtest";
 
 type CompareView = "pnl" | "clv" | "market" | "competition";
 
@@ -89,13 +88,41 @@ export function ModelsTab() {
   const [dialogOpen, setDialogOpen] = useState(false);
 
   const source = (searchParams.get("source") as "live" | "backtest" | "both") ?? "live";
-  const runId = searchParams.get("run_id") ?? undefined;
+  const runIdsCsv = searchParams.get("run_ids");
+  const legacyRunId = searchParams.get("run_id");
+  const runIds = useMemo(() => {
+    if (runIdsCsv) return runIdsCsv.split(",").map((s) => s.trim()).filter(Boolean);
+    if (legacyRunId) return [legacyRunId];
+    return [] as string[];
+  }, [runIdsCsv, legacyRunId]);
+  const runIdsKey = runIds.join(",");
 
   const handleSelectRun = useCallback(
     (id: string) => {
       const sp = new URLSearchParams(searchParams.toString());
       sp.set("source", source === "live" ? "backtest" : source);
       sp.set("run_id", id);
+      sp.delete("run_ids");
+      router.replace(`?${sp.toString()}`);
+    },
+    [router, searchParams, source],
+  );
+
+  const handleCompareRuns = useCallback(
+    (ids: string[]) => {
+      const sp = new URLSearchParams(searchParams.toString());
+      if (ids.length === 0) {
+        sp.delete("run_id");
+        sp.delete("run_ids");
+      } else if (ids.length === 1) {
+        sp.set("source", source === "live" ? "backtest" : source);
+        sp.set("run_id", ids[0]);
+        sp.delete("run_ids");
+      } else {
+        sp.set("source", source === "live" ? "backtest" : source);
+        sp.set("run_ids", ids.join(","));
+        sp.delete("run_id");
+      }
       router.replace(`?${sp.toString()}`);
     },
     [router, searchParams, source],
@@ -130,29 +157,7 @@ export function ModelsTab() {
     filters.edge,
   ]);
 
-  const needsRun = source !== "live" && !runId;
-
-  useEffect(() => {
-    if (!needsRun) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const runs = await listBacktestRuns();
-        if (cancelled) return;
-        const latest = runs.find((r) => r.status === "completed");
-        if (latest) {
-          const sp = new URLSearchParams(searchParams.toString());
-          sp.set("run_id", latest.id);
-          router.replace(`?${sp.toString()}`);
-        }
-      } catch {
-        /* ignore — empty state will render */
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [needsRun, router, searchParams]);
+  const needsRun = source !== "live" && runIds.length === 0;
 
   useEffect(() => {
     if (needsRun) {
@@ -166,11 +171,11 @@ export function ModelsTab() {
       try {
         const [byModel, byModelDay, byModelMarket, byModelComp, history] =
           await Promise.all([
-            fetchStats(["model"], apiFilters, source, runId),
-            fetchStats(["model", "day"], apiFilters, source, runId),
-            fetchStats(["model", "market"], apiFilters, source, runId),
-            fetchStats(["model", "competition"], apiFilters, source, runId),
-            fetchHistory({ status: "settled", limit: 5000, source, run_id: runId }),
+            fetchStats(["model"], apiFilters, source, runIds),
+            fetchStats(["model", "day"], apiFilters, source, runIds),
+            fetchStats(["model", "market"], apiFilters, source, runIds),
+            fetchStats(["model", "competition"], apiFilters, source, runIds),
+            fetchHistory({ status: "settled", limit: 5000, source, runIds }),
           ]);
         if (cancelled) return;
 
@@ -271,7 +276,7 @@ export function ModelsTab() {
     apiFilters.edgeMin,
     apiFilters.edgeMax,
     source,
-    runId,
+    runIdsKey,
     needsRun,
   ]);
 
@@ -418,7 +423,11 @@ export function ModelsTab() {
           ▸ no backtest run selected. Click <span className="text-zinc-200">Run backtest</span> to queue one,
           or pick an existing run below.
         </div>
-        <BacktestRunsPanel onSelect={handleSelectRun} />
+        <BacktestRunsPanel
+          onSelect={handleSelectRun}
+          onCompare={handleCompareRuns}
+          activeIds={runIds}
+        />
         <BacktestAdvancedDialog
           open={dialogOpen}
           onClose={() => setDialogOpen(false)}
@@ -451,7 +460,11 @@ export function ModelsTab() {
           onAdvanced={() => setDialogOpen(true)}
         />
       </div>
-      <BacktestRunsPanel onSelect={handleSelectRun} />
+      <BacktestRunsPanel
+        onSelect={handleSelectRun}
+        onCompare={handleCompareRuns}
+        activeIds={runIds}
+      />
       <BacktestAdvancedDialog
         open={dialogOpen}
         onClose={() => setDialogOpen(false)}
