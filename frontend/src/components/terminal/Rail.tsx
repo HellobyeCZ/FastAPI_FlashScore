@@ -132,7 +132,7 @@ export function Rail({
       {open && (
         <nav
           aria-label="Primary (mobile)"
-          className="fixed inset-0 z-40 flex flex-col bg-bg/95 px-6 pt-10 md:hidden"
+          className="fixed inset-0 z-40 flex flex-col bg-bg px-6 pt-10 md:hidden"
         >
           <button
             onClick={onClose}
