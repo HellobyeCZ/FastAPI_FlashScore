@@ -49,7 +49,7 @@ function fmtPct(v: number | null | undefined): string {
 }
 
 export function ExploreTab() {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const searchParams = useSearchParams();
   const source = (searchParams.get("source") as "live" | "backtest" | "both") ?? "live";
   const runIdsCsv = searchParams.get("run_ids");
@@ -247,7 +247,7 @@ export function ExploreTab() {
         </div>
         <div className="border border-zinc-700 bg-bg p-4 font-mono text-[12px] text-zinc-400">
           ▸ no backtest run selected. Open the{" "}
-          <a href="/picks/models" className="text-zinc-200 underline">Models</a> tab
+          <a href={`/${locale}/picks/models`} className="text-zinc-200 underline">Models</a> tab
           to queue or pick a run.
         </div>
       </div>

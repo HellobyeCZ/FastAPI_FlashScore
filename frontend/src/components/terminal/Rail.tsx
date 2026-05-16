@@ -1,10 +1,32 @@
 "use client";
 import { Fragment } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { clsx } from "clsx";
 import { Glyph } from "./Glyph";
 import { useLocale } from "@/contexts/LocaleContext";
+
+// When navigating *between* /picks/* routes, carry over the data-source
+// selection so switching tabs preserves the current backtest run(s).
+const PICKS_QUERY_KEYS = ["source", "run_id", "run_ids"] as const;
+
+function picksQuerySuffix(
+  pathname: string,
+  itemHref: string,
+  searchParams: URLSearchParams | null,
+): string {
+  if (!searchParams) return "";
+  const fromPicks = pathname.includes("/picks/");
+  const toPicks = itemHref.includes("/picks/");
+  if (!fromPicks || !toPicks) return "";
+  const carried = new URLSearchParams();
+  for (const k of PICKS_QUERY_KEYS) {
+    const v = searchParams.get(k);
+    if (v) carried.set(k, v);
+  }
+  const qs = carried.toString();
+  return qs ? `?${qs}` : "";
+}
 
 type Item = {
   href: string;
@@ -41,11 +63,13 @@ function useRailItems(): Item[] {
 function RailList({
   items,
   pathname,
+  searchParams,
   onNavigate,
   variant
 }: {
   items: Item[];
   pathname: string;
+  searchParams: URLSearchParams | null;
   onNavigate?: () => void;
   variant: "desktop" | "mobile";
 }) {
@@ -56,18 +80,20 @@ function RailList({
           ? pathname.startsWith(it.matchPrefix)
           : pathname === it.href;
         const key = `${it.href}-${i}`;
+        const suffix = picksQuerySuffix(pathname, it.href, searchParams);
+        const itemWithHref = suffix ? { ...it, href: `${it.href}${suffix}` } : it;
         if (it.separatorAbove) {
           return (
             <Fragment key={key}>
               <li className="my-2 border-t border-border" aria-hidden />
-              <RailRow item={it} active={active} variant={variant} onNavigate={onNavigate} />
+              <RailRow item={itemWithHref} active={active} variant={variant} onNavigate={onNavigate} />
             </Fragment>
           );
         }
         return (
           <RailRow
             key={key}
-            item={it}
+            item={itemWithHref}
             active={active}
             variant={variant}
             onNavigate={onNavigate}
@@ -83,6 +109,7 @@ export function Rail({
   onClose
 }: { open?: boolean; onClose?: () => void } = {}) {
   const pathname = usePathname() ?? "/";
+  const searchParams = useSearchParams();
   const items = useRailItems();
 
   return (
@@ -98,7 +125,7 @@ export function Rail({
         >
           <Glyph kind="section" /> Navigation
         </div>
-        <RailList items={items} pathname={pathname} variant="desktop" />
+        <RailList items={items} pathname={pathname} searchParams={searchParams} variant="desktop" />
       </nav>
 
       {/* mobile drawer */}
@@ -123,6 +150,7 @@ export function Rail({
           <RailList
             items={items}
             pathname={pathname}
+            searchParams={searchParams}
             variant="mobile"
             onNavigate={onClose}
           />
