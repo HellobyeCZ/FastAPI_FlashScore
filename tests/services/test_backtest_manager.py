@@ -209,3 +209,12 @@ def test_leakage_assertion_fails_run(db_path, monkeypatch):
     assert result.status == "failed"
     assert ("leakage" in (result.error or "").lower()
             or "bet_ts" in (result.error or ""))
+
+
+def test_execute_imports_log_backtest_run_and_update_mlflow_run_id():
+    """Module-level imports must include both symbols so the integration
+    wiring exists. (Full _execute path is covered by manual smoke; this
+    is a guard against accidental import removal.)"""
+    from app.services import backtest_manager as bm
+    assert callable(bm.log_backtest_run)
+    assert callable(bm.update_mlflow_run_id)

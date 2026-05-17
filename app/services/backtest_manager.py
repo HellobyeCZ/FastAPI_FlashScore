@@ -35,8 +35,10 @@ from app.ml.backtest_storage import (
     insert_run,
     list_bets,
     list_runs,
+    update_mlflow_run_id,
     update_run_status,
 )
+from app.ml.tracking import log_backtest_run
 from app.ml.labels import FOOTBALL_PHASE1_SCOPE
 from app.ml.market_spec import get_spec
 from app.ml.trainable import TRAINABLE, resolve_model_for_backtest
@@ -251,6 +253,19 @@ class BacktestManager:
             await asyncio.to_thread(
                 self._persist_completed_sync, run_id, report, bet_rows
             )
+            mlflow_run_id = log_backtest_run(
+                report=report,
+                model_name=row.model,
+                train_until=row.train_until,
+                test_until=row.test_until,
+                market_spec=get_spec(row.market_spec or "football_1x2_ft"),
+                feature_columns=tuple(),  # filled in once BacktestReport carries it; safe default
+                backtest_run_id=run_id,
+            )
+            if mlflow_run_id:
+                await asyncio.to_thread(
+                    self._update_mlflow_id_sync, run_id, mlflow_run_id,
+                )
         except Exception as exc:
             tb = traceback.format_exc(limit=4)
             await asyncio.to_thread(
@@ -357,6 +372,7 @@ class BacktestManager:
                 "brier": report.brier,
                 "log_loss": report.log_loss,
                 "max_drawdown": report.max_drawdown,
+                "sharpe_adjusted": report.sharpe_adjusted,
                 "reliability_json": json.dumps(
                     [asdict(b) for b in report.reliability_buckets]
                 ),
@@ -367,3 +383,7 @@ class BacktestManager:
                 (run_id,),
             )
             conn.commit()
+
+    def _update_mlflow_id_sync(self, run_id: str, mlflow_run_id: str) -> None:
+        with _connect() as conn:
+            update_mlflow_run_id(conn, run_id, mlflow_run_id)
