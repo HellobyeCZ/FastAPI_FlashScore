@@ -253,7 +253,11 @@ class BacktestManager:
             await asyncio.to_thread(
                 self._persist_completed_sync, run_id, report, bet_rows
             )
-            mlflow_run_id = log_backtest_run(
+            # Run MLflow logging in a thread — its calls are synchronous HTTP
+            # to the tracking server. Phase A latency is sub-ms locally; this
+            # guards against the Phase B (remote MLflow) regression.
+            mlflow_run_id = await asyncio.to_thread(
+                log_backtest_run,
                 report=report,
                 model_name=row.model,
                 train_until=row.train_until,
