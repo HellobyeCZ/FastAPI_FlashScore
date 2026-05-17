@@ -178,6 +178,7 @@ def finalize_run(
     cols = (
         "test_events", "total_bets", "hit_rate", "roi", "mean_clv",
         "brier", "log_loss", "max_drawdown", "reliability_json",
+        "sharpe_adjusted",
     )
     sets = ["status = ?", "finished_at = ?"] + [f"{c} = ?" for c in cols]
     params: List[Any] = ["completed", finished_at]
@@ -186,6 +187,20 @@ def finalize_run(
     conn.execute(
         f"UPDATE backtest_runs SET {', '.join(sets)} WHERE id = ?",
         params,
+    )
+    conn.commit()
+
+
+def update_mlflow_run_id(
+    conn: sqlite3.Connection,
+    run_id: str,
+    mlflow_run_id: Optional[str],
+) -> None:
+    """Persist the MLflow run id cross-link onto a backtest run.
+    Idempotent — safe to call with None (clears the link)."""
+    conn.execute(
+        "UPDATE backtest_runs SET mlflow_run_id = ? WHERE id = ?",
+        (mlflow_run_id, run_id),
     )
     conn.commit()
 

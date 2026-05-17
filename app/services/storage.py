@@ -1569,6 +1569,14 @@ class SnapshotStore:
             connection.execute(
                 "ALTER TABLE backtest_runs ADD COLUMN market_spec TEXT NOT NULL DEFAULT 'football_1x2_ft'"
             )
+        if "sharpe_adjusted" not in existing_cols:
+            connection.execute(
+                "ALTER TABLE backtest_runs ADD COLUMN sharpe_adjusted REAL"
+            )
+        if "mlflow_run_id" not in existing_cols:
+            connection.execute(
+                "ALTER TABLE backtest_runs ADD COLUMN mlflow_run_id TEXT"
+            )
         connection.commit()
 
     @staticmethod

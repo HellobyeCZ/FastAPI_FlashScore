@@ -36,7 +36,8 @@ def conn(tmp_path: Path) -> Iterator[sqlite3.Connection]:
             test_events INTEGER, total_bets INTEGER, hit_rate REAL,
             roi REAL, mean_clv REAL, brier REAL, log_loss REAL,
             max_drawdown REAL, reliability_json TEXT,
-            stage TEXT, market_spec TEXT NOT NULL DEFAULT 'football_1x2_ft'
+            stage TEXT, market_spec TEXT NOT NULL DEFAULT 'football_1x2_ft',
+            sharpe_adjusted REAL, mlflow_run_id TEXT
         );
         CREATE TABLE backtest_bets (
             run_id TEXT, event_id TEXT, bet_ts TEXT, kickoff_ts TEXT,
@@ -150,3 +151,54 @@ def test_run_row_round_trips_stage_and_market_spec(conn):
     assert fetched is not None
     assert fetched.stage is None
     assert fetched.market_spec == "football_1x2_ft"
+
+
+# ---------------------------------------------------------------------------
+# Phase A: sharpe_adjusted + mlflow_run_id
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def db(tmp_path: Path) -> Path:
+    """DB with backtest tables created via _ensure_backtest_tables (no Prisma needed)."""
+    p = tmp_path / "t.sqlite3"
+    from app.services.storage import SnapshotStore
+    with sqlite3.connect(p) as c:
+        SnapshotStore._ensure_backtest_tables(c)
+        c.execute(
+            "INSERT INTO backtest_runs (id, label, model, train_until, "
+            "min_edge, kelly_fraction, force_bets, scope_json, status, created_at) "
+            "VALUES ('r1','l','logistic','2024-08-01T00:00:00Z',0.02,0.25,0,'[]','queued','2026-05-15T10:00:00Z')"
+        )
+        c.commit()
+    return p
+
+
+def test_sharpe_adjusted_and_mlflow_run_id_columns_exist(db):
+    with sqlite3.connect(db) as c:
+        cols = {r[1] for r in c.execute("PRAGMA table_info(backtest_runs)").fetchall()}
+    assert "sharpe_adjusted" in cols
+    assert "mlflow_run_id" in cols
+
+
+def test_finalize_run_persists_sharpe_adjusted(db):
+    from app.ml.backtest_storage import finalize_run
+    with sqlite3.connect(db) as c:
+        c.row_factory = sqlite3.Row
+        finalize_run(c, "r1", finished_at="2026-05-15T11:00:00Z", summary={
+            "test_events": 10, "total_bets": 5,
+            "hit_rate": 0.4, "roi": -0.05, "mean_clv": 0.0,
+            "brier": 0.2, "log_loss": 0.7, "max_drawdown": 1.0,
+            "reliability_json": "[]",
+            "sharpe_adjusted": 0.42,
+        })
+        row = c.execute("SELECT sharpe_adjusted FROM backtest_runs WHERE id='r1'").fetchone()
+    assert row["sharpe_adjusted"] == pytest.approx(0.42)
+
+
+def test_update_mlflow_run_id(db):
+    from app.ml.backtest_storage import update_mlflow_run_id
+    with sqlite3.connect(db) as c:
+        c.row_factory = sqlite3.Row
+        update_mlflow_run_id(c, "r1", "abcdef1234")
+        row = c.execute("SELECT mlflow_run_id FROM backtest_runs WHERE id='r1'").fetchone()
+    assert row["mlflow_run_id"] == "abcdef1234"
