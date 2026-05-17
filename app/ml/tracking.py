@@ -111,25 +111,35 @@ def log_training_run(
 ) -> Optional[str]:
     """Log a single training run. Returns the MLflow run_id, or None if
     tracking is disabled."""
+    global _DISABLED
     if not _ensure_tracking():
         return None
     git_sha = git_sha or _git_sha_or_none()
     run_name = f"train_{model_name}_{train_until[:10]}"
-    with mlflow.start_run(run_name=run_name) as run:
-        mlflow.set_tag("purpose", "offline_training")
-        for k, v in _canonical_params(
-            model_name=model_name, train_until=train_until,
-            market_spec=market_spec, feature_columns=feature_columns,
-            n_train_events=n_train_events, git_sha=git_sha,
-        ).items():
-            mlflow.log_param(k, v)
-        for k, v in metrics_uncalibrated.items():
-            mlflow.log_metric(f"uncal_{k}", float(v))
-        for k, v in metrics_calibrated.items():
-            mlflow.log_metric(f"cal_{k}", float(v))
-        save_picks_model(model_name=model_name, trained_model=trained_model,
-                         extra_files=dict(artifact_extras or {}))
-        return run.info.run_id
+    try:
+        with mlflow.start_run(run_name=run_name) as run:
+            mlflow.set_tag("purpose", "offline_training")
+            for k, v in _canonical_params(
+                model_name=model_name, train_until=train_until,
+                market_spec=market_spec, feature_columns=feature_columns,
+                n_train_events=n_train_events, git_sha=git_sha,
+            ).items():
+                mlflow.log_param(k, v)
+            for k, v in metrics_uncalibrated.items():
+                mlflow.log_metric(f"uncal_{k}", float(v))
+            for k, v in metrics_calibrated.items():
+                mlflow.log_metric(f"cal_{k}", float(v))
+            save_picks_model(model_name=model_name, trained_model=trained_model,
+                             extra_files=dict(artifact_extras or {}))
+            return run.info.run_id
+    except Exception as e:
+        _log.warning(
+            "mlflow_disabled_for_process",
+            extra={"event": "mlflow_disabled_for_process",
+                   "reason": str(e), "stage": "log_training_run"},
+        )
+        _DISABLED = True
+        return None
 
 
 def log_backtest_run(
@@ -145,37 +155,47 @@ def log_backtest_run(
 ) -> Optional[str]:
     """Log a single walk-forward backtest. Returns the MLflow run_id, or
     None if tracking is disabled."""
+    global _DISABLED
     if not _ensure_tracking():
         return None
     git_sha = git_sha or _git_sha_or_none()
     run_name = f"bt_{model_name}_{train_until[:10]}"
-    with mlflow.start_run(run_name=run_name) as run:
-        mlflow.set_tag("purpose", "walk_forward_backtest")
-        mlflow.set_tag("backtest_run_id", backtest_run_id)
-        params = _canonical_params(
-            model_name=model_name, train_until=train_until,
-            market_spec=market_spec, feature_columns=feature_columns,
-            n_train_events=report.n_train_events, git_sha=git_sha,
+    try:
+        with mlflow.start_run(run_name=run_name) as run:
+            mlflow.set_tag("purpose", "walk_forward_backtest")
+            mlflow.set_tag("backtest_run_id", backtest_run_id)
+            params = _canonical_params(
+                model_name=model_name, train_until=train_until,
+                market_spec=market_spec, feature_columns=feature_columns,
+                n_train_events=report.n_train_events, git_sha=git_sha,
+            )
+            params["test_until"] = test_until or ""
+            params["min_edge"] = report.config.get("min_edge")
+            params["kelly_fraction"] = report.config.get("kelly_fraction")
+            for k, v in params.items():
+                mlflow.log_param(k, v)
+            metrics = {
+                "n_bets": float(report.total_bets),
+                "hit_rate": float(report.hit_rate),
+                "roi": float(report.roi),
+                "brier": float(report.brier),
+                "log_loss": float(report.log_loss),
+                "mean_clv": float(report.mean_clv) if report.mean_clv is not None else 0.0,
+                "max_drawdown": float(report.max_drawdown),
+                "return_per_bet": float(report.return_per_bet),
+                "rmse_per_bet": float(report.rmse_per_bet),
+                "sharpe_adjusted": float(report.sharpe_adjusted),
+            }
+            for k, v in metrics.items():
+                mlflow.log_metric(k, v)
+            if report.reliability_svg:
+                mlflow.log_text(report.reliability_svg, "reliability.svg")
+            return run.info.run_id
+    except Exception as e:
+        _log.warning(
+            "mlflow_disabled_for_process",
+            extra={"event": "mlflow_disabled_for_process",
+                   "reason": str(e), "stage": "log_backtest_run"},
         )
-        params["test_until"] = test_until or ""
-        params["min_edge"] = report.config.get("min_edge")
-        params["kelly_fraction"] = report.config.get("kelly_fraction")
-        for k, v in params.items():
-            mlflow.log_param(k, v)
-        metrics = {
-            "n_bets": float(report.total_bets),
-            "hit_rate": float(report.hit_rate),
-            "roi": float(report.roi),
-            "brier": float(report.brier),
-            "log_loss": float(report.log_loss),
-            "mean_clv": float(report.mean_clv) if report.mean_clv is not None else 0.0,
-            "max_drawdown": float(report.max_drawdown),
-            "return_per_bet": float(report.return_per_bet),
-            "rmse_per_bet": float(report.rmse_per_bet),
-            "sharpe_adjusted": float(report.sharpe_adjusted),
-        }
-        for k, v in metrics.items():
-            mlflow.log_metric(k, v)
-        if report.reliability_svg:
-            mlflow.log_text(report.reliability_svg, "reliability.svg")
-        return run.info.run_id
+        _DISABLED = True
+        return None

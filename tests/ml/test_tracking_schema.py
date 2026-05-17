@@ -98,3 +98,39 @@ def test_disabled_via_env_returns_none(tmp_path, monkeypatch):
     )
     assert out is None
     importlib.reload(app.ml.tracking)
+
+
+def test_unreachable_server_flips_disabled_and_returns_none(tmp_path, monkeypatch):
+    """A bad MLFLOW_TRACKING_URI must cause the first call to:
+      1. emit a warning,
+      2. flip _DISABLED,
+      3. return None.
+    Subsequent calls in the same process must short-circuit without retry."""
+    monkeypatch.delenv("APP_MLFLOW_DISABLED", raising=False)
+    # http://127.0.0.1:1 is guaranteed unreachable (port 1 is reserved).
+    monkeypatch.setenv("MLFLOW_TRACKING_URI", "http://127.0.0.1:1")
+    import importlib, app.ml.tracking
+    importlib.reload(app.ml.tracking)
+
+    from app.ml.market_spec import FOOTBALL_1X2_FT
+
+    # First call: should fail gracefully and flip _DISABLED.
+    out1 = app.ml.tracking.log_training_run(
+        model_name="logistic", train_until="2024-08-01T00:00:00Z",
+        market_spec=FOOTBALL_1X2_FT, feature_columns=(), n_train_events=0,
+        metrics_uncalibrated={"brier": 0.21}, metrics_calibrated={"brier": 0.20},
+        trained_model=None,
+    )
+    assert out1 is None
+    assert app.ml.tracking._DISABLED is True
+
+    # Second call: short-circuited at _ensure_tracking, no retry.
+    out2 = app.ml.tracking.log_training_run(
+        model_name="logistic", train_until="2024-08-01T00:00:00Z",
+        market_spec=FOOTBALL_1X2_FT, feature_columns=(), n_train_events=0,
+        metrics_uncalibrated={}, metrics_calibrated={},
+        trained_model=None,
+    )
+    assert out2 is None
+
+    importlib.reload(app.ml.tracking)
