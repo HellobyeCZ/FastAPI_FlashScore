@@ -151,6 +151,7 @@ def log_backtest_run(
     market_spec: MarketSpec,
     feature_columns: Sequence[str],
     backtest_run_id: str,
+    n_train_events: Optional[int] = None,
     git_sha: Optional[str] = None,
 ) -> Optional[str]:
     """Log a single walk-forward backtest. Returns the MLflow run_id, or
@@ -167,7 +168,8 @@ def log_backtest_run(
             params = _canonical_params(
                 model_name=model_name, train_until=train_until,
                 market_spec=market_spec, feature_columns=feature_columns,
-                n_train_events=report.n_train_events, git_sha=git_sha,
+                n_train_events=n_train_events if n_train_events is not None else report.n_train_events,
+                git_sha=git_sha,
             )
             params["test_until"] = test_until or ""
             params["min_edge"] = report.config.get("min_edge")

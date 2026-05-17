@@ -54,7 +54,10 @@ def fit_logistic_at(train_until: str, spec: MarketSpec) -> ModelFn:
             matrix, train_until=train_until, calib_until=train_until
         )
         raw = train_logistic(split.train)
-        return make_logistic_model_fn(raw, calibrated=False)
+        fn = make_logistic_model_fn(raw, calibrated=False)
+        fn.feature_columns = tuple(raw.feature_columns)
+        fn.n_train_events = len(split.train.event_ids)
+        return fn
 
     calib_until = sorted(ts for _, ts in pre)[int(len(pre) * 0.75)]
     split = chronological_split(
@@ -62,7 +65,10 @@ def fit_logistic_at(train_until: str, spec: MarketSpec) -> ModelFn:
     )
     raw = train_logistic(split.train)
     cal = isotonic_calibrate(raw, split.calib)
-    return make_logistic_model_fn(cal, calibrated=True)
+    fn = make_logistic_model_fn(cal, calibrated=True)
+    fn.feature_columns = tuple(cal.feature_columns)
+    fn.n_train_events = len(split.train.event_ids)
+    return fn
 
 
 def fit_dixon_coles_at(train_until: str, spec: MarketSpec) -> ModelFn:
@@ -134,7 +140,10 @@ def fit_dixon_coles_at(train_until: str, spec: MarketSpec) -> ModelFn:
     else:
         T = 1.0
 
-    return make_dixon_coles_model_fn(rates_by_event, cfg, temperature=T)
+    fn = make_dixon_coles_model_fn(rates_by_event, cfg, temperature=T)
+    fn.feature_columns = ("home_attack", "home_defense", "away_attack", "away_defense")
+    fn.n_train_events = len(events_pre)
+    return fn
 
 
 def fit_hgb_at(train_until: str, spec: MarketSpec) -> ModelFn:
@@ -164,7 +173,10 @@ def fit_hgb_at(train_until: str, spec: MarketSpec) -> ModelFn:
         )
         raw = train_hgb(split.train)
         from app.ml.models import make_trained_model_fn
-        return make_trained_model_fn(raw, calibrated=False, name_prefix="hgb")
+        fn = make_trained_model_fn(raw, calibrated=False, name_prefix="hgb")
+        fn.feature_columns = tuple(raw.feature_columns)
+        fn.n_train_events = len(split.train.event_ids)
+        return fn
 
     calib_until = sorted(ts for _, ts in pre)[int(len(pre) * 0.75)]
     split = chronological_split(
@@ -173,7 +185,10 @@ def fit_hgb_at(train_until: str, spec: MarketSpec) -> ModelFn:
     raw = train_hgb(split.train)
     cal = isotonic_calibrate(raw, split.calib)
     from app.ml.models import make_trained_model_fn
-    return make_trained_model_fn(cal, calibrated=True, name_prefix="hgb")
+    fn = make_trained_model_fn(cal, calibrated=True, name_prefix="hgb")
+    fn.feature_columns = tuple(cal.feature_columns)
+    fn.n_train_events = len(split.train.event_ids)
+    return fn
 
 
 def _fit_and_apply_preprocessor(train: "FeatureMatrix"):
@@ -246,7 +261,10 @@ def fit_hgb_pca_at(train_until: str, spec: MarketSpec) -> ModelFn:
         raw.feature_columns = HGB_FEATURE_COLUMNS
         raw.preprocessor = prep
         from app.ml.models import make_trained_model_fn
-        return make_trained_model_fn(raw, calibrated=False, name_prefix="hgb_pca")
+        fn = make_trained_model_fn(raw, calibrated=False, name_prefix="hgb_pca")
+        fn.feature_columns = tuple(HGB_FEATURE_COLUMNS)
+        fn.n_train_events = len(split.train.event_ids)
+        return fn
 
     calib_until = sorted(ts for _, ts in pre)[int(len(pre) * 0.75)]
     split = chronological_split(
@@ -268,7 +286,10 @@ def fit_hgb_pca_at(train_until: str, spec: MarketSpec) -> ModelFn:
     cal = isotonic_calibrate(raw, transformed_calib)
     cal.preprocessor = prep
     from app.ml.models import make_trained_model_fn
-    return make_trained_model_fn(cal, calibrated=True, name_prefix="hgb_pca")
+    fn = make_trained_model_fn(cal, calibrated=True, name_prefix="hgb_pca")
+    fn.feature_columns = tuple(HGB_FEATURE_COLUMNS)
+    fn.n_train_events = len(split.train.event_ids)
+    return fn
 
 
 TRAINABLE: Dict[str, Callable[[str, MarketSpec], ModelFn]] = {
@@ -291,4 +312,7 @@ def resolve_model_for_backtest(
     """
     if name in TRAINABLE:
         return TRAINABLE[name](train_until, spec)
-    return get_analytic(name)
+    fn = get_analytic(name)
+    fn.feature_columns = getattr(fn, "feature_columns", ())
+    fn.n_train_events = getattr(fn, "n_train_events", 0)
+    return fn

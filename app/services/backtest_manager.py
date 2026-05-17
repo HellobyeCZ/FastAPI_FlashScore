@@ -223,6 +223,9 @@ class BacktestManager:
                     self._mark_failed_sync, run_id, f"unknown model: {e}"
                 )
                 return
+            # Read metadata stashed by the trainable adapter (or analytic defaults).
+            feature_columns = tuple(getattr(model_fn, "feature_columns", ()))
+            n_train_events = int(getattr(model_fn, "n_train_events", 0) or 0)
 
             # Mark stage='backtesting' before run_backtest.
             await asyncio.to_thread(self._mark_stage_sync, run_id, "backtesting")
@@ -263,7 +266,8 @@ class BacktestManager:
                 train_until=row.train_until,
                 test_until=row.test_until,
                 market_spec=get_spec(row.market_spec or "football_1x2_ft"),
-                feature_columns=tuple(),  # filled in once BacktestReport carries it; safe default
+                feature_columns=feature_columns,
+                n_train_events=n_train_events,
                 backtest_run_id=run_id,
             )
             if mlflow_run_id:
