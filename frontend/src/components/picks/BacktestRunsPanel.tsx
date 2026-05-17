@@ -178,7 +178,7 @@ export function BacktestRunsPanel({
                 <td align="center">
                   {r.mlflow_run_id ? (
                     <a
-                      href={`http://127.0.0.1:5000/#/experiments/0/runs/${r.mlflow_run_id}`}
+                      href={`${process.env.NEXT_PUBLIC_MLFLOW_URL ?? "http://127.0.0.1:5000"}/#/experiments/1/runs/${r.mlflow_run_id}`}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="underline text-zinc-300"
