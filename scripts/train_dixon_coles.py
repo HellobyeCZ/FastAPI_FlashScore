@@ -47,7 +47,6 @@ from app.ml.labels import FOOTBALL_PHASE1_SCOPE
 from app.ml.training import (
     collect_events_for_dixon_coles,
     feature_set_hash,
-    log_run_to_mlflow,
 )
 
 
@@ -275,18 +274,14 @@ def main() -> int:
     (out_dir / "metrics.json").write_text(json.dumps(metrics, indent=2))
 
     if not args.no_mlflow:
-        run_id = log_run_to_mlflow(
-            run_name=label,
-            params={
-                "model": "dixon_coles",
-                "xg_weight": cfg.xg_weight,
-                "ewma_half_life": cfg.ewma_half_life,
-                "home_advantage": cfg.home_advantage,
-                "rho": cfg.rho,
-                "temperature": T,
-                "train_until": args.train_until,
-                "calib_until": args.calib_until,
-            },
+        from app.ml.tracking import log_training_run
+        from app.ml.market_spec import FOOTBALL_1X2_FT
+        run_id = log_training_run(
+            model_name="dixon_coles",
+            train_until=args.train_until,
+            market_spec=FOOTBALL_1X2_FT,
+            feature_columns=("home_attack", "home_defense", "away_attack", "away_defense"),
+            n_train_events=len(events),
             metrics_uncalibrated={
                 "brier": forced_uncal.brier,
                 "log_loss": forced_uncal.log_loss,
@@ -301,12 +296,14 @@ def main() -> int:
                 "gated_total_bets": gated_cal.total_bets,
                 "gated_roi": gated_cal.roi,
             },
-            reliability_svg_uncalibrated=render_reliability_svg(forced_uncal.reliability_buckets),
-            reliability_svg_calibrated=render_reliability_svg(forced_cal.reliability_buckets),
-            model_artifact_path=str(out_dir / "rates_snapshot.json"),
+            trained_model=rates_by_event,  # the dict of per-event rates
+            artifact_extras={
+                "reliability_uncalibrated.svg": render_reliability_svg(forced_uncal.reliability_buckets),
+                "reliability_calibrated.svg": render_reliability_svg(forced_cal.reliability_buckets),
+            },
         )
         if run_id:
-            print(f"\nMLflow run_id: {run_id}")
+            print(f"[mlflow] logged training run: {run_id}")
 
     print(f"\nArtifacts: {out_dir}/")
     print()

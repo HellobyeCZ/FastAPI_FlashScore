@@ -488,36 +488,36 @@ def log_run_to_mlflow(
     reliability_svg_uncalibrated: str,
     reliability_svg_calibrated: str,
     model_artifact_path: str,
-    tracking_uri: Optional[str] = None,
+    tracking_uri: Optional[str] = None,  # ignored — kept for backward compat
 ) -> Optional[str]:
-    """Log a single Phase 3 run to MLflow. Returns the run_id, or None
-    if MLflow isn't available."""
-    try:
-        import mlflow
-    except ImportError:
-        return None
+    """DEPRECATED: callers should switch to app.ml.tracking.log_training_run.
+    This shim forwards to the new entry point for one release of overlap.
+    """
+    import warnings
+    warnings.warn(
+        "log_run_to_mlflow is deprecated; use app.ml.tracking.log_training_run",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    from app.ml.tracking import log_training_run
+    from app.ml.market_spec import FOOTBALL_1X2_FT
 
-    if tracking_uri is None:
-        tracking_uri = "file://" + str(Path("mlruns").absolute())
-    mlflow.set_tracking_uri(tracking_uri)
-    mlflow.set_experiment("phase3_models")
+    model_name = str(params.get("model") or run_name.split("_")[0])
+    train_until = str(params.get("train_until") or "")
+    feature_columns = tuple(params.get("feature_columns") or ())
+    n_train_events = int(params.get("n_train") or 0)
 
-    with mlflow.start_run(run_name=run_name) as run:
-        for k, v in params.items():
-            mlflow.log_param(k, v)
-        for k, v in metrics_uncalibrated.items():
-            mlflow.log_metric(f"uncal_{k}", float(v))
-        for k, v in metrics_calibrated.items():
-            mlflow.log_metric(f"cal_{k}", float(v))
-
-        artifact_dir = Path(mlflow.get_artifact_uri().replace("file://", ""))
-        artifact_dir.mkdir(parents=True, exist_ok=True)
-        uncal_path = artifact_dir / "reliability_uncalibrated.svg"
-        cal_path = artifact_dir / "reliability_calibrated.svg"
-        uncal_path.write_text(reliability_svg_uncalibrated)
-        cal_path.write_text(reliability_svg_calibrated)
-        mlflow.log_artifact(str(uncal_path))
-        mlflow.log_artifact(str(cal_path))
-        mlflow.log_artifact(model_artifact_path)
-
-        return run.info.run_id
+    return log_training_run(
+        model_name=model_name,
+        train_until=train_until,
+        market_spec=FOOTBALL_1X2_FT,
+        feature_columns=feature_columns,
+        n_train_events=n_train_events,
+        metrics_uncalibrated=metrics_uncalibrated,
+        metrics_calibrated=metrics_calibrated,
+        trained_model=None,  # legacy: caller already wrote the artifact to disk
+        artifact_extras={
+            "reliability_uncalibrated.svg": reliability_svg_uncalibrated,
+            "reliability_calibrated.svg": reliability_svg_calibrated,
+        },
+    )
