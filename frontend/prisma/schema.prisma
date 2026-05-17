@@ -181,6 +181,8 @@ model BacktestRun {
   reliabilityJson String?  @map("reliability_json")
   stage           String?
   marketSpec      String   @default("football_1x2_ft") @map("market_spec")
+  sharpeAdjusted  Float?   @map("sharpe_adjusted")
+  mlflowRunId     String?  @map("mlflow_run_id")
   bets            BacktestBet[]
 
   @@index([status, createdAt(sort: Desc)], map: "idx_backtest_runs_status_time")

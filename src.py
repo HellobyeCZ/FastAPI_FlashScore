@@ -777,6 +777,8 @@ def _run_row_to_summary(row) -> BacktestRunSummary:
         max_drawdown=row.max_drawdown,
         stage=row.stage,
         market_spec=row.market_spec,
+        sharpe_adjusted=row.sharpe_adjusted,
+        mlflow_run_id=row.mlflow_run_id,
     )
 
 

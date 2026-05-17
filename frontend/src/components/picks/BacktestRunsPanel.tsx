@@ -132,6 +132,7 @@ export function BacktestRunsPanel({
               <th>bets</th>
               <th>ROI</th>
               <th>created</th>
+              <th>mlflow</th>
               <th></th>
             </tr>
           </thead>
@@ -173,6 +174,18 @@ export function BacktestRunsPanel({
                 </td>
                 <td align="right">
                   {r.created_at.slice(0, 16).replace("T", " ")}
+                </td>
+                <td align="center">
+                  {r.mlflow_run_id ? (
+                    <a
+                      href={`http://127.0.0.1:5000/#/experiments/0/runs/${r.mlflow_run_id}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline text-zinc-300"
+                    >
+                      view
+                    </a>
+                  ) : "—"}
                 </td>
                 <td align="right">
                   <button

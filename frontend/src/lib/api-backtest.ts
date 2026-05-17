@@ -21,6 +21,8 @@ export type BacktestRunSummary = {
   max_drawdown: number | null;
   stage: string | null;
   market_spec: string;
+  sharpe_adjusted: number | null;
+  mlflow_run_id: string | null;
 };
 
 export type ReliabilityBucket = {

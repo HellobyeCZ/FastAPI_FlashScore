@@ -406,6 +406,13 @@ export function ModelsTab() {
       render: (row) => fmtNum(row.max_drawdown, 2),
       sort: (a, b) => (a.max_drawdown ?? 0) - (b.max_drawdown ?? 0),
     },
+    {
+      key: "sharpe_adjusted",
+      header: "SHARPE-ADJ",
+      align: "right",
+      render: (row) => fmtNum(row.sharpe_adjusted as number | null | undefined, 3),
+      sort: (a, b) => ((a.sharpe_adjusted as number | null) ?? 0) - ((b.sharpe_adjusted as number | null) ?? 0),
+    },
   ];
 
   if (needsRun) {
