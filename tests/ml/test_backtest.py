@@ -184,6 +184,25 @@ def test_sharpe_adjusted_zero_bets_safe():
     assert sharpe == 0.0
 
 
+def test_sharpe_adjusted_zero_rmse_constant_pnls():
+    """All bets with identical pnl produce non-zero return but zero RMSE.
+    Sharpe must fall through to 0.0 via the rmse_per_bet > 0 guard."""
+    from app.ml.backtest import _compute_sharpe_adjusted
+    bets = [_make_bet(0.5, 1.5, 1.0) for _ in range(3)]
+    r, rmse, sharpe = _compute_sharpe_adjusted(bets)
+    assert r == pytest.approx(1.5, rel=1e-6)
+    # All pnls are +0.5, so mean(pnl^2) = 0.25, sqrt = 0.5 — NOT zero.
+    # The "zero RMSE" branch is only reached when all pnls are zero, which
+    # this test verifies separately:
+    assert rmse == pytest.approx(0.5, rel=1e-6)
+    # Now the actual zero-RMSE case: a bet with pnl=0 (a void result).
+    void_bets = [_make_bet(0.0, 1.5, 0.0) for _ in range(3)]
+    r2, rmse2, sharpe2 = _compute_sharpe_adjusted(void_bets)
+    assert r2 == pytest.approx(1.0, abs=1e-9)
+    assert rmse2 == pytest.approx(0.0, abs=1e-9)
+    assert sharpe2 == 0.0  # exact, not approx — the guard returns the literal
+
+
 def test_backtest_report_has_new_fields():
     """Smoke: BacktestReport instantiation accepts the four new fields."""
     rep = BacktestReport(
