@@ -81,6 +81,11 @@ class BacktestReport:
     max_drawdown: float
     reliability_buckets: List[ReliabilityBucket]
     config: Dict[str, Any]
+    n_train_events: int = 0
+    return_per_bet: float = 1.0
+    rmse_per_bet: float = 0.0
+    sharpe_adjusted: float = 0.0
+    reliability_svg: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         out = asdict(self)
@@ -343,6 +348,7 @@ def run_backtest(
                 ))
 
     metrics = _compute_metrics(bets, total_stake=total_stake, hits=hits, max_dd=max_dd)
+    return_per_bet, rmse_per_bet, sharpe_adjusted = _compute_sharpe_adjusted(bets)
     return BacktestReport(
         model=str(model_name),
         scope_size=len(events),
@@ -363,6 +369,11 @@ def run_backtest(
             "train_until": train_until,
             "test_until": test_until,
         },
+        n_train_events=0,  # populated by trainable adapters in a follow-up; 0 is safe today
+        return_per_bet=return_per_bet,
+        rmse_per_bet=rmse_per_bet,
+        sharpe_adjusted=sharpe_adjusted,
+        reliability_svg=None,
     )
 
 
@@ -384,6 +395,24 @@ def _valid_prob_dict(probs: Mapping[str, float], selections: Sequence[str] = SEL
         return False
     s = sum(probs.values())
     return 0.99 <= s <= 1.01
+
+
+def _compute_sharpe_adjusted(bets: Sequence[BetRecord]) -> tuple[float, float, float]:
+    """Return (return_per_bet, rmse_per_bet, sharpe_adjusted).
+
+    Definition: each bet contributes pnl = (k_i - 1) on win, -1 on loss for
+    a unit stake. Return-to-bettor = 1 + pnl (so 1.0 = breakeven).
+    Sharpe-adjusted = (R_p - 1) / RMSE_p with R_p = mean(1 + pnl) and
+    RMSE_p = sqrt(mean(pnl^2)).
+    """
+    n = len(bets)
+    if n == 0:
+        return 1.0, 0.0, 0.0
+    pnls = [b.pnl for b in bets]
+    return_per_bet = 1.0 + sum(pnls) / n
+    rmse_per_bet = math.sqrt(sum(p * p for p in pnls) / n)
+    sharpe = (return_per_bet - 1.0) / rmse_per_bet if rmse_per_bet > 0 else 0.0
+    return return_per_bet, rmse_per_bet, sharpe
 
 
 def _kelly_fraction_of_bankroll(prob: float, price: float) -> float:
