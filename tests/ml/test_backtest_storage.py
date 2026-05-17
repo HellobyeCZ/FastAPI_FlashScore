@@ -202,3 +202,14 @@ def test_update_mlflow_run_id(db):
         update_mlflow_run_id(c, "r1", "abcdef1234")
         row = c.execute("SELECT mlflow_run_id FROM backtest_runs WHERE id='r1'").fetchone()
     assert row["mlflow_run_id"] == "abcdef1234"
+
+
+def test_update_mlflow_run_id_with_none_clears(db):
+    """Calling with None clears a previously-set link. Docstring claims this."""
+    from app.ml.backtest_storage import update_mlflow_run_id
+    with sqlite3.connect(db) as c:
+        c.row_factory = sqlite3.Row
+        update_mlflow_run_id(c, "r1", "abc")
+        update_mlflow_run_id(c, "r1", None)
+        row = c.execute("SELECT mlflow_run_id FROM backtest_runs WHERE id='r1'").fetchone()
+    assert row["mlflow_run_id"] is None
