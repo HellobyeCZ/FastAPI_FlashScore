@@ -164,3 +164,6 @@ frontend/.next/
 frontend/out/
 frontend/playwright-report/
 frontend/test-results/
+
+# Local MLflow tracking server data (Phase A)
+mlflow/
