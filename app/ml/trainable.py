@@ -295,6 +295,8 @@ def fit_hgb_pca_at(train_until: str, spec: MarketSpec) -> ModelFn:
 TRAINABLE: Dict[str, Callable[[str, MarketSpec], ModelFn]] = {
     "logistic": fit_logistic_at,
     "dixon_coles": fit_dixon_coles_at,
+    "hgb": fit_hgb_at,
+    "hgb_pca": fit_hgb_pca_at,
 }
 
 
