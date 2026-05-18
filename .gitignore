@@ -164,3 +164,7 @@ frontend/.next/
 frontend/out/
 frontend/playwright-report/
 frontend/test-results/
+
+# Local MLflow tracking server data (Phase A) — anchor to repo root so
+# docs/mlflow/ (the operator manual) isn't accidentally ignored.
+/mlflow/

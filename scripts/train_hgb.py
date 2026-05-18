@@ -34,7 +34,6 @@ from app.ml.training import (
     chronological_split,
     feature_set_hash,
     isotonic_calibrate,
-    log_run_to_mlflow,
     train_hgb,
 )
 
@@ -192,19 +191,14 @@ def main() -> int:
     (out_dir / "metrics.json").write_text(json.dumps(metrics, indent=2))
 
     if not args.no_mlflow:
-        run_id = log_run_to_mlflow(
-            run_name=label,
-            params={
-                "model": "hgb",
-                "max_iter": args.max_iter,
-                "learning_rate": args.learning_rate,
-                "max_depth": args.max_depth,
-                "l2_regularization": args.l2_regularization,
-                "feature_set_hash": feature_set_hash(HGB_FEATURE_COLUMNS),
-                "feature_columns": ",".join(HGB_FEATURE_COLUMNS),
-                "train_until": args.train_until,
-                "calib_until": args.calib_until,
-            },
+        from app.ml.tracking import log_training_run
+        from app.ml.market_spec import FOOTBALL_1X2_FT
+        run_id = log_training_run(
+            model_name="hgb",
+            train_until=args.train_until,
+            market_spec=FOOTBALL_1X2_FT,
+            feature_columns=HGB_FEATURE_COLUMNS,
+            n_train_events=len(split.train.event_ids),
             metrics_uncalibrated={
                 "brier": forced_uncal.brier,
                 "log_loss": forced_uncal.log_loss,
@@ -219,12 +213,14 @@ def main() -> int:
                 "gated_total_bets": gated_cal.total_bets,
                 "gated_roi": gated_cal.roi,
             },
-            reliability_svg_uncalibrated=render_reliability_svg(forced_uncal.reliability_buckets),
-            reliability_svg_calibrated=render_reliability_svg(forced_cal.reliability_buckets),
-            model_artifact_path=str(model_path),
+            trained_model=cal_model,
+            artifact_extras={
+                "reliability_uncalibrated.svg": render_reliability_svg(forced_uncal.reliability_buckets),
+                "reliability_calibrated.svg": render_reliability_svg(forced_cal.reliability_buckets),
+            },
         )
         if run_id:
-            print(f"\nMLflow run_id: {run_id}")
+            print(f"[mlflow] logged training run: {run_id}")
 
     print(f"\nArtifacts: {out_dir}/")
     print()

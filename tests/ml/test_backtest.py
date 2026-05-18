@@ -139,3 +139,78 @@ def test_reliability_svg_renders(backfilled_full):
     assert svg.startswith("<svg")
     assert svg.endswith("</svg>")
     assert "<circle" in svg  # at least one bucket point
+
+
+# ---------------------------------------------------------------------------
+# Sharpe-adjusted metrics tests
+# ---------------------------------------------------------------------------
+
+import math
+from app.ml.backtest import BacktestReport, BetRecord
+
+
+def _make_bet(pnl: float, price: float, result: float) -> BetRecord:
+    return BetRecord(
+        event_id="E", bet_ts="2024-01-01T00:00:00Z",
+        market="HOME_DRAW_AWAY:FULL_TIME", selection="home",
+        price_taken=price, closing_price=price,
+        model_prob=0.5, implied_prob=0.4, devigged_prob=0.4,
+        edge=0.1, stake_kelly_fraction=1.0,
+        result=result, pnl=pnl, clv=0.0,
+    )
+
+
+def test_sharpe_adjusted_three_bet_fixture():
+    """Three bets: win@2.5, loss@2.0, win@1.5.
+    pnl = [+1.5, -1.0, +0.5].  sum = 1.0,  n = 3.
+    return_per_bet = 1 + 1/3 = 1.333...
+    rmse_per_bet  = sqrt((1.5^2 + 1.0^2 + 0.5^2)/3) = sqrt(3.5/3) = 1.080...
+    sharpe_adj    = (1.333 - 1)/1.080 = 0.308..."""
+    bets = [_make_bet(1.5, 2.5, 1.0),
+            _make_bet(-1.0, 2.0, 0.0),
+            _make_bet(0.5, 1.5, 1.0)]
+    from app.ml.backtest import _compute_sharpe_adjusted
+    r, rmse, sharpe = _compute_sharpe_adjusted(bets)
+    assert r == pytest.approx(1.0 + 1.0 / 3.0, rel=1e-6)
+    assert rmse == pytest.approx(math.sqrt(3.5 / 3.0), rel=1e-6)
+    assert sharpe == pytest.approx((r - 1.0) / rmse, rel=1e-6)
+
+
+def test_sharpe_adjusted_zero_bets_safe():
+    from app.ml.backtest import _compute_sharpe_adjusted
+    r, rmse, sharpe = _compute_sharpe_adjusted([])
+    assert r == 1.0
+    assert rmse == 0.0
+    assert sharpe == 0.0
+
+
+def test_sharpe_adjusted_zero_rmse_constant_pnls():
+    """All bets with identical pnl produce non-zero return but zero RMSE.
+    Sharpe must fall through to 0.0 via the rmse_per_bet > 0 guard."""
+    from app.ml.backtest import _compute_sharpe_adjusted
+    bets = [_make_bet(0.5, 1.5, 1.0) for _ in range(3)]
+    r, rmse, sharpe = _compute_sharpe_adjusted(bets)
+    assert r == pytest.approx(1.5, rel=1e-6)
+    # All pnls are +0.5, so mean(pnl^2) = 0.25, sqrt = 0.5 — NOT zero.
+    # The "zero RMSE" branch is only reached when all pnls are zero, which
+    # this test verifies separately:
+    assert rmse == pytest.approx(0.5, rel=1e-6)
+    # Now the actual zero-RMSE case: a bet with pnl=0 (a void result).
+    void_bets = [_make_bet(0.0, 1.5, 0.0) for _ in range(3)]
+    r2, rmse2, sharpe2 = _compute_sharpe_adjusted(void_bets)
+    assert r2 == pytest.approx(1.0, abs=1e-9)
+    assert rmse2 == pytest.approx(0.0, abs=1e-9)
+    assert sharpe2 == 0.0  # exact, not approx — the guard returns the literal
+
+
+def test_backtest_report_has_new_fields():
+    """Smoke: BacktestReport instantiation accepts the four new fields."""
+    rep = BacktestReport(
+        model="x", scope_size=0, test_events=0, bets=[], total_bets=0,
+        hit_rate=0.0, roi=0.0, mean_clv=None, brier=0.0, log_loss=0.0,
+        max_drawdown=0.0, reliability_buckets=[], config={},
+        n_train_events=0,
+        return_per_bet=1.0, rmse_per_bet=0.0, sharpe_adjusted=0.0,
+        reliability_svg=None,
+    )
+    assert rep.sharpe_adjusted == 0.0

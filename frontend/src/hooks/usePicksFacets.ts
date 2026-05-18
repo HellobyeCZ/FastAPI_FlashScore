@@ -22,18 +22,21 @@ const EMPTY: FacetsResponse = {
 
 export function usePicksFacets(
   source: "live" | "backtest" | "both",
-  runId?: string,
+  runIds?: string | string[],
 ): FacetsResponse {
   const [data, setData] = useState<FacetsResponse>(EMPTY);
+  const ids = Array.isArray(runIds) ? runIds.filter(Boolean) : runIds ? [runIds] : [];
+  const idsKey = ids.join(",");
 
   useEffect(() => {
-    if (source !== "live" && !runId) {
+    if (source !== "live" && ids.length === 0) {
       setData(EMPTY);
       return;
     }
     let cancelled = false;
     const qs = new URLSearchParams({ source });
-    if (runId) qs.set("run_id", runId);
+    if (ids.length === 1) qs.set("run_id", ids[0]);
+    else if (ids.length > 1) qs.set("run_ids", idsKey);
     fetch(`/api/picks/facets?${qs.toString()}`, { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : EMPTY))
       .then((j) => {
@@ -45,7 +48,9 @@ export function usePicksFacets(
     return () => {
       cancelled = true;
     };
-  }, [source, runId]);
+    // ids is derived from runIds; idsKey carries its identity for the deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [source, idsKey]);
 
   return data;
 }

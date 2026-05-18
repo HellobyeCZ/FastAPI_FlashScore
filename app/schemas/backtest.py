@@ -63,6 +63,8 @@ class BacktestRunSummary(BaseModel):
     max_drawdown: Optional[float] = None
     stage: Optional[str] = None
     market_spec: str = "football_1x2_ft"
+    sharpe_adjusted: Optional[float] = None
+    mlflow_run_id: Optional[str] = None
 
 
 class ReliabilityBucketDTO(BaseModel):

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Sequence
 
 from app.ml import db as ml_db
 
@@ -55,53 +55,56 @@ def facets_for_live() -> FacetsResponse:
         )
 
 
-def facets_for_backtest(run_id: str) -> FacetsResponse:
+def facets_for_backtest(run_ids: Sequence[str]) -> FacetsResponse:
+    if not run_ids:
+        return FacetsResponse()
+    placeholders = ",".join("?" for _ in run_ids)
+    params = tuple(run_ids)
     with ml_db.connect(read_only=True) as conn:
         conn.row_factory = sqlite3.Row
-        run = conn.execute(
-            "SELECT model FROM backtest_runs WHERE id = ?", (run_id,)
-        ).fetchone()
-        models = [run["model"]] if run else []
-
         return FacetsResponse(
-            models=models,
+            models=_distinct(
+                conn,
+                f"SELECT DISTINCT model FROM backtest_runs WHERE id IN ({placeholders})",
+                params,
+            ),
             markets=_distinct(
                 conn,
-                "SELECT DISTINCT market FROM backtest_bets WHERE run_id = ?",
-                (run_id,),
+                f"SELECT DISTINCT market FROM backtest_bets WHERE run_id IN ({placeholders})",
+                params,
             ),
             sports=_distinct(
                 conn,
                 "SELECT DISTINCT mes.sport FROM backtest_bets b "
                 "LEFT JOIN match_event_summaries mes ON mes.event_id = b.event_id "
-                "WHERE b.run_id = ?",
-                (run_id,),
+                f"WHERE b.run_id IN ({placeholders})",
+                params,
             ),
             countries=_distinct(
                 conn,
                 "SELECT DISTINCT mes.country FROM backtest_bets b "
                 "LEFT JOIN match_event_summaries mes ON mes.event_id = b.event_id "
-                "WHERE b.run_id = ?",
-                (run_id,),
+                f"WHERE b.run_id IN ({placeholders})",
+                params,
             ),
             competitions=_distinct(
                 conn,
                 "SELECT DISTINCT mes.competition FROM backtest_bets b "
                 "LEFT JOIN match_event_summaries mes ON mes.event_id = b.event_id "
-                "WHERE b.run_id = ?",
-                (run_id,),
+                f"WHERE b.run_id IN ({placeholders})",
+                params,
             ),
             selections=_distinct(
                 conn,
-                "SELECT DISTINCT selection FROM backtest_bets WHERE run_id = ?",
-                (run_id,),
+                f"SELECT DISTINCT selection FROM backtest_bets WHERE run_id IN ({placeholders})",
+                params,
             ),
         )
 
 
-def facets_for_both(run_id: str) -> FacetsResponse:
+def facets_for_both(run_ids: Sequence[str]) -> FacetsResponse:
     live = facets_for_live()
-    bt = facets_for_backtest(run_id)
+    bt = facets_for_backtest(run_ids)
     return FacetsResponse(
         models=sorted(set(live.models) | set(bt.models)),
         markets=sorted(set(live.markets) | set(bt.markets)),

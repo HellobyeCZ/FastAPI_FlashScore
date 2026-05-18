@@ -49,6 +49,7 @@ ML / scripts workflow runs against system Python (the documented venv lacks pyte
 - Two odds sources: `odds_snapshots` (archive, rich JSON, `build_closing_odds`, written on every `GET /odds/{event_id}` and frozen once terminal) vs `live_odds_snapshots` (live pipeline, flat per-bookmaker rows, `build_closing_from_live` fallback, written by `LiveOddsScheduler.run_once()`). The frontend "Snapshots" strip on the match detail page reads `live_odds_snapshots` via `/api/snapshots/[eventId]` — NOT `odds_snapshots`.
 - Case-folding mismatch: `upcoming_fixtures.country` is lowercase, `match_event_summaries.country` is UPPERCASE. Scope predicates use uppercase.
 - Settler pipeline: `record_picks` → `build_phase1` (labels + closing_odds + elo) → `settle_paper_bets`. Skipping any step zeroes the dashboard.
+- New ML training scripts should call `app.ml.tracking.log_training_run` (not the deprecated `app.ml.training.log_run_to_mlflow`) for canonical-schema MLflow logging.
 
 ### Frontend
 

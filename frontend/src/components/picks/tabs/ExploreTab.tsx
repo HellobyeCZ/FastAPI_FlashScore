@@ -49,12 +49,19 @@ function fmtPct(v: number | null | undefined): string {
 }
 
 export function ExploreTab() {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const searchParams = useSearchParams();
   const source = (searchParams.get("source") as "live" | "backtest" | "both") ?? "live";
-  const runId = searchParams.get("run_id") ?? undefined;
-  const needsRun = source !== "live" && !runId;
-  const facets = usePicksFacets(source, runId);
+  const runIdsCsv = searchParams.get("run_ids");
+  const legacyRunId = searchParams.get("run_id");
+  const runIds = useMemo(() => {
+    if (runIdsCsv) return runIdsCsv.split(",").map((s) => s.trim()).filter(Boolean);
+    if (legacyRunId) return [legacyRunId];
+    return [] as string[];
+  }, [runIdsCsv, legacyRunId]);
+  const runIdsKey = runIds.join(",");
+  const needsRun = source !== "live" && runIds.length === 0;
+  const facets = usePicksFacets(source, runIds);
   const filters = useMemo(
     () => filtersFromSearchParams(new URLSearchParams(searchParams.toString())),
     [searchParams],
@@ -111,10 +118,10 @@ export function ExploreTab() {
       try {
         const [hist, byEdge, byPrice, byCompSel] = await Promise.all([
           // Raw history — unfiltered by FilterBar, but honors the active data source.
-          fetchHistory({ status: "settled", limit: 1000, source, run_id: runId }),
-          fetchStats(["edge_bucket"], apiFilters, source, runId),
-          fetchStats(["price_bucket"], apiFilters, source, runId),
-          fetchStats(["competition", "selection"], apiFilters, source, runId),
+          fetchHistory({ status: "settled", limit: 1000, source, runIds }),
+          fetchStats(["edge_bucket"], apiFilters, source, runIds),
+          fetchStats(["price_bucket"], apiFilters, source, runIds),
+          fetchStats(["competition", "selection"], apiFilters, source, runIds),
         ]);
         if (cancelled) return;
         setHistory(hist.rows);
@@ -146,7 +153,7 @@ export function ExploreTab() {
     apiFilters.priceMin,
     apiFilters.priceMax,
     source,
-    runId,
+    runIdsKey,
   ]);
 
   const scatterPoints: ScatterPoint[] = useMemo(() => {
@@ -240,7 +247,7 @@ export function ExploreTab() {
         </div>
         <div className="border border-zinc-700 bg-bg p-4 font-mono text-[12px] text-zinc-400">
           ▸ no backtest run selected. Open the{" "}
-          <a href="/picks/models" className="text-zinc-200 underline">Models</a> tab
+          <a href={`/${locale}/picks/models`} className="text-zinc-200 underline">Models</a> tab
           to queue or pick a run.
         </div>
       </div>

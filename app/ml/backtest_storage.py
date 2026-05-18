@@ -37,6 +37,8 @@ class RunRow:
     reliability_json: Optional[str] = None
     stage: Optional[str] = None
     market_spec: str = "football_1x2_ft"
+    sharpe_adjusted: Optional[float] = None
+    mlflow_run_id: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -63,7 +65,8 @@ _RUN_COLS = (
     "id label model train_until test_until min_edge kelly_fraction "
     "force_bets scope_json status created_at started_at finished_at "
     "error test_events total_bets hit_rate roi mean_clv brier log_loss "
-    "max_drawdown reliability_json stage market_spec"
+    "max_drawdown reliability_json stage market_spec "
+    "sharpe_adjusted mlflow_run_id"
 ).split()
 
 _BET_COLS = (
@@ -178,6 +181,7 @@ def finalize_run(
     cols = (
         "test_events", "total_bets", "hit_rate", "roi", "mean_clv",
         "brier", "log_loss", "max_drawdown", "reliability_json",
+        "sharpe_adjusted",
     )
     sets = ["status = ?", "finished_at = ?"] + [f"{c} = ?" for c in cols]
     params: List[Any] = ["completed", finished_at]
@@ -186,6 +190,20 @@ def finalize_run(
     conn.execute(
         f"UPDATE backtest_runs SET {', '.join(sets)} WHERE id = ?",
         params,
+    )
+    conn.commit()
+
+
+def update_mlflow_run_id(
+    conn: sqlite3.Connection,
+    run_id: str,
+    mlflow_run_id: Optional[str],
+) -> None:
+    """Persist the MLflow run id cross-link onto a backtest run.
+    Idempotent — safe to call with None (clears the link)."""
+    conn.execute(
+        "UPDATE backtest_runs SET mlflow_run_id = ? WHERE id = ?",
+        (mlflow_run_id, run_id),
     )
     conn.commit()
 

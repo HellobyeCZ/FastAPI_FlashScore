@@ -54,7 +54,10 @@ def fit_logistic_at(train_until: str, spec: MarketSpec) -> ModelFn:
             matrix, train_until=train_until, calib_until=train_until
         )
         raw = train_logistic(split.train)
-        return make_logistic_model_fn(raw, calibrated=False)
+        fn = make_logistic_model_fn(raw, calibrated=False)
+        fn.feature_columns = tuple(raw.feature_columns)
+        fn.n_train_events = len(split.train.event_ids)
+        return fn
 
     calib_until = sorted(ts for _, ts in pre)[int(len(pre) * 0.75)]
     split = chronological_split(
@@ -62,7 +65,10 @@ def fit_logistic_at(train_until: str, spec: MarketSpec) -> ModelFn:
     )
     raw = train_logistic(split.train)
     cal = isotonic_calibrate(raw, split.calib)
-    return make_logistic_model_fn(cal, calibrated=True)
+    fn = make_logistic_model_fn(cal, calibrated=True)
+    fn.feature_columns = tuple(cal.feature_columns)
+    fn.n_train_events = len(split.train.event_ids)
+    return fn
 
 
 def fit_dixon_coles_at(train_until: str, spec: MarketSpec) -> ModelFn:
@@ -134,12 +140,163 @@ def fit_dixon_coles_at(train_until: str, spec: MarketSpec) -> ModelFn:
     else:
         T = 1.0
 
-    return make_dixon_coles_model_fn(rates_by_event, cfg, temperature=T)
+    fn = make_dixon_coles_model_fn(rates_by_event, cfg, temperature=T)
+    fn.feature_columns = ("home_attack", "home_defense", "away_attack", "away_defense")
+    fn.n_train_events = len(events_pre)
+    return fn
+
+
+def fit_hgb_at(train_until: str, spec: MarketSpec) -> ModelFn:
+    """Train a fresh HistGradientBoostingClassifier on events strictly
+    before ``train_until``, scoped to ``spec.scope``. Uses
+    ``HGB_FEATURE_COLUMNS`` (BASE 9 + market 3 = 12 columns). Returns a
+    calibrated ModelFn when ≥100 pre-cutoff events exist; otherwise
+    falls through uncalibrated."""
+    from app.ml.training import (
+        HGB_FEATURE_COLUMNS,
+        build_feature_matrix,
+        chronological_split,
+        isotonic_calibrate,
+        train_hgb,
+    )
+
+    matrix = build_feature_matrix(
+        sport=spec.sport, scope=spec.scope, columns=HGB_FEATURE_COLUMNS,
+    )
+    pre = [
+        (ev, ts) for ev, ts in zip(matrix.event_ids, matrix.kickoffs)
+        if ts < train_until
+    ]
+    if len(pre) < 100:
+        split = chronological_split(
+            matrix, train_until=train_until, calib_until=train_until,
+        )
+        raw = train_hgb(split.train)
+        from app.ml.models import make_trained_model_fn
+        fn = make_trained_model_fn(raw, calibrated=False, name_prefix="hgb")
+        fn.feature_columns = tuple(raw.feature_columns)
+        fn.n_train_events = len(split.train.event_ids)
+        return fn
+
+    calib_until = sorted(ts for _, ts in pre)[int(len(pre) * 0.75)]
+    split = chronological_split(
+        matrix, train_until=calib_until, calib_until=train_until,
+    )
+    raw = train_hgb(split.train)
+    cal = isotonic_calibrate(raw, split.calib)
+    from app.ml.models import make_trained_model_fn
+    fn = make_trained_model_fn(cal, calibrated=True, name_prefix="hgb")
+    fn.feature_columns = tuple(cal.feature_columns)
+    fn.n_train_events = len(split.train.event_ids)
+    return fn
+
+
+def _fit_and_apply_preprocessor(train: "FeatureMatrix"):
+    """Fit StandardScaler+PCA(0.95) on ``train.X``. Returns the fitted
+    sklearn Pipeline and a new FeatureMatrix with the projected X and
+    synthesized ``pc1..pcK`` column names. ``y``, ``event_ids``, and
+    ``kickoffs`` carry over unchanged."""
+    from sklearn.decomposition import PCA
+    from sklearn.pipeline import Pipeline
+    from sklearn.preprocessing import StandardScaler
+
+    from app.ml.training import FeatureMatrix
+
+    prep = Pipeline([
+        ("scaler", StandardScaler()),
+        ("pca", PCA(n_components=0.95, svd_solver="full")),
+    ])
+    Xp = prep.fit_transform(train.X)
+    proj_cols = tuple(f"pc{i+1}" for i in range(Xp.shape[1]))
+    return prep, FeatureMatrix(
+        X=Xp, y=train.y, event_ids=train.event_ids,
+        kickoffs=train.kickoffs, columns=proj_cols,
+    )
+
+
+def _apply_preprocessor(prep, fm: "FeatureMatrix"):
+    """Apply an already-fitted preprocessor to a FeatureMatrix. Returns
+    a new FeatureMatrix with the projected X and synthesized column
+    names. Does NOT refit."""
+    from app.ml.training import FeatureMatrix
+
+    Xp = prep.transform(fm.X)
+    proj_cols = tuple(f"pc{i+1}" for i in range(Xp.shape[1]))
+    return FeatureMatrix(
+        X=Xp, y=fm.y, event_ids=fm.event_ids, kickoffs=fm.kickoffs,
+        columns=proj_cols,
+    )
+
+
+def fit_hgb_pca_at(train_until: str, spec: MarketSpec) -> ModelFn:
+    """Same chronological discipline as fit_hgb_at, with a frozen
+    StandardScaler+PCA(0.95) preprocessor fitted on the train block.
+    The preprocessor is attached to the returned TrainedHGB so calls
+    to predict_proba(raw_12_col_X) project before the classifier runs."""
+    from app.ml.training import (
+        HGB_FEATURE_COLUMNS,
+        build_feature_matrix,
+        chronological_split,
+        isotonic_calibrate,
+        train_hgb,
+    )
+
+    matrix = build_feature_matrix(
+        sport=spec.sport, scope=spec.scope, columns=HGB_FEATURE_COLUMNS,
+    )
+    pre = [
+        (ev, ts) for ev, ts in zip(matrix.event_ids, matrix.kickoffs)
+        if ts < train_until
+    ]
+
+    if len(pre) < 100:
+        split = chronological_split(
+            matrix, train_until=train_until, calib_until=train_until,
+        )
+        prep, transformed_train = _fit_and_apply_preprocessor(split.train)
+        raw = train_hgb(transformed_train)
+        # train_hgb sets feature_columns to the projected pc1..pcK names.
+        # Restore the raw 12-column names so make_trained_model_fn can
+        # extract the correct values from runtime feature dicts at predict time.
+        raw.feature_columns = HGB_FEATURE_COLUMNS
+        raw.preprocessor = prep
+        from app.ml.models import make_trained_model_fn
+        fn = make_trained_model_fn(raw, calibrated=False, name_prefix="hgb_pca")
+        fn.feature_columns = tuple(HGB_FEATURE_COLUMNS)
+        fn.n_train_events = len(split.train.event_ids)
+        return fn
+
+    calib_until = sorted(ts for _, ts in pre)[int(len(pre) * 0.75)]
+    split = chronological_split(
+        matrix, train_until=calib_until, calib_until=train_until,
+    )
+    prep, transformed_train = _fit_and_apply_preprocessor(split.train)
+    transformed_calib = _apply_preprocessor(prep, split.calib)
+    raw = train_hgb(transformed_train)
+    # train_hgb sets feature_columns to the projected pc1..pcK names.
+    # Restore the raw 12-column names BEFORE isotonic_calibrate so the
+    # calibrated copy inherits them and make_trained_model_fn can extract
+    # the correct values from runtime feature dicts at predict time.
+    raw.feature_columns = HGB_FEATURE_COLUMNS
+    # Calibrate against the already-projected calib slice. raw.preprocessor
+    # is still None at this point — isotonic_calibrate's predict_proba call
+    # must NOT re-transform an already-transformed matrix. Attach prep AFTER
+    # calibration completes. (Task 2's isotonic_calibrate change copies
+    # preprocessor across, but raw still has None here — by design.)
+    cal = isotonic_calibrate(raw, transformed_calib)
+    cal.preprocessor = prep
+    from app.ml.models import make_trained_model_fn
+    fn = make_trained_model_fn(cal, calibrated=True, name_prefix="hgb_pca")
+    fn.feature_columns = tuple(HGB_FEATURE_COLUMNS)
+    fn.n_train_events = len(split.train.event_ids)
+    return fn
 
 
 TRAINABLE: Dict[str, Callable[[str, MarketSpec], ModelFn]] = {
     "logistic": fit_logistic_at,
     "dixon_coles": fit_dixon_coles_at,
+    "hgb": fit_hgb_at,
+    "hgb_pca": fit_hgb_pca_at,
 }
 
 
@@ -157,4 +314,7 @@ def resolve_model_for_backtest(
     """
     if name in TRAINABLE:
         return TRAINABLE[name](train_until, spec)
-    return get_analytic(name)
+    fn = get_analytic(name)
+    fn.feature_columns = getattr(fn, "feature_columns", ())
+    fn.n_train_events = getattr(fn, "n_train_events", 0)
+    return fn

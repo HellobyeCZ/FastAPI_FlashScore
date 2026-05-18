@@ -35,8 +35,10 @@ from app.ml.backtest_storage import (
     insert_run,
     list_bets,
     list_runs,
+    update_mlflow_run_id,
     update_run_status,
 )
+from app.ml.tracking import log_backtest_run
 from app.ml.labels import FOOTBALL_PHASE1_SCOPE
 from app.ml.market_spec import get_spec
 from app.ml.trainable import TRAINABLE, resolve_model_for_backtest
@@ -103,6 +105,12 @@ class BacktestManager:
                 return
             if self._queue is None:
                 self._queue = asyncio.Queue()
+            # Sweep orphaned rows from a previous process. Any row still
+            # in 'queued' or 'running' was left behind by a worker that no
+            # longer exists (TestClient lifespan teardown, OOM, kill -9,
+            # etc.). Without this sweep, those rows show as 'running'
+            # forever in BacktestRunsPanel and confuse operators.
+            await asyncio.to_thread(self._sweep_orphans_sync)
             self._worker_task = asyncio.create_task(self._worker_loop())
             self._started = True
 
@@ -135,8 +143,11 @@ class BacktestManager:
             stage=None,
             market_spec=params.market_spec,
         )
-        await asyncio.to_thread(self._insert_run_sync, row)
+        # start() FIRST so the orphan-sweep can't see the row we're about
+        # to insert (otherwise it would mark our own new row as orphaned).
+        # start() is idempotent — subsequent create_run() calls no-op.
         await self.start()
+        await asyncio.to_thread(self._insert_run_sync, row)
         assert self._queue is not None  # guaranteed by start()
         await self._queue.put(run_id)
         return run_id
@@ -189,8 +200,23 @@ class BacktestManager:
                 await self._execute(run_id)
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception as exc:
                 logger.exception("backtest_worker_crashed", extra={"run_id": run_id})
+                # _execute has its own try/except that marks the row failed
+                # for most exceptions. This is the belt-and-suspenders path
+                # for anything that escaped (e.g. exceptions thrown by
+                # _execute's own _mark_failed_sync call). Without this,
+                # the row would dangle in 'running' forever.
+                try:
+                    await asyncio.to_thread(
+                        self._mark_failed_sync, run_id,
+                        f"worker_loop caught uncaught: {exc!r}",
+                    )
+                except Exception:
+                    logger.exception(
+                        "worker_loop_mark_failed_also_crashed",
+                        extra={"run_id": run_id},
+                    )
 
     async def _execute(self, run_id: str) -> None:
         row = await self.get_run(run_id)
@@ -221,6 +247,9 @@ class BacktestManager:
                     self._mark_failed_sync, run_id, f"unknown model: {e}"
                 )
                 return
+            # Read metadata stashed by the trainable adapter (or analytic defaults).
+            feature_columns = tuple(getattr(model_fn, "feature_columns", ()))
+            n_train_events = int(getattr(model_fn, "n_train_events", 0) or 0)
 
             # Mark stage='backtesting' before run_backtest.
             await asyncio.to_thread(self._mark_stage_sync, run_id, "backtesting")
@@ -251,6 +280,24 @@ class BacktestManager:
             await asyncio.to_thread(
                 self._persist_completed_sync, run_id, report, bet_rows
             )
+            # Run MLflow logging in a thread — its calls are synchronous HTTP
+            # to the tracking server. Phase A latency is sub-ms locally; this
+            # guards against the Phase B (remote MLflow) regression.
+            mlflow_run_id = await asyncio.to_thread(
+                log_backtest_run,
+                report=report,
+                model_name=row.model,
+                train_until=row.train_until,
+                test_until=row.test_until,
+                market_spec=get_spec(row.market_spec or "football_1x2_ft"),
+                feature_columns=feature_columns,
+                n_train_events=n_train_events,
+                backtest_run_id=run_id,
+            )
+            if mlflow_run_id:
+                await asyncio.to_thread(
+                    self._update_mlflow_id_sync, run_id, mlflow_run_id,
+                )
         except Exception as exc:
             tb = traceback.format_exc(limit=4)
             await asyncio.to_thread(
@@ -302,6 +349,36 @@ class BacktestManager:
                 clv=b.clv,
             ))
         return out
+
+    def _sweep_orphans_sync(self) -> int:
+        """Mark any rows left in queued/running state as failed.
+
+        Called once at start(). A row in queued/running at startup is by
+        definition from a dead previous process — the BacktestManager is
+        single-instance and the new instance's in-memory queue is empty.
+        Returns the number of rows swept (logged for visibility).
+        """
+        with _connect() as conn:
+            rows = conn.execute(
+                "SELECT id FROM backtest_runs WHERE status IN ('queued', 'running')"
+            ).fetchall()
+            ids = [r["id"] if hasattr(r, "keys") else r[0] for r in rows]
+            if not ids:
+                return 0
+            placeholders = ",".join("?" * len(ids))
+            conn.execute(
+                f"UPDATE backtest_runs SET status = 'failed', "
+                f"finished_at = ?, stage = NULL, "
+                f"error = COALESCE(error, '') || ? "
+                f"WHERE id IN ({placeholders})",
+                (_now_iso(), "orphaned at backend restart (no live worker)", *ids),
+            )
+            conn.commit()
+        logger.info(
+            "swept_orphaned_backtests",
+            extra={"event": "swept_orphaned_backtests", "count": len(ids)},
+        )
+        return len(ids)
 
     def _mark_running_sync(self, run_id: str, started_at: str) -> None:
         with _connect() as conn:
@@ -357,6 +434,7 @@ class BacktestManager:
                 "brier": report.brier,
                 "log_loss": report.log_loss,
                 "max_drawdown": report.max_drawdown,
+                "sharpe_adjusted": report.sharpe_adjusted,
                 "reliability_json": json.dumps(
                     [asdict(b) for b in report.reliability_buckets]
                 ),
@@ -367,3 +445,7 @@ class BacktestManager:
                 (run_id,),
             )
             conn.commit()
+
+    def _update_mlflow_id_sync(self, run_id: str, mlflow_run_id: str) -> None:
+        with _connect() as conn:
+            update_mlflow_run_id(conn, run_id, mlflow_run_id)
