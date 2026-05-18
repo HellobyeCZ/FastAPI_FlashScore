@@ -105,6 +105,12 @@ class BacktestManager:
                 return
             if self._queue is None:
                 self._queue = asyncio.Queue()
+            # Sweep orphaned rows from a previous process. Any row still
+            # in 'queued' or 'running' was left behind by a worker that no
+            # longer exists (TestClient lifespan teardown, OOM, kill -9,
+            # etc.). Without this sweep, those rows show as 'running'
+            # forever in BacktestRunsPanel and confuse operators.
+            await asyncio.to_thread(self._sweep_orphans_sync)
             self._worker_task = asyncio.create_task(self._worker_loop())
             self._started = True
 
@@ -137,8 +143,11 @@ class BacktestManager:
             stage=None,
             market_spec=params.market_spec,
         )
-        await asyncio.to_thread(self._insert_run_sync, row)
+        # start() FIRST so the orphan-sweep can't see the row we're about
+        # to insert (otherwise it would mark our own new row as orphaned).
+        # start() is idempotent — subsequent create_run() calls no-op.
         await self.start()
+        await asyncio.to_thread(self._insert_run_sync, row)
         assert self._queue is not None  # guaranteed by start()
         await self._queue.put(run_id)
         return run_id
@@ -191,8 +200,23 @@ class BacktestManager:
                 await self._execute(run_id)
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception as exc:
                 logger.exception("backtest_worker_crashed", extra={"run_id": run_id})
+                # _execute has its own try/except that marks the row failed
+                # for most exceptions. This is the belt-and-suspenders path
+                # for anything that escaped (e.g. exceptions thrown by
+                # _execute's own _mark_failed_sync call). Without this,
+                # the row would dangle in 'running' forever.
+                try:
+                    await asyncio.to_thread(
+                        self._mark_failed_sync, run_id,
+                        f"worker_loop caught uncaught: {exc!r}",
+                    )
+                except Exception:
+                    logger.exception(
+                        "worker_loop_mark_failed_also_crashed",
+                        extra={"run_id": run_id},
+                    )
 
     async def _execute(self, run_id: str) -> None:
         row = await self.get_run(run_id)
@@ -325,6 +349,36 @@ class BacktestManager:
                 clv=b.clv,
             ))
         return out
+
+    def _sweep_orphans_sync(self) -> int:
+        """Mark any rows left in queued/running state as failed.
+
+        Called once at start(). A row in queued/running at startup is by
+        definition from a dead previous process — the BacktestManager is
+        single-instance and the new instance's in-memory queue is empty.
+        Returns the number of rows swept (logged for visibility).
+        """
+        with _connect() as conn:
+            rows = conn.execute(
+                "SELECT id FROM backtest_runs WHERE status IN ('queued', 'running')"
+            ).fetchall()
+            ids = [r["id"] if hasattr(r, "keys") else r[0] for r in rows]
+            if not ids:
+                return 0
+            placeholders = ",".join("?" * len(ids))
+            conn.execute(
+                f"UPDATE backtest_runs SET status = 'failed', "
+                f"finished_at = ?, stage = NULL, "
+                f"error = COALESCE(error, '') || ? "
+                f"WHERE id IN ({placeholders})",
+                (_now_iso(), "orphaned at backend restart (no live worker)", *ids),
+            )
+            conn.commit()
+        logger.info(
+            "swept_orphaned_backtests",
+            extra={"event": "swept_orphaned_backtests", "count": len(ids)},
+        )
+        return len(ids)
 
     def _mark_running_sync(self, run_id: str, started_at: str) -> None:
         with _connect() as conn:

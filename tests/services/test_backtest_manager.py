@@ -218,3 +218,67 @@ def test_execute_imports_log_backtest_run_and_update_mlflow_run_id():
     from app.services import backtest_manager as bm
     assert callable(bm.log_backtest_run)
     assert callable(bm.update_mlflow_run_id)
+
+
+def test_start_sweeps_orphaned_running_and_queued_rows(db_path):
+    """A row left in running/queued at start() is from a dead previous
+    process. start() must mark it failed with a clear error message."""
+    from app.services.backtest_manager import BacktestManager
+
+    # Seed three orphans: one running, one queued, plus a stage='training'
+    # mid-flight row.
+    with sqlite3.connect(db_path) as c:
+        c.executemany(
+            "INSERT INTO backtest_runs (id, label, model, train_until, "
+            "min_edge, kelly_fraction, force_bets, scope_json, status, "
+            "created_at, stage, market_spec) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            [
+                ("orphan_running", "L1", "logistic", "2024-08-01T00:00:00Z",
+                 0.02, 0.25, 0, "[]", "running", "2024-01-01T00:00:00Z",
+                 "training", "football_1x2_ft"),
+                ("orphan_queued", "L2", "logistic", "2024-08-01T00:00:00Z",
+                 0.02, 0.25, 0, "[]", "queued", "2024-01-01T00:00:00Z",
+                 None, "football_1x2_ft"),
+                ("orphan_stage_only", "L3", "logistic", "2024-08-01T00:00:00Z",
+                 0.02, 0.25, 0, "[]", "running", "2024-01-01T00:00:00Z",
+                 "backtesting", "football_1x2_ft"),
+            ],
+        )
+        c.commit()
+
+    async def go():
+        mgr = BacktestManager()
+        await mgr.start()
+        await mgr.shutdown()
+
+    asyncio.run(go())
+
+    with sqlite3.connect(db_path) as c:
+        c.row_factory = sqlite3.Row
+        rows = c.execute(
+            "SELECT id, status, stage, error FROM backtest_runs "
+            "WHERE id LIKE 'orphan_%'"
+        ).fetchall()
+    by_id = {r["id"]: r for r in rows}
+    for rid in ("orphan_running", "orphan_queued", "orphan_stage_only"):
+        assert by_id[rid]["status"] == "failed", (
+            f"{rid}: expected failed, got {by_id[rid]['status']}"
+        )
+        assert by_id[rid]["stage"] is None, (
+            f"{rid}: stage should be cleared, got {by_id[rid]['stage']}"
+        )
+        assert "orphan" in (by_id[rid]["error"] or "").lower(), (
+            f"{rid}: error should mention orphan, got {by_id[rid]['error']}"
+        )
+
+
+def test_start_with_no_orphans_does_not_fail(db_path):
+    """The sweep is idempotent and safe on a fresh DB."""
+    from app.services.backtest_manager import BacktestManager
+
+    async def go():
+        mgr = BacktestManager()
+        await mgr.start()  # should not raise
+        await mgr.shutdown()
+
+    asyncio.run(go())
