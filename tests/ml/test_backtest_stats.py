@@ -96,3 +96,37 @@ def test_aggregate_group_by_selection(db):
     assert set(by_sel) == {"home", "draw"}
     assert by_sel["home"]["wins"] == 1
     assert by_sel["draw"]["wins"] == 0
+
+
+def test_mean_clv_is_null_for_backtests(db):
+    """Archive backtests take the closing price, so CLV is undefined —
+    the stored 0.0 must not surface as a measured break-even."""
+    rows = aggregate_backtest(BacktestStatsRequest(run_ids=("r1",)))
+    assert rows[0]["mean_clv"] is None
+
+
+def test_empty_population_has_null_metrics(db):
+    rows = aggregate_backtest(BacktestStatsRequest(
+        run_ids=("r1",),
+        filters=BacktestStatsFilter(market=("no_such_market",)),
+    ))
+    assert rows[0]["n"] == 0
+    for key in ("hit_rate", "roi", "brier", "mean_clv"):
+        assert rows[0][key] is None, key
+
+
+def test_group_by_run_id_exposes_label(db):
+    rows = aggregate_backtest(BacktestStatsRequest(run_ids=("r1",), group_by=("run_id",)))
+    assert len(rows) == 1
+    assert rows[0]["run_id"] == "r1"
+    assert rows[0]["run_label"] == "l"
+    assert rows[0]["n"] == 2
+
+
+def test_model_filter_reads_the_run_model(db):
+    assert aggregate_backtest(BacktestStatsRequest(
+        run_ids=("r1",), filters=BacktestStatsFilter(model=("market_implied",)),
+    ))[0]["n"] == 2
+    assert aggregate_backtest(BacktestStatsRequest(
+        run_ids=("r1",), filters=BacktestStatsFilter(model=("logistic",)),
+    ))[0]["n"] == 0

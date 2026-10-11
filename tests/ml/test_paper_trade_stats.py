@@ -269,3 +269,52 @@ def test_calibration_buckets_filters_by_model(fixture_db):
 def test_calibration_buckets_rejects_zero_n_buckets():
     with pytest.raises(ValueError, match="n_buckets must be >= 1"):
         calibration_buckets(model="logistic", n_buckets=0)
+
+
+def test_voided_is_an_accepted_status():
+    req = StatsRequest(filters=StatsFilter(status="voided"))
+    assert req.filters.status == "voided"
+
+
+def test_empty_population_reports_undefined_metrics(fixture_db):
+    """n == 0 means hit rate, ROI, Brier and CLV are undefined, not zero."""
+    from app.ml.paper_trade import _ensure_paper_bets_table
+    _ensure_paper_bets_table()
+    rows = aggregate(StatsRequest())
+    assert len(rows) == 1
+    assert rows[0]["n"] == 0
+    for key in ("hit_rate", "roi", "brier", "mean_clv"):
+        assert rows[0][key] is None, key
+
+
+def test_pipeline_freshness_flags_overdue_pending_bets(fixture_db):
+    """Pending bets on events that kicked off more than the grace period
+    ago are overdue; kickoffs mix ``Z`` and ``+00:00`` formats."""
+    import sqlite3
+    from datetime import timedelta
+
+    from app.ml import db as ml_db
+    from app.ml.paper_trade_stats import pipeline_freshness
+
+    record_picks([
+        PickInput(
+            event_id=event_id, model="logistic", market="1X2_FT", selection="home",
+            bet_ts=_now_iso(), price_at_recommendation=2.0, model_prob=0.5,
+            devigged_prob=0.48, edge=0.02, kelly_full=0.05,
+        )
+        for event_id in ("evt004", "evt005")
+    ])
+    # Fixture kickoffs are 2024-01-22 and 2024-01-29 (stored with "Z").
+    now = datetime(2024, 1, 29, 18, 0, tzinfo=timezone.utc)
+    with sqlite3.connect(ml_db.db_path()) as conn:
+        fresh = pipeline_freshness(conn, now=now)
+    assert fresh["pending_bets"] == 2
+    assert fresh["oldest_pending_kickoff"] == "2024-01-22T15:00:00+00:00"
+    # evt005 kicked off 3 h before ``now``: still inside the 6 h grace.
+    assert fresh["overdue_pending_bets"] == 1
+    assert fresh["oldest_overdue_kickoff"] == "2024-01-22T15:00:00+00:00"
+    assert fresh["last_settled_at"] is None
+
+    with sqlite3.connect(ml_db.db_path()) as conn:
+        later = pipeline_freshness(conn, now=now + timedelta(hours=4))
+    assert later["overdue_pending_bets"] == 2
