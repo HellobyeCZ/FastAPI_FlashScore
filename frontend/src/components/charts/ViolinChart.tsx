@@ -229,19 +229,11 @@ function ViolinPlotArea({
           const st = stats[i];
           const dense = kdes[i].length > 0;
           if (s.values.length === 0) {
+            // Nothing to draw; the slot stays (its "n = 0" sits under the label) and still has a readout.
             return (
-              <Group key={i} left={cx}>
+              <rect key={i} x={cx - band / 2} width={band} height={innerH} fill="transparent">
                 <title>{groupText(i)}</title>
-                <text
-                  y={innerH / 2}
-                  textAnchor="middle"
-                  dominantBaseline="middle"
-                  fontSize={TICK_FONT}
-                  fill={tok("text-faint")}
-                >
-                  —
-                </text>
-              </Group>
+              </rect>
             );
           }
           return (

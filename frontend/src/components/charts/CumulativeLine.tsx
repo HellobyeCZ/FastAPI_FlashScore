@@ -65,6 +65,8 @@ const MARKER_LIMIT = 40;
 const READOUT_LINE = 18;
 const READOUT_CHROME = 10;
 const READOUT_GAP = 4;
+/** Narrowest readout: below this it may overlap the crosshair instead. */
+const READOUT_MIN_W = 120;
 
 export function CumulativeLineChart(props: CumulativeLineChartProps) {
   const { noData } = useChartText();
@@ -160,7 +162,7 @@ function LinePlot({
 
   const nX = tickCount(innerW, 84, 8);
   const xTickValues = isTime
-    ? timeScale.ticks(nX).map((d) => d.getTime())
+    ? evenTimeTicks(timeScale.ticks(nX).map((d) => d.getTime()))
     : linScale.ticks(nX).filter((v) => !integerX || Number.isInteger(v));
   const fmtXTick = formatX ?? (isTime ? timeTickFormatter(locale, xTickValues) : plainX);
   const xTicks: AxisTick[] = xTickValues.map((v) => ({ value: v, pos: xPos(v), label: fmtXTick(v) }));
@@ -238,6 +240,11 @@ function LinePlot({
   // (top or bottom) leaves the hovered markers uncovered.
   const hovered = hoverX === null ? [] : series.map((s) => ({ s, p: valueAt(s, hoverX) }));
   const readoutLeft = hoverX !== null && xPos(hoverX) > innerW / 2;
+  // Width up to the crosshair (labels truncate first), so the box never hides it.
+  const readoutMaxW =
+    hoverX === null
+      ? 0
+      : Math.max(READOUT_MIN_W, readoutLeft ? xPos(hoverX) - 6 - READOUT_GAP * 2 : innerW - xPos(hoverX) - 6 - READOUT_GAP * 2);
   const readoutH = READOUT_LINE * (1 + series.length) + READOUT_CHROME;
   const covered = (top: number) =>
     hovered.filter(({ p }) => {
@@ -248,6 +255,7 @@ function LinePlot({
   const readoutBottom = covered(READOUT_GAP) > covered(innerH - READOUT_GAP - readoutH);
   const readoutStyle: React.CSSProperties = {
     ...(readoutLeft ? { left: margin.left + 6 } : { right: margin.right + 6 }),
+    maxWidth: readoutMaxW,
     top: margin.top + (readoutBottom ? Math.max(READOUT_GAP, innerH - READOUT_GAP - readoutH) : READOUT_GAP)
   };
   const readoutText =
@@ -359,7 +367,7 @@ function LinePlot({
       {hoverX !== null && (
         <div
           aria-hidden
-          className="pointer-events-none absolute z-10 max-w-[70%] border border-border-strong bg-bg/95 px-2 py-1 text-meta"
+          className="pointer-events-none absolute z-10 border border-border-strong bg-bg/95 px-2 py-1 text-meta"
           style={readoutStyle}
         >
           <div className="text-text-dim">{fmtXValue(hoverX)}</div>
@@ -386,6 +394,22 @@ function LinePlot({
       )}
     </>
   );
+}
+
+/**
+ * d3 restarts day/hour intervals at every month/day boundary, so the last
+ * tick before one can sit right next to it (Dec 31, Jan 1). Drop that tick so
+ * the spacing stays even and the boundary tick, which carries the coarser
+ * unit, keeps its room.
+ */
+function evenTimeTicks(ticks: number[]): number[] {
+  if (ticks.length < 3) return ticks;
+  const steps = ticks
+    .slice(1)
+    .map((x, i) => x - ticks[i])
+    .sort((a, b) => a - b);
+  const typical = steps[Math.floor(steps.length / 2)];
+  return ticks.filter((x, i) => i === ticks.length - 1 || ticks[i + 1] - x >= typical * 0.75);
 }
 
 /** The readout always names the day; spans under two days add the time. */
