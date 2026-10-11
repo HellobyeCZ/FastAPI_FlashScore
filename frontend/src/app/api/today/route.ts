@@ -227,7 +227,10 @@ export async function GET(request: NextRequest) {
   const overdueIso = new Date(now.getTime() - OVERDUE_HOURS * HOUR_MS).toISOString();
 
   try {
-    const [slateRows, upcomingRows, seriesRows, summaryRows, recentRows] = await Promise.all([
+    // One read transaction: every count is taken from the same snapshot as
+    // the rows beside it, and a locked database fails the batch once instead
+    // of once per query (better-sqlite3 waits out its busy timeout blocking).
+    const [slateRows, upcomingRows, seriesRows, summaryRows, recentRows] = await prisma.$transaction([
       prisma.$queryRaw<RawBet[]>`
         SELECT b.*, strftime(${ISO}, b.kickoff_jd) AS kickoff FROM (${BETS}) b
         WHERE b.kickoff_jd >= julianday(${day.start.toISOString()})

@@ -1,6 +1,11 @@
-import { mkdirSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
+import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
+import { PrismaClient } from "@prisma/client";
+import { NextRequest } from "next/server";
+import type { TodayResponse } from "../../src/components/today/types";
 import { OPS_STATUS_OK, OPS_STATUS_STALE, stubJson, stubShell } from "./fixtures/stub";
 
 // Every relative time, KPI tone and the viewer's local day hang off "now", so
@@ -404,14 +409,244 @@ test.describe("Today cockpit", () => {
         if (locale === "en") {
           // The status and model columns are hidden at this width; both fold
           // into visible cells (innerText skips display: none).
-          const text = await first.innerText();
-          expect(text).toMatch(/\bwon\b/i);
-          expect(text).toContain("Logistic");
+          await expect(first).toContainText("Hradec Kralove", { useInnerText: true });
+          await expect(first).toContainText(/\bwon\b/i, { useInnerText: true });
+          await expect(first).toContainText("Logistic", { useInnerText: true });
         }
       }
       await expectNoHorizontalOverflow(page);
     });
   }
+});
+
+// ---------------------------------------------------------------------------
+// The route itself, run in the test process against a small seeded SQLite
+// file (no browser, no dev server): local-day and 72 h windows, the kick-off
+// and team-name fallback order, null handling and the error mapping.
+
+type RouteContext = {
+  GET: typeof import("../../src/app/api/today/route").GET;
+  prisma: typeof import("../../src/server/prisma").prisma;
+  dbUrl: string;
+  dir: string;
+  seededAt: number;
+  kickoffs: Map<number, number>;
+};
+
+let routeContext: Promise<RouteContext> | undefined;
+
+const HOUR = 3_600_000;
+const ISO_MS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+/** The Python writers' shape: "+00:00" with microseconds. */
+const pyIso = (ms: number) => new Date(ms).toISOString().replace("Z", "123+00:00");
+const jsIso = (ms: number) => new Date(ms).toISOString();
+
+/** Seeds a fresh database once per worker; the route's Prisma client binds to it on first import. */
+function seededRoute(): Promise<RouteContext> {
+  routeContext ??= (async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "today-route-"));
+    const dbUrl = `file:${path.join(dir, "today.sqlite3")}`;
+    process.env.DATABASE_URL = dbUrl;
+    // Loaded only now that DATABASE_URL points at the seeded file, and through
+    // require(), which Playwright transpiles (a dynamic import() of TS isn't).
+    const { prisma } = require("../../src/server/prisma") as typeof import("../../src/server/prisma");
+    const { GET } = require("../../src/app/api/today/route") as typeof import("../../src/app/api/today/route");
+
+    // Only the columns the route reads (paper_bets as app/ml/paper_trade.py creates it).
+    for (const ddl of [
+      `CREATE TABLE paper_bets (
+         id INTEGER PRIMARY KEY AUTOINCREMENT, event_id TEXT NOT NULL, model TEXT NOT NULL,
+         market TEXT NOT NULL, selection TEXT NOT NULL, recommended_at TEXT NOT NULL,
+         price_at_recommendation REAL NOT NULL, edge REAL, result REAL, pnl REAL,
+         status TEXT NOT NULL DEFAULT 'pending', settled_at TEXT)`,
+      `CREATE TABLE match_event_summaries (
+         event_id TEXT PRIMARY KEY, home_team TEXT, away_team TEXT, country TEXT, competition TEXT,
+         start_time_utc TEXT)`,
+      `CREATE TABLE bet_labels (
+         event_id TEXT PRIMARY KEY, home_team TEXT, away_team TEXT, country TEXT, competition TEXT,
+         start_time_utc TEXT)`,
+      `CREATE TABLE upcoming_fixtures (
+         event_id TEXT PRIMARY KEY, home_team_raw TEXT, away_team_raw TEXT, country TEXT, competition TEXT,
+         start_time_utc TEXT NOT NULL)`
+    ]) {
+      await prisma.$executeRawUnsafe(ddl);
+    }
+
+    const now = Date.now();
+    const kickoffs = new Map<number, number>([
+      [1, now + 2 * HOUR], // open, summary + fixture rows
+      [2, now + 30 * HOUR], // open, fixture row only
+      [3, now - 50 * HOUR], // settled (won), label + fixture rows
+      [4, now - 41 * 24 * HOUR], // settled (lost) outside the 30-day window
+      [5, now - 26 * HOUR], // voided
+      [6, now - 7 * HOUR], // pending, overdue
+      [7, now - 1 * HOUR] // pending, not yet overdue
+    ]);
+    const k = (id: number) => kickoffs.get(id)!;
+    const bets: [number, string, string, string, number | null, number | null, number | null, string | null][] = [
+      // id, event, status, selection, edge, result, pnl, settled_at
+      [1, "EvMes001", "pending", "home", 0.05, null, null, null],
+      [2, "EvFix002", "pending", "home", 0.02, null, null, null],
+      [3, "EvLbl003", "settled", "away", 0.04, 1, 0.9, jsIso(now - 48 * HOUR)],
+      [4, "EvOld004", "settled", "draw", 0.03, 0, -1, pyIso(now - 40 * 24 * HOUR)],
+      [5, "EvVoid05", "voided", "home", 0.01, null, null, pyIso(now - 24 * HOUR)],
+      [6, "EvOver06", "pending", "over", null, null, null, null],
+      [7, "EvLate07", "pending", "under", 0.03, null, null, null],
+      [8, "EvNone08", "pending", "yes", 0.02, null, null, null] // no fixture data at all
+    ];
+    for (const [id, event, status, selection, edge, result, pnl, settledAt] of bets) {
+      await prisma.$executeRaw`
+        INSERT INTO paper_bets (id, event_id, model, market, selection, recommended_at,
+          price_at_recommendation, edge, result, pnl, status, settled_at)
+        VALUES (${id}, ${event}, 'logistic', '1X2_FT', ${selection}, ${pyIso(now - (60 - id) * HOUR)},
+          2.0, ${edge}, ${result}, ${pnl}, ${status}, ${settledAt})`;
+    }
+    // Summaries and labels carry the real orientation; upcoming_fixtures
+    // stores it reversed (see the route), so its rows here are crossed.
+    for (const [event, id, home, away] of [
+      ["EvMes001", 1, "Slavia Prague", "Sparta Prague"],
+      ["EvOver06", 6, "Plzen", "Ostrava"],
+      ["EvVoid05", 5, "Ajax", "Feyenoord"],
+      ["EvOld004", 4, "Benfica", "Braga"]
+    ] as const) {
+      await prisma.$executeRaw`
+        INSERT INTO match_event_summaries (event_id, home_team, away_team, country, competition, start_time_utc)
+        VALUES (${event}, ${home}, ${away}, 'CZECH REPUBLIC', 'Chance Liga', ${pyIso(k(id))})`;
+    }
+    await prisma.$executeRaw`
+      INSERT INTO bet_labels (event_id, home_team, away_team, country, competition, start_time_utc)
+      VALUES ('EvLbl003', 'Hradec Kralove', 'Liberec', 'CZECH REPUBLIC', 'Chance Liga', ${jsIso(k(3))})`;
+    for (const [event, id, homeRaw, awayRaw] of [
+      ["EvMes001", 1, "Sparta Prague", "Slavia Prague"],
+      ["EvFix002", 2, "Arsenal", "Liverpool"],
+      ["EvLbl003", 3, "Liberec", "Hradec Kralove"],
+      ["EvLate07", 7, "Napoli", "Inter"]
+    ] as const) {
+      await prisma.$executeRaw`
+        INSERT INTO upcoming_fixtures (event_id, home_team_raw, away_team_raw, country, competition, start_time_utc)
+        VALUES (${event}, ${homeRaw}, ${awayRaw}, 'england', 'Premier League', ${jsIso(k(id))})`;
+    }
+    return { GET, prisma, dbUrl, dir, seededAt: now, kickoffs };
+  })();
+  return routeContext;
+}
+
+async function callRoute(ctx: RouteContext, tz: string) {
+  const res = await ctx.GET(new NextRequest(`http://localhost/api/today?tz=${encodeURIComponent(tz)}`));
+  return { status: res.status, body: await res.json() };
+}
+
+test.describe("GET /api/today (seeded database)", () => {
+  // Browser-independent: run once, on the desktop chromium project, in one worker.
+  test.describe.configure({ mode: "serial" });
+  test.skip(({ browserName, isMobile }) => browserName !== "chromium" || isMobile, "runs once, on chromium");
+
+  test.afterAll(async () => {
+    if (!routeContext) return;
+    const ctx = await routeContext;
+    await ctx.prisma.$disconnect();
+    rmSync(ctx.dir, { recursive: true, force: true });
+  });
+
+  test("windows, fallback order and counts", async () => {
+    const ctx = await seededRoute();
+    const { status, body } = await callRoute(ctx, "Europe/Prague");
+    expect(status).toBe(200);
+    const res = body as TodayResponse;
+
+    // The local day is a Prague calendar day that contains "now".
+    const { today_start, today_end, tz } = res.window;
+    expect(tz).toBe("Europe/Prague");
+    const prague = new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Europe/Prague",
+      hourCycle: "h23",
+      hour: "2-digit",
+      minute: "2-digit"
+    });
+    expect(prague.format(new Date(today_start))).toBe("00:00");
+    expect(prague.format(new Date(today_end))).toBe("00:00");
+    const length = Date.parse(today_end) - Date.parse(today_start);
+    expect([23 * HOUR, 24 * HOUR, 25 * HOUR]).toContain(length);
+    expect(Date.parse(today_start)).toBeLessThanOrEqual(Date.parse(res.generated_at));
+    expect(Date.parse(today_end)).toBeGreaterThan(Date.parse(res.generated_at));
+
+    const inDay = (ms: number) => ms >= Date.parse(today_start) && ms < Date.parse(today_end);
+    const byKickoff = (a: number, b: number) => ctx.kickoffs.get(a)! - ctx.kickoffs.get(b)!;
+    expect(res.slate.map((p) => p.id)).toEqual([...ctx.kickoffs.keys()].filter((id) => inDay(ctx.kickoffs.get(id)!)).sort(byKickoff));
+    expect(res.upcoming72h.map((p) => p.id)).toEqual([1, 2]);
+    expect(res.open72h).toEqual({
+      count: 2,
+      today_count: [1, 2].filter((id) => ctx.kickoffs.get(id)! < Date.parse(today_end)).length
+    });
+
+    // Names: summary, then label, then the fixture row read crossed.
+    const upcoming = new Map(res.upcoming72h.map((p) => [p.id, p]));
+    expect(upcoming.get(1)).toMatchObject({ home_team: "Slavia Prague", away_team: "Sparta Prague", state: "open" });
+    expect(upcoming.get(2)).toMatchObject({ home_team: "Liverpool", away_team: "Arsenal", competition: "Premier League" });
+    for (const p of [...res.slate, ...res.upcoming72h]) expect(p.kickoff).toMatch(ISO_MS);
+    expect(Date.parse(upcoming.get(1)!.kickoff!)).toBe(ctx.kickoffs.get(1));
+
+    // Pending: kicked off, unsettled; overdue after 6 h; no kick-off counted apart.
+    expect(res.pending).toEqual({
+      count: 2,
+      overdue_count: 1,
+      unscheduled_count: 1,
+      oldest_kickoff: jsIso(ctx.kickoffs.get(6)!)
+    });
+
+    // P&L: settled in the last 30 days only; voided bets never count.
+    expect(res.pnl30d).toEqual({ n: 1, pnl: 0.9, series: [{ settled_at: jsIso(ctx.seededAt - 48 * HOUR), cum_pnl: 0.9 }] });
+    expect(res.last_settled_at).toBe(jsIso(ctx.seededAt - 48 * HOUR));
+    expect(res.last_recommended_at).toBe(jsIso(ctx.seededAt - 52 * HOUR));
+
+    // Recent: settled and voided, newest first, with names and nulls kept.
+    expect(res.recent_settled.map((r) => [r.id, r.state, r.result, r.pnl])).toEqual([
+      [5, "void", null, null],
+      [3, "won", 1, 0.9],
+      [4, "lost", 0, -1]
+    ]);
+    expect(res.recent_settled[1]).toMatchObject({ home_team: "Hradec Kralove", away_team: "Liberec" });
+    expect(res.recent_settled[2].settled_at).toBe(jsIso(ctx.seededAt - 40 * 24 * HOUR));
+  });
+
+  test("zone fallbacks: a UTC offset in minutes, or UTC for anything unknown", async () => {
+    const ctx = await seededRoute();
+    expect((await callRoute(ctx, "-120")).body.window.tz).toBe("UTC+02:00");
+    expect((await callRoute(ctx, "330")).body.window.tz).toBe("UTC−05:30");
+    expect((await callRoute(ctx, "Mars/Olympus_Mons")).body.window.tz).toBe("UTC");
+  });
+
+  test("errors stay generic: a locked database is busy, anything else failed", async () => {
+    const ctx = await seededRoute();
+    // The route logs the driver error; capture it instead of printing it.
+    const logged: unknown[][] = [];
+    const consoleError = console.error;
+    console.error = (...args: unknown[]) => void logged.push(args);
+    const locker = new PrismaClient({ adapter: new PrismaBetterSqlite3({ url: ctx.dbUrl, timeout: 0 }) });
+    try {
+      // An exclusive lock on another connection blocks every reader until the
+      // route's connection gives up (better-sqlite3's default busy timeout).
+      await locker.$executeRawUnsafe("BEGIN EXCLUSIVE");
+      const busy = await callRoute(ctx, "Europe/Prague");
+      expect(busy.status).toBe(503);
+      expect(busy.body).toEqual({
+        error: { code: "today_db_busy", message: "The database is busy; try again in a moment" }
+      });
+      await locker.$executeRawUnsafe("ROLLBACK");
+
+      await ctx.prisma.$executeRawUnsafe("DROP TABLE bet_labels");
+      const failed = await callRoute(ctx, "Europe/Prague");
+      expect(failed.status).toBe(500);
+      // No SQL, table names or file paths reach the client; they stay in the log.
+      expect(failed.body).toEqual({
+        error: { code: "today_query_failed", message: "Today's data could not be loaded; see the server log" }
+      });
+      expect(String(logged.at(-1)?.[1])).toContain("no such table: bet_labels");
+    } finally {
+      console.error = consoleError;
+      await locker.$disconnect();
+    }
+  });
 });
 
 // Visual review only: TODAY_SHOTS=<dir> npx playwright test today --project=chromium
