@@ -196,10 +196,14 @@ export function RegistryPanel({ model, className }: { model: string; className?:
               key: "version",
               header: t("performance.col.version"),
               cell: (v) => (
-                <span className="flex flex-wrap items-center gap-1.5">
-                  <span>{t("performance.registry.version", { version: v.version })}</span>
-                  {v.aliases.includes("champion") && <Badge tone="accent">{t("performance.registry.champion")}</Badge>}
-                  {v.aliases.includes("challenger") && <Badge tone="info">{t("performance.registry.challenger")}</Badge>}
+                <span className="flex flex-col">
+                  <span className="flex flex-wrap items-center gap-1.5">
+                    <span>{t("performance.registry.version", { version: v.version })}</span>
+                    {v.aliases.includes("champion") && <Badge tone="accent">{t("performance.registry.champion")}</Badge>}
+                    {v.aliases.includes("challenger") && <Badge tone="info">{t("performance.registry.challenger")}</Badge>}
+                  </span>
+                  {/* The n column is hidden on phones; keep the evidence size with the version. */}
+                  <SampleSize n={metric(v, "n_bets", "total_bets")} className="sm:hidden" />
                 </span>
               )
             },
@@ -338,9 +342,10 @@ export function BacktestsPanel({ model, className }: { model: string; className?
                 <span className="flex w-44 min-w-0 flex-col sm:w-auto sm:max-w-xs">
                   <span className="truncate">{r.label}</span>
                   <span className="truncate text-meta text-text-faint">{fmt.dateTime(r.created_at)}</span>
-                  {/* Below sm the status column is hidden; keep the status visible here. */}
-                  <span className="mt-1 sm:hidden">
+                  {/* Below sm the status and bets columns are hidden; keep both visible here. */}
+                  <span className="mt-1 flex flex-wrap items-center gap-2 sm:hidden">
                     <StateBadge state={r.status} />
+                    {hasBets(r) && <SampleSize n={r.total_bets} />}
                   </span>
                 </span>
               )
