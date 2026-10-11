@@ -98,18 +98,24 @@ export function LeaderboardTable({
     {
       key: "model",
       header: t("performance.col.model"),
-      cell: (r) => <ModelName name={r.model} />,
+      cell: (r) => (
+        <span className="flex flex-col">
+          <ModelName name={r.model} />
+          {/* The n column is hidden on phones; keep the sample size with the name. */}
+          <SampleSize n={r.n} className="sm:hidden" />
+        </span>
+      ),
       sortValue: (r) => modelLabel(r.model, t),
-      firstDir: "asc",
-      className: "max-w-48 sm:max-w-none"
+      firstDir: "asc"
     },
     {
       key: "n",
       header: t("performance.col.n"),
       headerTitle: t("performance.col.nTitle"),
-      cell: (r) => <SampleSize n={r.n} className="text-body" />,
+      cell: (r) => <SampleSize n={r.n} className="whitespace-nowrap text-body" />,
       sortValue: SORT_VALUE.n,
-      align: "right"
+      align: "right",
+      hideBelow: "sm"
     },
     {
       key: "hit_rate",
@@ -118,11 +124,11 @@ export function LeaderboardTable({
         const ci = wilson(r.wins, r.n);
         return (
           <span className="flex flex-col items-end">
-            <span>
+            <span className="whitespace-nowrap">
               {fmt.pct(r.hit_rate)}
               {best.hit_rate === r.model && <BestMark />}
             </span>
-            {ci && <span className="text-meta text-text-faint">{range(ci.low, ci.high, false)}</span>}
+            {ci && <span className="whitespace-nowrap text-meta text-text-faint">{range(ci.low, ci.high, false)}</span>}
           </span>
         );
       },
@@ -137,11 +143,11 @@ export function LeaderboardTable({
         const ci = roiIntervals.get(r.model);
         return (
           <span className="flex flex-col items-end">
-            <span>
+            <span className="whitespace-nowrap">
               <Signed value={r.roi} format="pct" />
               {best.roi === r.model && <BestMark />}
             </span>
-            {ci && <span className="text-meta text-text-faint">{range(ci.low, ci.high, true)}</span>}
+            {ci && <span className="whitespace-nowrap text-meta text-text-faint">{range(ci.low, ci.high, true)}</span>}
           </span>
         );
       },

@@ -295,8 +295,20 @@ export function Measured({
 // ---------------------------------------------------------------------------
 // Cells
 
-/** "Home – Away" over the competition; falls back to the event id only when no names exist. */
-export function MatchCell({ row, className }: { row: HistoryRow; className?: string }) {
+/**
+ * "Home – Away" over the competition; falls back to the event id only when no
+ * names exist. `mobileSub` replaces the competition line below `sm`, where the
+ * table drops columns.
+ */
+export function MatchCell({
+  row,
+  mobileSub,
+  className
+}: {
+  row: HistoryRow;
+  mobileSub?: React.ReactNode;
+  className?: string;
+}) {
   const { t } = useLocale();
   const home = row.home_team ?? row.home_team_raw;
   const away = row.away_team ?? row.away_team_raw;
@@ -310,7 +322,12 @@ export function MatchCell({ row, className }: { row: HistoryRow; className?: str
       ) : (
         <span className="truncate text-text-dim">{t("performance.bets.unknownMatch", { id: row.event_id })}</span>
       )}
-      {comp && <span className="truncate text-meta text-text-faint">{comp}</span>}
+      {comp && (
+        <span className={clsx("truncate text-meta text-text-faint", mobileSub !== undefined && "hidden sm:block")}>
+          {comp}
+        </span>
+      )}
+      {mobileSub !== undefined && <span className="truncate text-meta text-text-dim sm:hidden">{mobileSub}</span>}
     </span>
   );
 }

@@ -343,9 +343,13 @@ export function BacktestsPanel({ model, className }: { model: string; className?
               key: "run",
               header: t("performance.col.run"),
               cell: (r) => (
-                <span className="flex min-w-0 max-w-44 flex-col sm:max-w-xs">
+                <span className="flex w-44 min-w-0 flex-col sm:w-auto sm:max-w-xs">
                   <span className="truncate">{r.label}</span>
                   <span className="truncate text-meta text-text-faint">{fmt.dateTime(r.created_at)}</span>
+                  {/* Below sm the status column is hidden; keep the status visible here. */}
+                  <span className="mt-1 sm:hidden">
+                    <StateBadge state={r.status} />
+                  </span>
                 </span>
               )
             },
@@ -356,7 +360,8 @@ export function BacktestsPanel({ model, className }: { model: string; className?
                 <span title={r.error ?? undefined}>
                   <StateBadge state={r.status} />
                 </span>
-              )
+              ),
+              hideBelow: "sm"
             },
             {
               key: "train",

@@ -23,7 +23,8 @@ export function wilson(wins: number | null | undefined, n: number | null | undef
 
 /**
  * 95% interval for a stake-weighted ROI (Σ pnl / Σ stake), delta method for
- * a ratio estimator. Needs the individual bets; null below two bets.
+ * a ratio estimator. Needs the individual bets; null below two bets. The lower
+ * bound is clipped at −100 %, the most a bettor can lose.
  */
 export function roiInterval(bets: { pnl: number; stake: number }[]): Interval | null {
   const n = bets.length;
@@ -33,7 +34,7 @@ export function roiInterval(bets: { pnl: number; stake: number }[]): Interval | 
   const roi = bets.reduce((a, b) => a + b.pnl, 0) / stake;
   const ss = bets.reduce((a, b) => a + (b.pnl - roi * b.stake) ** 2, 0);
   const se = Math.sqrt(ss / (n - 1) / n) / (stake / n);
-  return { low: roi - Z95 * se, high: roi + Z95 * se };
+  return { low: Math.max(-1, roi - Z95 * se), high: roi + Z95 * se };
 }
 
 /** Live stake and P&L as the backend aggregates them (stake = full-Kelly fraction). */
@@ -234,6 +235,13 @@ export function cumulativeByModel(rows: StatsRow[]): { firstDay: string | null; 
     lastDay: sorted[sorted.length - 1]?.day ?? null,
     series: [...byModel.entries()].map(([model, points]) => ({ model, points }))
   };
+}
+
+/** YYYY-MM-DD shifted by `days` calendar days. */
+export function addDays(day: string, days: number): string {
+  const d = new Date(`${day}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
 }
 
 /** Whole days between two YYYY-MM-DD strings. */

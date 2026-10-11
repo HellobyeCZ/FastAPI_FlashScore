@@ -75,7 +75,13 @@ export function BetsPanel({
     {
       key: "match",
       header: t("performance.col.match"),
-      cell: (r) => <MatchCell row={r} className="max-w-40 sm:max-w-64 xl:max-w-xs" />
+      cell: (r) => (
+        <MatchCell
+          row={r}
+          mobileSub={`${selectionLabel(r.selection, t)} · ${marketLabel(r.market, t)}`}
+          className="w-32 sm:w-auto sm:max-w-xs"
+        />
+      )
     },
     {
       key: "market",
@@ -91,7 +97,8 @@ export function BetsPanel({
           <span className="whitespace-nowrap">{selectionLabel(r.selection, t)}</span>
           <span className="whitespace-nowrap text-meta text-text-faint lg:hidden">{marketLabel(r.market, t)}</span>
         </span>
-      )
+      ),
+      hideBelow: "sm"
     },
     {
       key: "price",

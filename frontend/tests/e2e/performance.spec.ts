@@ -67,7 +67,8 @@ function buildBets(): Bet[] {
       const price = [1.85, 2.4, 3.3, 4.6, 6.2][i % 5];
       const edge = 0.01 + ((i * 7) % 13) / 100;
       const stake = 0.02 + (i % 4) * 0.015;
-      const won = i < wins;
+      // Spread exactly `wins` wins evenly over the model's bets.
+      const won = Math.floor(((i + 1) * wins) / n) > Math.floor((i * wins) / n);
       const day = 1 + (i % 9);
       const kickoff = `2026-10-${String(day).padStart(2, "0")}T18:30:00+00:00`;
       bets.push({
@@ -346,7 +347,7 @@ function historyBody(url: URL, empty: boolean) {
       (!markets.length || markets.includes(b.market)) &&
       (!comps.length || comps.includes(b.competition)) &&
       (edgeMin === null || b.edge >= Number(edgeMin))
-  ).sort((a, b) => b.id - a.id);
+  ).sort((a, b) => b.recommended_at.localeCompare(a.recommended_at) || b.id - a.id);
   const offset = Number(url.searchParams.get("offset") ?? 0);
   const limit = Number(url.searchParams.get("limit") ?? 200);
   return { count: rows.length, rows: rows.slice(offset, offset + limit) };
@@ -429,9 +430,10 @@ test.describe("leaderboard", () => {
     await expect(rows.nth(0).getByText("best", { exact: true })).toHaveCount(0);
     await expect(rows.nth(1).getByText("best", { exact: true }).first()).toBeAttached();
 
-    await page.getByRole("button", { name: /^Bets/ }).click();
-    await expect(page).toHaveURL(/sort=n/);
-    await expect(rows.nth(0)).toContainText("Logistic");
+    // Second click on the active column flips the direction (kept in the URL).
+    await page.getByRole("button", { name: /^ROI/ }).click();
+    await expect(page).toHaveURL(/sort=roi&dir=asc/);
+    await expect(rows.nth(0)).toContainText("Dixon–Coles");
     await expect(rows.nth(2)).toContainText("Gradient boosting");
 
     // Every stats request carried the 90-day window.
@@ -439,7 +441,7 @@ test.describe("leaderboard", () => {
     expect(stats.length).toBeGreaterThan(0);
     for (const u of stats) expect(u.searchParams.get("date_from")).toBeTruthy();
 
-    const link = rows.nth(0).getByRole("link", { name: /Logistic/ });
+    const link = rows.nth(1).getByRole("link", { name: /Logistic/ });
     await expect(link).not.toHaveAttribute("href", /model=/);
     await link.click();
     await expect(page).toHaveURL(/\/en\/models\/logistic/);
@@ -677,7 +679,11 @@ test.describe("model page", () => {
 // ---------------------------------------------------------------------------
 // Responsive
 
-const PAGES = ["/en/performance", "/en/performance/explore?window=all", "/en/models/logistic?window=all"];
+const PAGES = ["en", "cs"].flatMap((l) => [
+  `/${l}/performance`,
+  `/${l}/performance/explore?window=all`,
+  `/${l}/models/logistic?window=all`
+]);
 
 for (const path of PAGES) {
   test(`no horizontal overflow at 390px: ${path}`, async ({ page }) => {
@@ -685,13 +691,23 @@ for (const path of PAGES) {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(path);
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
-    await expect(page.locator("tbody tr").first()).toBeVisible();
+    await expect(page.locator("tbody tr:visible").first()).toBeVisible();
     await page.waitForLoadState("networkidle");
     const { scrollWidth, innerWidth } = await page.evaluate(() => ({
       scrollWidth: document.documentElement.scrollWidth,
       innerWidth: window.innerWidth
     }));
     expect(scrollWidth).toBeLessThanOrEqual(innerWidth);
+    // Data tables fit their panels too: phones get the priority columns, not a
+    // sideways scroll. (The heatmap chart scrolls inside its own frame by design.)
+    const clipped = await page.evaluate(() =>
+      [...document.querySelectorAll("table")]
+        .map((t) => t.parentElement!)
+        .filter((el) => el.classList.contains("overflow-x-auto") && el.offsetParent !== null)
+        .filter((el) => el.scrollWidth > el.clientWidth + 1)
+        .map((el) => el.closest("section")?.querySelector("h2")?.textContent ?? "?")
+    );
+    expect(clipped).toEqual([]);
     expect(unstubbed).toEqual([]);
   });
 }
@@ -716,7 +732,7 @@ test.describe("screenshots", () => {
         await stubPerformance(page, name === "leaderboard-stale" ? { lastSettled: "2026-05-13T20:41:26Z" } : {});
         await page.setViewportSize(mobile ? { width: 390, height: 844 } : { width: 1440, height: 900 });
         await page.goto(`/${locale}${path}`);
-        await expect(page.locator("tbody tr").first()).toBeVisible();
+        await expect(page.locator("tbody tr:visible").first()).toBeVisible();
         await page.waitForLoadState("networkidle");
         await page.screenshot({
           path: `${SHOTS_DIR}/${name}-${locale}-${mobile ? "390" : "1440"}.png`,

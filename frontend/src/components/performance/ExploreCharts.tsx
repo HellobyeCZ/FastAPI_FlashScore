@@ -13,9 +13,9 @@ import { ChartPanel, NoBetsEmpty, panelStatus, usePp, useRowsNote } from "./shar
 
 const CHART_HEIGHT = 260;
 
-/** Unique bar labels: one decimal unless two groups would collide. */
+/** Unique, short bar labels: whole numbers unless two groups would collide. */
 function uniqueLabels(values: number[], format: (v: number, digits: number) => string): string[] {
-  for (const digits of [1, 2]) {
+  for (const digits of [0, 1, 2]) {
     const labels = values.map((v) => format(v, digits));
     if (new Set(labels).size === labels.length) return labels;
   }

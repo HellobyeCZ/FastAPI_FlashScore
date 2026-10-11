@@ -122,7 +122,7 @@ export const performance: Record<keyof typeof en, string> = {
   "performance.chart.legacyCompetition": "Tento backend zatím neumí filtrovat jednotlivé sázky podle soutěže, filtr soutěže zde proto není použit.",
   "performance.chart.pnl.title": "Kumulativní Z/Z podle modelu",
   "performance.chart.pnl.description": "Průběžný součet vypořádaného Z/Z podle dne vypořádání (UTC).",
-  "performance.chart.pnl.axis": "Od {first} do {last}",
+  "performance.chart.pnl.axis": "Vodorovná osa: dny od {origin}; svislá osa: kumulativní Z/Z v jednotkách. Poslední den vypořádání: {last}.",
   "performance.chart.pnl.xLabel": "Dny od {date}",
   "performance.chart.pnl.yLabel": "Z/Z (jednotky)",
   "performance.chart.pnl.summary": "Kumulativní Z/Z na konci období: {summary}.",
@@ -172,7 +172,7 @@ export const performance: Record<keyof typeof en, string> = {
   "performance.pager.first": "První stránka",
 
   "performance.unit.pp": "{value} p. b.",
-  "performance.unit.units": "{value} j.",
+  "performance.unit.units": "{value}u",
 
   "performance.leaderboardPage.description": "Jen živé papírové obchodování: vypořádané sázky {window}. Backtesty najdete v Laboratoři modelů.",
   "performance.leaderboardPage.lastSettled": "naposledy vypořádáno {age}",

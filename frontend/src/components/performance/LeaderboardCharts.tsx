@@ -6,7 +6,7 @@ import { Table } from "@/components/ui";
 import { modelColor, modelLabel } from "@/lib/labels";
 import { usePicksStats, type RowsResult } from "@/lib/performance/api";
 import type { PicksQuery } from "@/lib/performance/filters";
-import { competitionKey, cumulativeByModel, dayOffset, foldStats } from "@/lib/performance/stats";
+import { addDays, competitionKey, cumulativeByModel, dayOffset, foldStats } from "@/lib/performance/stats";
 import type { PerformanceFilterState } from "@/lib/performance/useFilters";
 import { ChartPanel, Measured, NoBetsEmpty, panelStatus, useRowsNote } from "./shared";
 
@@ -30,16 +30,15 @@ export function PnlOverTimePanel({
   const status = panelStatus(state.ready, stats);
   const data = useMemo(() => cumulativeByModel(stats.data?.rows ?? []), [stats.data]);
 
-  const series: LineSeries[] = data.series.map((s, i) => {
-    const points = s.points.map((p) => ({ x: dayOffset(data.firstDay!, p.day), y: p.cumulative }));
-    return {
-      label: modelLabel(s.model, t),
-      color: modelColor(s.model, i),
-      points: points[0].x > 0 ? [{ x: 0, y: 0 }, ...points] : points
-    };
-  });
+  // Day 0 is the day before the first settlement, so every line starts at 0u.
+  const origin = data.firstDay ? addDays(data.firstDay, -1) : null;
+  const series: LineSeries[] = data.series.map((s, i) => ({
+    label: modelLabel(s.model, t),
+    color: modelColor(s.model, i),
+    points: [{ x: 0, y: 0 }, ...s.points.map((p) => ({ x: dayOffset(origin!, p.day), y: p.cumulative }))]
+  }));
   const tableRows = data.series.flatMap((s) => s.points.map((p) => ({ model: s.model, ...p })));
-  const firstDay = data.firstDay ? fmt.date(dayIso(data.firstDay)) : "";
+  const originText = origin ? fmt.date(dayIso(origin)) : "";
   const summary = data.series
     .map((s) => `${modelLabel(s.model, t)} ${fmt.units(s.points[s.points.length - 1].cumulative)}`)
     .join(", ");
@@ -53,8 +52,8 @@ export function PnlOverTimePanel({
       isEmpty={data.series.length === 0}
       empty={<NoBetsEmpty state={state} compact />}
       footer={
-        data.firstDay && data.lastDay
-          ? t("performance.chart.pnl.axis", { first: firstDay, last: fmt.date(dayIso(data.lastDay)) })
+        origin && data.lastDay
+          ? t("performance.chart.pnl.axis", { origin: originText, last: fmt.date(dayIso(data.lastDay)) })
           : undefined
       }
       table={
@@ -80,7 +79,7 @@ export function PnlOverTimePanel({
             series={series}
             width={width}
             height={CHART_HEIGHT}
-            xLabel={t("performance.chart.pnl.xLabel", { date: firstDay })}
+            xLabel={t("performance.chart.pnl.xLabel", { date: originText })}
             yLabel={t("performance.chart.pnl.yLabel")}
           />
         )}

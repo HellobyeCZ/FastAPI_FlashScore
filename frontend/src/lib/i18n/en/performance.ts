@@ -123,7 +123,7 @@ export const performance = {
   "performance.chart.legacyCompetition": "This backend can't filter individual bets by competition yet, so the competition filter is not applied here.",
   "performance.chart.pnl.title": "Cumulative P&L by model",
   "performance.chart.pnl.description": "Running sum of settled P&L by settlement day (UTC).",
-  "performance.chart.pnl.axis": "From {first} to {last}",
+  "performance.chart.pnl.axis": "Horizontal axis: days since {origin}; vertical axis: cumulative P&L in units. Last settlement day: {last}.",
   "performance.chart.pnl.xLabel": "Days since {date}",
   "performance.chart.pnl.yLabel": "P&L (units)",
   "performance.chart.pnl.summary": "Cumulative P&L at the end of the window: {summary}.",
