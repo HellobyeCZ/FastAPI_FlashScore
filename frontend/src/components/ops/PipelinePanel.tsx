@@ -17,6 +17,7 @@ type Verdict =
   | "clear"
   | "ok"
   | "none"
+  | "notNeeded"
   | "manual"
   | "running"
   | "idle";
@@ -34,13 +35,17 @@ type Row = {
   tone: Tone;
 };
 
-/** Age thresholds (hours), matching the backend health rules (spec §4.1). */
+/**
+ * Age thresholds (hours), matching the backend health rules (spec §4.1). As in
+ * the backend, a step that never ran is a warning (expected on a fresh
+ * install); only a step that ran and then stopped escalates.
+ */
 const PICKS_WARN_H = 36;
 const PICKS_ERROR_H = 7 * 24;
 const ODDS_WARN_H = 24;
 
 function byAge(at: string | null, warnH: number, errorH: number, now: Date): Pick<Row, "verdict" | "tone"> {
-  if (!at) return { verdict: "never", tone: "neg" };
+  if (!at) return { verdict: "never", tone: "warn" };
   const h = ageHours(at, now);
   if (h > errorH) return { verdict: "overdue", tone: "neg" };
   if (h > warnH) return { verdict: "stale", tone: "warn" };
@@ -53,6 +58,15 @@ function buildRows(s: OpsStatus, now: Date): Row[] {
   // verdict instead of re-deriving it from recommendation times.
   const overdue = s.health.issues.some((i) => i.code === "settle_overdue");
   const settleTone: Tone = overdue ? "warn" : "pos";
+  const settled: Pick<Row, "verdict" | "tone"> = overdue
+    ? { verdict: "behind", tone: "warn" }
+    : p.pending_bets === 0
+      ? { verdict: "clear", tone: "pos" }
+      : p.last_settled_at
+        ? { verdict: "ok", tone: "pos" }
+        : { verdict: "never", tone: "warn" };
+  // Live odds only matter while fixtures are coming up (backend live_odds_stale).
+  const fixtures = p.upcoming_fixtures_72h > 0;
   return [
     {
       id: "picks",
@@ -64,8 +78,7 @@ function buildRows(s: OpsStatus, now: Date): Row[] {
       id: "settled",
       at: p.last_settled_at,
       rule: true,
-      verdict: overdue ? "behind" : p.pending_bets === 0 ? "clear" : "ok",
-      tone: settleTone
+      ...settled
     },
     {
       id: "pending",
@@ -73,13 +86,20 @@ function buildRows(s: OpsStatus, now: Date): Row[] {
       verdict: overdue ? "overdue" : p.pending_bets === 0 ? "clear" : "ok",
       tone: settleTone
     },
-    { id: "liveOdds", at: p.last_live_odds_at, rule: true, ...byAge(p.last_live_odds_at, ODDS_WARN_H, Infinity, now) },
+    {
+      id: "liveOdds",
+      at: p.last_live_odds_at,
+      rule: true,
+      ...(fixtures
+        ? byAge(p.last_live_odds_at, ODDS_WARN_H, Infinity, now)
+        : { verdict: "notNeeded" as const, tone: "neutral" as const })
+    },
     { id: "discovery", at: p.last_discovery_at, rule: true, ...byAge(p.last_discovery_at, ODDS_WARN_H, Infinity, now) },
     {
       id: "fixtures",
       count: { n: p.upcoming_fixtures_72h, unit: "ops.count.fixtures" },
-      verdict: p.upcoming_fixtures_72h > 0 ? "ok" : "none",
-      tone: p.upcoming_fixtures_72h > 0 ? "pos" : "warn"
+      verdict: fixtures ? "ok" : "none",
+      tone: fixtures ? "pos" : "warn"
     },
     {
       id: "scrape",
@@ -173,7 +193,7 @@ export function PipelinePanel() {
         >
           {(s) => {
             // Ages are measured at the moment the backend evaluated health, so
-            // this table always agrees with the health banner above it.
+            // they match the ages behind the health banner above.
             const now = parseDate(s.generated_at) ?? new Date();
             return (
               <Table

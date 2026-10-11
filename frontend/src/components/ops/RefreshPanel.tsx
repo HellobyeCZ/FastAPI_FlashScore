@@ -46,12 +46,12 @@ const STATE_TONE: Record<StageState, Tone> = {
 };
 
 function useDuration() {
-  const { t } = useLocale();
+  const { t, fmt } = useLocale();
   return (seconds: number) => {
     const total = Math.max(0, Math.round(seconds));
     const m = Math.floor(total / 60);
-    const s = total % 60;
-    return m > 0 ? t("ops.duration.ms", { m, s }) : t("ops.duration.s", { s });
+    const s = fmt.int(total % 60);
+    return m > 0 ? t("ops.duration.ms", { m: fmt.int(m), s }) : t("ops.duration.s", { s });
   };
 }
 
@@ -65,8 +65,8 @@ function runState(run: RefreshRun): "completed" | "failed" | "running" {
 function StageList({ run }: { run: RefreshRun | undefined }) {
   const { t, fmt } = useLocale();
   const params = {
-    days: REFRESH_PARAMS.window_days,
-    hours: REFRESH_PARAMS.hours_ahead,
+    days: fmt.int(REFRESH_PARAMS.window_days),
+    hours: fmt.int(REFRESH_PARAMS.hours_ahead),
     edge: fmt.pct(REFRESH_PARAMS.min_edge, 0)
   };
   return (
@@ -134,10 +134,9 @@ function StageList({ run }: { run: RefreshRun | undefined }) {
 export function RefreshPanel() {
   const { t, fmt } = useLocale();
   const duration = useDuration();
-  const { list, run, start, active } = useRefreshNow();
+  const { list, run, current, runFailing, start, active, gone, dismissGone } = useRefreshNow();
   const [confirming, setConfirming] = useState(false);
   const recentId = useId();
-  const current = run.data;
   const failedStage =
     current?.status === "error" ? REFRESH_STAGES.find((s) => stageState(current, s) === "failed") : undefined;
 
@@ -191,10 +190,24 @@ export function RefreshPanel() {
 
         <StageList run={current} />
 
-        {run.isError && (
+        {gone && (
+          <Callout
+            tone="warn"
+            title={t("ops.refresh.gone.title")}
+            action={
+              <Button variant="ghost" size="sm" onClick={dismissGone}>
+                {t("ops.dismiss")}
+              </Button>
+            }
+          >
+            {t("ops.refresh.gone.body")}
+          </Callout>
+        )}
+
+        {runFailing && (
           <Callout
             tone="neg"
-            title={t("ops.refresh.listError")}
+            title={t("ops.refresh.runError")}
             action={
               <Button size="sm" onClick={() => run.refetch()} loading={run.isFetching}>
                 {t("common.retry")}
@@ -260,13 +273,13 @@ export function RefreshPanel() {
       >
         <p className="text-warn">
           {t("ops.refresh.confirm.upstream", {
-            days: REFRESH_PARAMS.window_days,
-            concurrency: REFRESH_PARAMS.max_concurrency
+            days: fmt.int(REFRESH_PARAMS.window_days),
+            concurrency: fmt.int(REFRESH_PARAMS.max_concurrency)
           })}
         </p>
         <p>
           {t("ops.refresh.confirm.then", {
-            hours: REFRESH_PARAMS.hours_ahead,
+            hours: fmt.int(REFRESH_PARAMS.hours_ahead),
             edge: fmt.pct(REFRESH_PARAMS.min_edge, 0)
           })}
         </p>

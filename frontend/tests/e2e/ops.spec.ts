@@ -209,7 +209,9 @@ test.describe("Data ops", () => {
     await expect(stageRow(pipeline, "Picks recorded")).toContainText("Overdue");
     await expect(stageRow(pipeline, "Bets settled")).toContainText("Behind");
     await expect(stageRow(pipeline, "Pending bets")).toContainText("18 bets");
-    await expect(stageRow(pipeline, "Live odds snapshot")).toContainText("Stale");
+    // No fixtures coming up, so a day-old live snapshot is not a problem
+    // (the backend raises live_odds_stale only when fixtures exist).
+    await expect(stageRow(pipeline, "Live odds snapshot")).toContainText("Not needed");
     await expect(stageRow(pipeline, "Fixture discovery")).toContainText("Fresh");
     await expect(stageRow(pipeline, "Upcoming fixtures (72 h)")).toContainText("None");
     await expect(stageRow(pipeline, "Backtest queue")).toContainText("2 active");
@@ -326,6 +328,64 @@ test.describe("Data ops", () => {
     await expect(panel.locator('[data-stage="settle"]')).toHaveAttribute("data-state", "skipped");
     await expect(panel.getByText("Refresh failed at “Rebuild labels, closing odds and Elo”")).toBeVisible();
     await expect(panel.getByText("OperationalError: database is locked")).toBeVisible();
+  });
+
+  test("a followed run the backend no longer knows stops polling and frees the button", async ({ page }) => {
+    // FastAPI keeps refresh runs in memory: after a restart the list (stale in
+    // the cache, or still listing it) points at a run whose detail is a 404.
+    const running = {
+      ...DONE_RUN,
+      run_id: "r1",
+      status: "scrape",
+      finished_at: null,
+      stage_progress: { scrape: { state: "running" } }
+    };
+    await stubOps(page, { refreshList: { active_run_id: "r1", runs: [running] } });
+    let polls = 0;
+    await page.route(/\/api\/backend\/refresh-now\/r1$/, (route) => {
+      polls += 1;
+      return route.fulfill({ status: 404, json: { detail: "Refresh run not found." } });
+    });
+    await page.goto("/en/ops");
+    const panel = page.getByRole("region", { name: "Refresh all" });
+    await expect(panel.getByText("The backend no longer knows this run")).toBeVisible({ timeout: 10_000 });
+    await expect(panel.getByRole("button", { name: "Run refresh" })).toBeEnabled();
+    await expect(panel.locator('[data-state="running"]')).toHaveCount(0);
+    await expect(panel.getByText(/Current run started/)).toHaveCount(0);
+    await expect(panel.getByText("Couldn't load the current run")).toHaveCount(0);
+
+    const settled = polls;
+    await page.waitForTimeout(4_500);
+    expect(polls).toBe(settled);
+
+    await panel.getByRole("button", { name: "Dismiss" }).click();
+    await expect(panel.getByText("The backend no longer knows this run")).toHaveCount(0);
+  });
+
+  test("a failing run fetch is reported as such and stops polling", async ({ page }) => {
+    const running = {
+      ...DONE_RUN,
+      run_id: "r2",
+      status: "settle",
+      finished_at: null,
+      stage_progress: { ...DONE_RUN.stage_progress, settle: { state: "running" }, predict: undefined }
+    };
+    await stubOps(page, { refreshList: { active_run_id: "r2", runs: [running] } });
+    let polls = 0;
+    await page.route(/\/api\/backend\/refresh-now\/r2$/, (route) => {
+      polls += 1;
+      return route.fulfill({ status: 500, json: { detail: "Internal Server Error" } });
+    });
+    await page.goto("/en/ops");
+    const panel = page.getByRole("region", { name: "Refresh all" });
+    await expect(panel.getByText("Couldn't load the current run")).toBeVisible({ timeout: 10_000 });
+    await expect(panel.getByText("Couldn't load refresh runs")).toHaveCount(0);
+    await expect(panel.getByRole("button", { name: "Run refresh" })).toBeEnabled();
+    const settled = polls;
+    await page.waitForTimeout(4_500);
+    expect(polls).toBe(settled);
+    await panel.getByRole("button", { name: "Retry" }).click();
+    await expect.poll(() => polls).toBeGreaterThan(settled);
   });
 
   test("scrape jobs show completed_with_errors, progress counts and error details", async ({ page }) => {

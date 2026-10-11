@@ -27,7 +27,7 @@ export const settings: Record<keyof typeof en, string> = {
   "settings.about.backend": "Verze backendu",
   "settings.about.status": "Stav backendu",
   "settings.about.db": "Velikost databáze",
-  "settings.about.checked": "Stav vytvořen",
+  "settings.about.checked": "Stav zjištěn",
   "settings.about.ops": "Otevřít Správu dat",
   "settings.about.error": "Backend neodpovídá",
   "settings.about.errorHint": "Spusťte FastAPI (uvicorn src:app na portu 8000) a zkuste to znovu."

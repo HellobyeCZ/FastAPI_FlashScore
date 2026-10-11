@@ -164,8 +164,9 @@ function NewScrapeForm({
   const recent = recentPaths(jobs);
   const estimate = pending ? estimateEvents(jobs, pending) : null;
   const set = (patch: Partial<ScrapeForm>) => setForm((f) => ({ ...f, ...patch }));
-  const range = (r: { min: number; max: number }) => t("ops.scrape.range", { min: r.min, max: r.max });
-  const rangeError = (r: { min: number; max: number }) => t("ops.scrape.err.range", { min: r.min, max: r.max });
+  const bounds = (r: { min: number; max: number }) => ({ min: fmt.int(r.min), max: fmt.int(r.max) });
+  const range = (r: { min: number; max: number }) => t("ops.scrape.range", bounds(r));
+  const rangeError = (r: { min: number; max: number }) => t("ops.scrape.err.range", bounds(r));
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -324,7 +325,7 @@ function NewScrapeForm({
                 },
                 {
                   label: t("ops.scrape.confirm.seasons"),
-                  value: tp("ops.seasons", pending.seasons, { count: pending.seasons })
+                  value: tp("ops.seasons", pending.seasons, { count: fmt.int(pending.seasons) })
                 },
                 {
                   label: t("ops.scrape.confirm.events"),
@@ -347,7 +348,10 @@ function NewScrapeForm({
                       total: tp("ops.events", estimate.basis.total_events, {
                         count: fmt.int(estimate.basis.total_events)
                       }),
-                      seasons: tp("ops.seasons", estimate.basis.seasons, { count: estimate.basis.seasons })
+                      seasons: tp("ops.seasons", estimate.basis.seasons, {
+                        count: fmt.int(estimate.basis.seasons)
+                      }),
+                      n: fmt.int(estimate.basis.seasons)
                     })
                   : t("ops.scrape.confirm.basisSame", {
                       id: estimate.basis.id,
@@ -410,12 +414,12 @@ export function BulkScrapePanel() {
         <div className="flex min-w-[6rem] flex-col gap-0.5">
           <CompetitionPath path={j.competition_path} />
           <span className="text-meta text-text-dim">
-            #{j.id} · {tp("ops.seasons", j.seasons, { count: j.seasons })}
+            #{j.id} · {tp("ops.seasons", j.seasons, { count: fmt.int(j.seasons) })}
             <span className="hidden sm:inline">
               {" · "}
               {t("ops.jobs.options", {
                 data: dataLabel(j.include_stats, j.include_odds),
-                concurrency: j.max_concurrency
+                concurrency: fmt.int(j.max_concurrency)
               })}
             </span>
           </span>
@@ -527,7 +531,8 @@ export function BulkScrapePanel() {
             {stopping.total_events > 0
               ? t("ops.jobs.stop.body", {
                   path: stopping.competition_path,
-                  count: tp("ops.events", remaining, { count: fmt.int(remaining) })
+                  events: tp("ops.events", remaining, { count: fmt.int(remaining) }),
+                  n: fmt.int(remaining)
                 })
               : t("ops.jobs.stop.bodyDiscovering", { path: stopping.competition_path })}
           </p>
