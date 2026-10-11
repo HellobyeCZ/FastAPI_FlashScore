@@ -227,10 +227,10 @@ function RunDetail({ run, crumbs }: { run: BacktestRunDetail; crumbs: Crumb[] })
         </Panel>
 
         {completed && n > 0 && (
-          <div className="grid gap-6 xl:grid-cols-2">
-            <ReliabilityPanel run={run} />
+          <>
             <PnlPanel run={run} />
-          </div>
+            <ReliabilityPanel run={run} />
+          </>
         )}
 
         {completed && <RunBetsPanel run={run} />}

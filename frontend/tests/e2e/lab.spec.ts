@@ -1,4 +1,6 @@
 import { expect, test, type Page, type Request } from "@playwright/test";
+import type { BacktestRunSummary } from "@/lib/lab/backtests";
+import type { MlflowStatus } from "@/types/ops";
 import { OPS_STATUS_OK, stubJson, stubShell } from "./fixtures/stub";
 
 /*
@@ -30,7 +32,9 @@ const SCOPE: [string, string][] = [
   ["CZECH REPUBLIC", "Chance Liga"]
 ];
 
-function summary(over: Record<string, unknown>) {
+function summary(
+  over: Partial<BacktestRunSummary> & Pick<BacktestRunSummary, "id" | "model" | "status">
+): BacktestRunSummary {
   return {
     label: "",
     created_at: "2026-05-18T21:27:18Z",
@@ -185,17 +189,18 @@ function detail(id: string) {
   };
 }
 
-const TEAMS: [string, string, string][] = [
-  ["Arsenal", "Chelsea", "football/england/premier-league"],
-  ["Real Betis", "Sevilla", "football/spain/laliga"],
-  ["Sparta Praha", "Slavia Praha", "football/czech-republic/chance-liga"],
-  ["Bayern München", "Borussia Dortmund", "football/germany/bundesliga"]
+const TEAMS: [string, string, string, string][] = [
+  ["Arsenal", "Chelsea", "Premier League", "England"],
+  ["Real Betis", "Sevilla", "LaLiga", "Spain"],
+  ["Sparta Praha", "Slavia Praha", "Chance Liga", "Czech Republic"],
+  ["Bayern München", "Borussia Dortmund", "Bundesliga", "Germany"]
 ];
 
 function historyRows(runId: string, offset: number, limit: number) {
-  return Array.from({ length: Math.min(limit, 12) }, (_, i) => {
+  const total = RUNS.find((r) => r.id === runId)?.total_bets ?? 0;
+  return Array.from({ length: Math.max(0, Math.min(limit, total - offset)) }, (_, i) => {
     const k = offset + i;
-    const [home, away, competition] = TEAMS[k % TEAMS.length];
+    const [home, away, competition, country] = TEAMS[k % TEAMS.length];
     const won = k % 3 === 0;
     const price = [2.1, 3.45, 1.85, 4.2][k % 4];
     const stake = 0.012;
@@ -217,7 +222,7 @@ function historyRows(runId: string, offset: number, limit: number) {
       home_team: home,
       away_team: away,
       competition,
-      country: "",
+      country,
       kickoff: `2024-08-${String(2 + (k % 27)).padStart(2, "0")}T18:00:00Z`
     };
   });
@@ -239,8 +244,8 @@ function dayRows(runId: string) {
   });
 }
 
-const MLFLOW_OK = OPS_STATUS_OK.mlflow;
-const MLFLOW_DOWN = {
+const MLFLOW_OK: MlflowStatus = OPS_STATUS_OK.mlflow;
+const MLFLOW_DOWN: MlflowStatus = {
   ...MLFLOW_OK,
   reachable: false,
   experiment_id: null,
@@ -385,7 +390,7 @@ type Recorded = { method: string; path: string; search: URLSearchParams; body: u
 
 type LabStubs = {
   runs?: unknown[];
-  mlflowStatus?: typeof MLFLOW_OK;
+  mlflowStatus?: MlflowStatus;
   registry?: unknown;
 };
 
@@ -500,10 +505,10 @@ test.describe("lab · backtests", () => {
 
     const table = page.getByRole("table", { name: /Backtest runs/ });
     // Auto-generated labels become model + window.
-    await expect(table.getByText("Logistic · Aug 1, 2024 → open")).toBeVisible();
+    await expect(table.getByText("Logistic · Aug 1, 2024 → open", { exact: true })).toBeVisible();
     // A 0-bet run shows "0 bets" and an undefined ROI, not 0.0%.
     const baselineRow = table.getByRole("row").filter({ hasText: "Market implied" });
-    await expect(baselineRow.getByText("0 bets")).toBeVisible();
+    await expect(baselineRow.getByText("0 bets").filter({ visible: true })).toBeVisible();
     await expect(baselineRow.getByText("0.0%")).toHaveCount(0);
     await expect(table.getByText(/unknown model 'hgb'/)).toBeVisible();
 
@@ -572,9 +577,12 @@ test.describe("lab · backtests", () => {
     expect(unhandled).toEqual([]);
   });
 
-  test("cancel and delete go through a confirmation", async ({ page }) => {
+  test("cancel and delete go through a confirmation", async ({ page }, info) => {
     const { calls } = await stubLab(page);
-    await page.goto("/en/lab/backtests");
+    // Phones hide the row actions; the same controls sit in the run page header.
+    const mobile = info.project.name === "mobile";
+    const open = (id: string) => page.goto(mobile ? `/en/lab/backtests/${id}` : "/en/lab/backtests");
+    await open(RUNNING);
 
     await page.getByRole("button", { name: /Cancel run Logistic · Jan 1, 2025 → open/ }).click();
     const cancel = page.getByRole("dialog", { name: "Cancel this backtest?" });
@@ -583,6 +591,7 @@ test.describe("lab · backtests", () => {
     await expect(cancel).toBeHidden();
     expect(calls.some((c) => c.method === "POST" && c.path === `backtest/runs/${RUNNING}/cancel`)).toBe(true);
 
+    await open(DIXON);
     await page.getByRole("button", { name: /Delete run Dixon–Coles · Aug 2024 smoke test/ }).click();
     const del = page.getByRole("dialog", { name: "Delete this backtest?" });
     await expect(del).toContainText("306 bets");
@@ -593,6 +602,8 @@ test.describe("lab · backtests", () => {
     await page.getByRole("button", { name: /Delete run Dixon–Coles · Aug 2024 smoke test/ }).click();
     await page.getByRole("dialog", { name: "Delete this backtest?" }).getByRole("button", { name: "Delete run" }).click();
     await expect.poll(() => calls.some((c) => c.method === "DELETE" && c.path === `backtest/runs/${DIXON}`)).toBe(true);
+    // Deleting from the run page returns to the list.
+    if (mobile) await expect(page).toHaveURL(/\/en\/lab\/backtests$/);
   });
 
   test("empty and error states keep the page chrome", async ({ page }) => {
@@ -672,7 +683,7 @@ test.describe("lab · experiments", () => {
     await expect(h1(page)).toContainText("Experiments");
     const table = page.getByRole("table", { name: /MLflow runs/ });
     await expect(table.getByText("bt_logistic_2024-08-01", { exact: true })).toBeVisible();
-    await expect(table.getByText("v3")).toBeVisible();
+    await expect(table.getByText("v3").filter({ visible: true })).toBeVisible();
 
     await page.getByRole("radio", { name: "Training" }).click();
     await expect(page).toHaveURL(/purpose=offline_training/);
@@ -700,8 +711,8 @@ test.describe("lab · registry", () => {
     await expect(page.getByText("In sync").first()).toBeVisible();
     await expect(page.getByText("Not served from the registry")).toBeVisible();
 
-    await page.getByRole("button", { name: "Make v4 the Champion" }).click();
-    const dialog = page.getByRole("dialog", { name: /Make v4 the Champion of picks-logistic/ });
+    await page.getByRole("button", { name: "Make v4 champion" }).click();
+    const dialog = page.getByRole("dialog", { name: "Make v4 the champion of picks-logistic?" });
     await expect(dialog).toContainText("Live picks will be recorded with picks-logistic v4; currently v3.");
     await expect(dialog).toContainText("Only 173 bets of evidence");
     await expect(dialog).toContainText("worse than the champion v3");
@@ -710,8 +721,8 @@ test.describe("lab · registry", () => {
     const post = calls.find((c) => c.method === "POST" && c.path === "mlflow/registry/logistic/aliases");
     expect(post?.body).toEqual({ version: "4", alias: "champion" });
 
-    await page.getByRole("button", { name: "Remove Champion from v3" }).click();
-    const remove = page.getByRole("dialog", { name: "Remove Champion from v3?" });
+    await page.getByRole("button", { name: "Remove champion from v3" }).click();
+    const remove = page.getByRole("dialog", { name: "Remove the champion alias from v3?" });
     await expect(remove).toContainText("fall back to its file artifact");
     await remove.getByRole("button", { name: "Remove champion" }).click();
     await expect.poll(() => calls.some((c) => c.method === "DELETE" && c.path === "mlflow/registry/logistic/aliases/champion")).toBe(true);
@@ -755,7 +766,7 @@ test.describe("lab · locale and layout", () => {
     }
     await page.goto("/cs/lab/backtests");
     await expect(page.getByRole("button", { name: "Nový backtest" })).toBeVisible();
-    await expect(page.getByText("0 sázek")).toBeVisible();
+    await expect(page.getByText("0 sázek").filter({ visible: true })).toBeVisible();
   });
 
   test("no horizontal overflow on phones", async ({ page }, info) => {
@@ -796,7 +807,7 @@ test.describe("lab · locale and layout", () => {
     await page.screenshot({ path: `${SHOTS}/desktop-en-dialog-new.png` });
     await page.keyboard.press("Escape");
     await page.goto("/en/lab/registry");
-    await page.getByRole("button", { name: "Make v4 the Champion" }).click();
+    await page.getByRole("button", { name: "Make v4 champion" }).click();
     await page.waitForTimeout(300);
     await page.screenshot({ path: `${SHOTS}/desktop-en-dialog-promote.png` });
     await stubLab(page, { mlflowStatus: MLFLOW_DOWN });

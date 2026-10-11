@@ -104,7 +104,8 @@ export function marketSpecLabel(spec: string, t: T): string {
   const [sport, ...rest] = spec.split("_");
   if (!sport || rest.length === 0) return spec.replace(/_/g, " ");
   const market = marketLabel(rest.join("_").toUpperCase(), t);
-  return `${sport.charAt(0).toUpperCase()}${sport.slice(1)} · ${market}`;
+  const sportName = sport === "football" ? t("lab.sport.football") : `${sport.charAt(0).toUpperCase()}${sport.slice(1)}`;
+  return `${sportName} · ${market}`;
 }
 
 /** Wall-clock duration of a finished run, or null while it hasn't both started and finished. */
@@ -112,4 +113,15 @@ export function runDurationMs(run: Pick<BacktestRunSummary, "started_at" | "fini
   const start = parseDate(run.started_at);
   const end = parseDate(run.finished_at);
   return start && end ? Math.max(0, end.getTime() - start.getTime()) : null;
+}
+
+/**
+ * Display name for a bet's competition. Rows carry either a name
+ * ("Premier League - Play Offs") or a path ("football/england/premier-league").
+ */
+export function competitionName(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  if (!raw.includes("/")) return raw;
+  const slug = raw.split("/").filter(Boolean).pop() ?? raw;
+  return slug.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }

@@ -23,7 +23,7 @@ export function ReliabilityPanel({ run }: { run: BacktestRunDetail }) {
     {
       key: "range",
       header: t("lab.reliability.col.range"),
-      cell: (b) => `${fmt.pct(b.lower, 0)}–${fmt.pct(b.upper, 0)}`
+      cell: (b) => <span className="whitespace-nowrap">{`${fmt.pct(b.lower, 0)}–${fmt.pct(b.upper, 0)}`}</span>
     },
     { key: "pred", header: t("lab.reliability.col.predicted"), align: "right", cell: (b) => fmt.pct(b.mean_pred) },
     {
@@ -32,15 +32,15 @@ export function ReliabilityPanel({ run }: { run: BacktestRunDetail }) {
       align: "right",
       cell: (b) => <span className={b.n < MIN_BUCKET_N ? "text-text-dim" : undefined}>{fmt.pct(b.hit_rate)}</span>
     },
-    { key: "n", header: t("common.n"), align: "right", cell: (b) => <SampleSize n={b.n} min={MIN_BUCKET_N} /> }
+    { key: "n", header: t("common.n"), align: "right", cell: (b) => <SampleSize n={b.n} min={MIN_BUCKET_N} className="whitespace-nowrap" /> }
   ];
   return (
     <Panel title={t("lab.reliability.title")} description={t("lab.reliability.description")}>
       {buckets.length === 0 ? (
         <EmptyState compact title={t("lab.reliability.empty")} />
       ) : (
-        <div className="flex flex-col gap-4 xl:flex-row xl:items-start">
-          <ChartBox height={320} className="xl:max-w-sm">
+        <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
+          <ChartBox height={320} className="lg:max-w-sm">
             {(w) => {
               const size = Math.min(w, 360);
               return <CalibrationPlot buckets={buckets} width={size} height={size} />;
@@ -51,7 +51,7 @@ export function ReliabilityPanel({ run }: { run: BacktestRunDetail }) {
             columns={columns}
             rows={buckets}
             rowKey={(b) => `${b.lower}`}
-            className="xl:flex-1"
+            className="lg:flex-1"
           />
         </div>
       )}

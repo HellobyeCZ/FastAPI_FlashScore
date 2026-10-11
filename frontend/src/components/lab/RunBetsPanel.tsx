@@ -3,10 +3,10 @@ import { useCallback } from "react";
 import { useLocale } from "@/contexts/LocaleContext";
 import { Button, Callout, EmptyState, Panel, Signed, StateBadge, Table, type Column } from "@/components/ui";
 import { errorMessage } from "@/lib/api/http";
-import { competitionRoot } from "@/lib/competition";
 import { marketLabel, selectionLabel } from "@/lib/labels";
 import { asRoute, buildQuery, routes } from "@/lib/routes";
 import { useRunBets, type BacktestRunDetail, type RunBet } from "@/lib/lab/backtests";
+import { competitionName } from "@/lib/lab/format";
 import { useSearchState } from "@/lib/lab/hooks";
 
 const PAGE_SIZE = 50;
@@ -46,7 +46,7 @@ export function RunBetsPanel({ run }: { run: BacktestRunDetail }) {
             </span>
           )}
           <span className="text-meta text-text-faint">
-            {[competitionRoot(b.competition), fmt.dateTime(b.kickoff ?? b.bet_ts)].filter(Boolean).join(" · ")}
+            {[competitionName(b.competition), fmt.dateTime(b.kickoff ?? b.bet_ts)].filter(Boolean).join(" · ")}
           </span>
         </span>
       )
@@ -57,7 +57,7 @@ export function RunBetsPanel({ run }: { run: BacktestRunDetail }) {
       cell: (b) => (
         <span className="flex flex-col gap-0.5">
           <span>{selectionLabel(b.selection, t)}</span>
-          <span className="text-meta text-text-faint">{marketLabel(b.market, t)}</span>
+          <span className="whitespace-nowrap text-meta text-text-faint">{marketLabel(b.market, t)}</span>
         </span>
       )
     },

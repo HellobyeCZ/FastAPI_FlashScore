@@ -59,7 +59,10 @@ export function RegistryPage() {
   const ops = useOpsStatus();
   const status = registry.data?.status;
   const down = Boolean(status && !(status.enabled && status.reachable));
-  const models = [...(registry.data?.models ?? [])].sort((a, b) => a.model_name.localeCompare(b.model_name));
+  // Servable models first: those are the ones whose aliases change live picks.
+  const models = [...(registry.data?.models ?? [])].sort(
+    (a, b) => Number(b.servable) - Number(a.servable) || a.model_name.localeCompare(b.model_name)
+  );
   const served = ops.data?.models ?? [];
   const servedFor = (name: string) => served.find((m) => m.name === name);
 
@@ -146,10 +149,22 @@ function ServingPanel({
   });
 
   const columns: Column<Row>[] = [
-    { key: "model", header: t("common.model"), cell: (r) => <ModelName name={r.name} /> },
+    {
+      key: "model",
+      header: t("common.model"),
+      cell: (r) => (
+        <span className="flex flex-col gap-0.5">
+          <ModelName name={r.name} />
+          <span className="pl-[1.125rem] text-meta sm:hidden">
+            <ServedLabel served={r.served} />
+          </span>
+        </span>
+      )
+    },
     {
       key: "serving",
       header: t("lab.reg.col.serving"),
+      hideBelow: "sm",
       cell: (r) => <ServedLabel served={r.served} />
     },
     {
@@ -252,11 +267,14 @@ function ServingPanel({
 
 function ServedLabel({ served }: { served: ServedModel | undefined }) {
   const { t } = useLocale();
-  if (!served || !served.loaded) return <span className="text-text-faint">{t("lab.serving.notLoaded")}</span>;
-  if (served.source === "registry") {
-    return <span className="text-text">{t("lab.serving.registry", { version: served.version ?? "?" })}</span>;
-  }
-  return <span className="text-text-dim">{t("lab.serving.file")}</span>;
+  const label =
+    !served || !served.loaded
+      ? t("lab.serving.notLoaded")
+      : served.source === "registry"
+        ? t("lab.serving.registry", { version: served.version ?? "?" })
+        : t("lab.serving.file");
+  const tone = !served?.loaded ? "text-text-faint" : served.source === "registry" ? "text-text" : "text-text-dim";
+  return <span className={clsx("whitespace-nowrap", tone)}>{label}</span>;
 }
 
 type PendingAction = { kind: "set" | "delete"; alias: RegistryAlias; version: ModelVersion };
@@ -358,7 +376,9 @@ function ModelPanel({ model, served }: { model: RegisteredModel; served: ServedM
                 size="sm"
                 variant="ghost"
                 onClick={() => setPending({ kind: "delete", alias, version: v })}
-                aria-label={t("lab.reg.removeNamed", { alias: t(`lab.alias.${alias}`), version: v.version })}
+                aria-label={t(alias === "champion" ? "lab.reg.removeChampionNamed" : "lab.reg.removeChallengerNamed", {
+                  version: v.version
+                })}
               >
                 {t(alias === "champion" ? "lab.reg.removeChampion" : "lab.reg.removeChallenger")}
               </Button>
@@ -368,7 +388,9 @@ function ModelPanel({ model, served }: { model: RegisteredModel; served: ServedM
                 size="sm"
                 variant={alias === "champion" ? "secondary" : "ghost"}
                 onClick={() => setPending({ kind: "set", alias, version: v })}
-                aria-label={t("lab.reg.makeNamed", { alias: t(`lab.alias.${alias}`), version: v.version })}
+                aria-label={t(alias === "champion" ? "lab.reg.makeChampionNamed" : "lab.reg.makeChallengerNamed", {
+                  version: v.version
+                })}
               >
                 {t(alias === "champion" ? "lab.reg.makeChampion" : "lab.reg.makeChallenger")}
               </Button>
@@ -550,7 +572,6 @@ function AliasDialog({
   const deleteAlias = useDeleteAlias(model.model_name);
   const mutation = action.kind === "set" ? setAlias : deleteAlias;
   const { alias, version } = action;
-  const aliasName = t(`lab.alias.${alias}`);
   const current = aliasVersion(model, alias);
   const champion = aliasVersion(model, "champion");
 
@@ -620,8 +641,13 @@ function AliasDialog({
       onConfirm={confirm}
       title={
         action.kind === "set"
-          ? t("lab.reg.confirm.setTitle", { version: version.version, alias: aliasName, name: model.name })
-          : t("lab.reg.confirm.removeTitle", { version: version.version, alias: aliasName })
+          ? t(alias === "champion" ? "lab.reg.confirm.champion" : "lab.reg.confirm.challenger", {
+              version: version.version,
+              name: model.name
+            })
+          : t(alias === "champion" ? "lab.reg.confirm.removeChampion" : "lab.reg.confirm.removeChallenger", {
+              version: version.version
+            })
       }
       confirmLabel={
         action.kind === "set"
@@ -634,7 +660,7 @@ function AliasDialog({
     >
       <p className="text-text">{consequence}</p>
       {action.kind === "set" && alias === "challenger" && current && current.version !== version.version && (
-        <p>{t("lab.reg.consequence.replaces", { version: current.version, alias: aliasName })}</p>
+        <p>{t("lab.reg.consequence.replaces", { version: current.version })}</p>
       )}
       <EvidenceTable candidate={version} champion={compare ? champion : null} />
       {warnings.length > 0 && (

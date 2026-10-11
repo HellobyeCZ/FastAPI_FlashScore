@@ -6,7 +6,6 @@ import {
   ButtonLink,
   Callout,
   EmptyState,
-  ModelName,
   PageHeader,
   Panel,
   SegmentedControl,
@@ -16,10 +15,10 @@ import {
   type Column
 } from "@/components/ui";
 import { errorMessage } from "@/lib/api/http";
-import { modelLabel } from "@/lib/labels";
+import { modelColor, modelLabel } from "@/lib/labels";
 import { routes } from "@/lib/routes";
 import { isActiveRun, useBacktestRuns, type BacktestRunSummary } from "@/lib/lab/backtests";
-import { MAX_COMPARE, betMetric, runTitle, runWindow, shortId } from "@/lib/lab/format";
+import { MAX_COMPARE, betMetric, isAutoLabel, runTitle, runWindow, shortId } from "@/lib/lab/format";
 import { idList, useSearchState } from "@/lib/lab/hooks";
 import { formatSort, parseSort, sortRows } from "@/lib/lab/sort";
 import { LabTabs } from "./LabTabs";
@@ -94,34 +93,33 @@ export function BacktestsPage() {
     {
       key: "run",
       header: t("lab.runs.col.run"),
+      headerTitle: t("lab.runs.col.run.title"),
       sortValue: (r) => r.created_at,
       cell: (r) => (
         <span className="flex min-w-0 flex-col gap-0.5">
-          <span className="text-text">{runTitle(r, locale, t)}</span>
-          <span className="text-meta text-text-faint">
-            #{shortId(r.id)} · {fmt.relative(r.created_at)}
+          <span className="flex items-baseline gap-2 text-text">
+            <span aria-hidden className="inline-block h-2.5 w-2.5 shrink-0" style={{ background: modelColor(r.model) }} />
+            <span>{runTitle(r, locale, t)}</span>
           </span>
-          <span className="mt-1 sm:hidden">
+          <span className="pl-[1.125rem] text-meta text-text-faint">
+            {isAutoLabel(r) ? "" : `${modelLabel(r.model, t)} · ${runWindow(r, locale, t)} · `}#{shortId(r.id)} ·{" "}
+            {fmt.relative(r.created_at)}
+          </span>
+          {r.status === "failed" && r.error && (
+            <span className="line-clamp-2 break-words pl-[1.125rem] text-meta text-neg" title={r.error}>
+              {r.error}
+            </span>
+          )}
+          <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 pl-[1.125rem] sm:hidden">
             <RunStatus run={r} />
+            {r.status === "completed" && r.total_bets !== null && (
+              <span className="text-meta text-text-faint">
+                {tp("lab.bets", r.total_bets, { n: fmt.int(r.total_bets) })}
+              </span>
+            )}
           </span>
         </span>
       )
-    },
-    {
-      key: "model",
-      header: t("common.model"),
-      hideBelow: "lg",
-      firstDir: "asc",
-      sortValue: (r) => modelLabel(r.model, t),
-      cell: (r) => <ModelName name={r.model} />
-    },
-    {
-      key: "window",
-      header: t("lab.runs.col.window"),
-      headerTitle: t("lab.runs.col.window.title"),
-      hideBelow: "xl",
-      sortValue: (r) => r.train_until,
-      cell: (r) => <span className="whitespace-nowrap text-text-dim">{runWindow(r, locale, t)}</span>
     },
     {
       key: "status",
@@ -129,16 +127,7 @@ export function BacktestsPage() {
       hideBelow: "sm",
       firstDir: "asc",
       sortValue: (r) => r.status,
-      cell: (r) => (
-        <span className="flex flex-col gap-1">
-          <RunStatus run={r} />
-          {r.status === "failed" && r.error && (
-            <span className="max-w-xs truncate text-meta text-neg" title={r.error}>
-              {r.error}
-            </span>
-          )}
-        </span>
-      )
+      cell: (r) => <RunStatus run={r} />
     },
     {
       key: "bets",
@@ -148,7 +137,7 @@ export function BacktestsPage() {
       sortValue: (r) => r.total_bets,
       cell: (r) =>
         r.total_bets === 0 ? (
-          <span className="text-text-faint" title={t("lab.runs.noBets.title")}>
+          <span className="whitespace-nowrap text-text-faint" title={t("lab.runs.noBets.title")}>
             {tp("lab.bets", 0, { n: fmt.int(0) })}
           </span>
         ) : (

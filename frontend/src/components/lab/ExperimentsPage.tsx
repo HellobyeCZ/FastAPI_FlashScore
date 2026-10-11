@@ -90,6 +90,11 @@ export function ExperimentsPage() {
             <span className="md:hidden">
               <PurposeBadge purpose={r.purpose} />
             </span>
+            {r.registered_versions.length > 0 && (
+              <span className="flex flex-wrap gap-1 lg:hidden">
+                <VersionBadges versions={r.registered_versions} />
+              </span>
+            )}
           </span>
         </span>
       )
@@ -210,11 +215,7 @@ export function ExperimentsPage() {
         cell: (r) =>
           r.registered_versions.length > 0 ? (
             <span className="flex flex-wrap gap-1">
-              {r.registered_versions.map((v) => (
-                <Badge key={`${v.name}-${v.version}`} tone="accent" title={v.name}>
-                  v{v.version}
-                </Badge>
-              ))}
+              <VersionBadges versions={r.registered_versions} />
             </span>
           ) : (
             <span className="text-text-faint">—</span>
@@ -358,6 +359,18 @@ export function ExperimentsPage() {
           )}
         </Panel>
       </div>
+    </>
+  );
+}
+
+function VersionBadges({ versions }: { versions: MlflowRun["registered_versions"] }) {
+  return (
+    <>
+      {versions.map((v) => (
+        <Badge key={`${v.name}-${v.version}`} tone="accent" title={v.name}>
+          v{v.version}
+        </Badge>
+      ))}
     </>
   );
 }

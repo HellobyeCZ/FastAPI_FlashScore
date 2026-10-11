@@ -36,6 +36,9 @@ import { PnlChart, type PnlSeries } from "./RunCharts";
 
 type Row = { key: string; label: string; title?: string; cell: (run: BacktestRunDetail) => React.ReactNode };
 
+/** Fewer bets than this and a run's KPIs are flagged as noise. */
+const MIN_N = 30;
+
 const hasBets = (run: BacktestRunDetail) => run.status === "completed" && (run.total_bets ?? 0) > 0;
 
 /** Side-by-side KPIs and P&L of up to six runs (?ids=a,b,c). */
@@ -101,7 +104,15 @@ export function ComparePage() {
       {
         key: "bets",
         label: t("common.bets"),
-        cell: (r) => (r.status === "completed" ? <SampleSize n={r.total_bets ?? 0} className="text-body" /> : "—")
+        cell: (r) =>
+          r.status === "completed" ? (
+            <span className="inline-flex items-baseline gap-2">
+              {fmt.int(r.total_bets ?? 0)}
+              {(r.total_bets ?? 0) < MIN_N && <SampleSize n={r.total_bets ?? 0} min={MIN_N} />}
+            </span>
+          ) : (
+            "—"
+          )
       },
       { key: "hit", label: t("common.hitRate"), cell: (r) => fmt.pct(betMetric(r, r.hit_rate)) },
       { key: "roi", label: t("common.roi"), cell: (r) => <Signed value={betMetric(r, r.roi)} format="pct" /> },
@@ -117,7 +128,7 @@ export function ComparePage() {
         label: t("common.maxDrawdown"),
         cell: (r) => {
           const dd = betMetric(r, r.max_drawdown);
-          return dd === null ? "—" : fmt.units(-Math.abs(dd));
+          return dd === null ? "—" : <span className={dd ? "text-neg" : undefined}>{fmt.units(-Math.abs(dd))}</span>;
         }
       },
       {
@@ -223,7 +234,14 @@ export function ComparePage() {
               <Skeleton lines={8} />
             </div>
           ) : (
-            <Table caption={t("lab.compare.caption")} columns={columns} rows={rows} rowKey={(r) => r.key} />
+            <>
+              <Table caption={t("lab.compare.caption")} columns={columns} rows={rows} rowKey={(r) => r.key} />
+              {runs.length > 1 && (
+                <p className="border-t border-border px-4 py-2 text-meta text-text-faint sm:hidden">
+                  {t("lab.compare.scrollHint")}
+                </p>
+              )}
+            </>
           )}
         </Panel>
 
@@ -262,7 +280,7 @@ function RunHeader({ run, index, onRemove }: { run: BacktestRunDetail; index: nu
         <span aria-hidden className="inline-block h-0.5 w-4" style={{ background: seriesColor(index) }} />
         <span className="font-mono text-text">#{index + 1}</span>
       </span>
-      <TextLink href={routes.backtest(locale, run.id)} className="max-w-[14rem] truncate text-body">
+      <TextLink href={routes.backtest(locale, run.id)} className="max-w-[9rem] truncate text-body sm:max-w-[14rem]">
         {title}
       </TextLink>
       <Button size="sm" variant="ghost" onClick={onRemove} aria-label={t("lab.compare.removeNamed", { title })}>
