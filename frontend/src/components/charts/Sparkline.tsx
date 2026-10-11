@@ -32,18 +32,19 @@ export function Sparkline({
 }) {
   const { t, fmt } = useChartText();
   // -1 = not measured yet; 0 = the container has no width of its own.
-  const [ref, measured] = useElementWidth<HTMLDivElement>(-1);
+  const [ref, measured] = useElementWidth<HTMLSpanElement>(-1);
   const values = points.filter(isFiniteNumber);
   const w = Math.floor(width ?? (measured > 0 ? measured : measured === 0 ? FALLBACK_WIDTH : 0));
 
   // The wrapper is rendered in every state so the measured element never changes.
   // An explicit width sizes the wrapper itself, so it never claims a whole flex row.
-  const box = width === undefined ? "w-full min-w-0" : "max-w-full";
+  // It is a block <span> so the sparkline can sit inside phrasing content.
+  const box = clsx("block", width === undefined ? "w-full min-w-0" : "max-w-full");
   if (values.length < 2) {
     return (
-      <div ref={ref} className={clsx(box, "text-text-faint")} style={{ width }} title={ariaLabel}>
+      <span ref={ref} className={clsx(box, "text-text-faint")} style={{ width }} title={ariaLabel}>
         {DASH}
-      </div>
+      </span>
     );
   }
 
@@ -65,7 +66,7 @@ export function Sparkline({
   });
 
   return (
-    <div ref={ref} className={box} style={{ width, height }}>
+    <span ref={ref} className={box} style={{ width, height }}>
       {w > 0 && (
         <ChartSvg width={w} height={height} label={ariaLabel} desc={desc}>
           <line x1={0} x2={w} y1={y(0)} y2={y(0)} stroke={tok("border-strong")} strokeDasharray="2 2" />
@@ -73,6 +74,6 @@ export function Sparkline({
           <circle cx={x(values.length - 1)} cy={y(last)} r={2.5} fill={stroke} />
         </ChartSvg>
       )}
-    </div>
+    </span>
   );
 }
