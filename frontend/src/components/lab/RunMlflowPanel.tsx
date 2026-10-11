@@ -125,7 +125,11 @@ function TrackedRun({ run, tracked }: { run: BacktestRunDetail; tracked: MlflowR
           { label: t("lab.detail.mlflow.logged"), value: fmt.dateTime(tracked.start_time) },
           {
             label: t("lab.detail.mlflow.model"),
-            value: tracked.has_model ? t("lab.detail.mlflow.modelLogged") : t("lab.detail.mlflow.modelMissing")
+            value: !tracked.has_model
+              ? t("lab.detail.mlflow.modelMissing")
+              : versions.length > 0
+                ? t("lab.detail.mlflow.modelRegistered")
+                : t("lab.detail.mlflow.modelLogged")
           },
           {
             label: t("lab.detail.mlflow.versions"),

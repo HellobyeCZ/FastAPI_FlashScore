@@ -206,6 +206,7 @@ export const lab: Record<keyof typeof en, string> = {
   "lab.detail.mlflow.logged": "Zaznamenáno",
   "lab.detail.mlflow.model": "Model",
   "lab.detail.mlflow.modelLogged": "Uložen, lze registrovat",
+  "lab.detail.mlflow.modelRegistered": "Uložen, registrován",
   "lab.detail.mlflow.modelMissing": "Nezaznamenán",
   "lab.detail.mlflow.versions": "Registrované verze",
 

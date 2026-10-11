@@ -711,10 +711,13 @@ function EvidenceTable({ candidate, champion }: { candidate: ModelVersion; champ
       : [])
   ];
 
+  // Dates keep their spaces unbreakable, so a narrow column wraps at the arrow.
+  const day = (iso: string | null | undefined) => utcDate(locale, iso).replace(/ /g, "\u00a0");
+
   function windowText(v: ModelVersion, { run, loading }: SourceRun): string {
-    const train = utcDate(locale, run?.train_until ?? v.train_until);
+    const train = day(run?.train_until ?? v.train_until);
     if (!BACKTEST_PURPOSES.includes(v.purpose ?? "")) return t("lab.window", { train, test: "—" });
-    const test = run ? (run.test_until ? utcDate(locale, run.test_until) : t("lab.window.open")) : loading ? "…" : "—";
+    const test = run ? (run.test_until ? day(run.test_until) : t("lab.window.open")) : loading ? "…" : "—";
     return t("lab.window", { train, test });
   }
 
@@ -734,6 +737,7 @@ function EvidenceTable({ candidate, champion }: { candidate: ModelVersion; champ
     {
       key: "metric",
       header: <span className="sr-only">{t("lab.compare.metric")}</span>,
+      className: "whitespace-nowrap",
       cell: (r) => <span className="font-sans text-text-dim">{r.label}</span>
     },
     ...cols.map(

@@ -984,6 +984,14 @@ test.describe("lab · locale and layout", () => {
     await page.getByRole("button", { name: "Make v4 champion" }).click();
     await page.waitForTimeout(300);
     await page.screenshot({ path: `${SHOTS}/desktop-en-dialog-promote.png` });
+    await page.goto(`/en/lab/backtests/${BASELINE}`);
+    await page.getByRole("button", { name: "Re-run with force bets" }).click();
+    await page.waitForTimeout(300);
+    await page.screenshot({ path: `${SHOTS}/desktop-en-dialog-rerun.png` });
+    await page.keyboard.press("Escape");
+    await page.goto(`/cs/lab/backtests/${DIXON}`);
+    await expect(page.getByText("bt_dixon_coles_2024-08-01")).toBeVisible();
+    await page.screenshot({ path: `${SHOTS}/desktop-cs-detail-backfill.png`, fullPage: true });
     await stubLab(page, { mlflowStatus: MLFLOW_DOWN });
     await page.goto("/en/lab/experiments");
     await expect(page.getByText("MLflow is unreachable")).toBeVisible();

@@ -205,6 +205,7 @@ export const lab = {
   "lab.detail.mlflow.logged": "Logged",
   "lab.detail.mlflow.model": "Fitted model",
   "lab.detail.mlflow.modelLogged": "Logged · registrable",
+  "lab.detail.mlflow.modelRegistered": "Logged · registered",
   "lab.detail.mlflow.modelMissing": "Not logged",
   "lab.detail.mlflow.versions": "Registered versions",
 

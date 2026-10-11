@@ -71,7 +71,7 @@ export type CreateBacktestRequest = {
   kelly_fraction?: number;
   force_bets?: boolean;
   label?: string | null;
-  /** (country, competition) pairs; omitted = the backend's default scope. */
+  /** (country, competition) pairs; empty = every competition, omitted = the backend's default list. */
   scope?: [string, string][];
   /** Omitted = the backend's default market ("football_1x2_ft"). */
   market_spec?: string;

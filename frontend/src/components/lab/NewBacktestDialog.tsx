@@ -62,8 +62,9 @@ export function prefillFromRun(run: BacktestRunDetail, overrides: NewBacktestPre
     minEdgePct: String(Number((run.min_edge * 100).toFixed(4))),
     kelly: String(run.kelly_fraction),
     forceBets: run.force_bets,
-    // An empty scope would mean "no competitions", not the default one.
-    scope: run.scope.length > 0 ? run.scope : undefined,
+    // Sent as stored: an empty scope means every competition, while an
+    // omitted one would fall back to the backend's default list.
+    scope: run.scope,
     marketSpec: run.market_spec,
     ...overrides
   };
@@ -293,7 +294,14 @@ export function NewBacktestDialog({
             <KeyValue
               items={[
                 ...(scope
-                  ? [{ label: t("lab.detail.scope"), value: tp("lab.competitions", scope.length, { n: fmt.int(scope.length) }) }]
+                  ? [
+                      {
+                        label: t("lab.detail.scope"),
+                        value: scope.length
+                          ? tp("lab.competitions", scope.length, { n: fmt.int(scope.length) })
+                          : t("lab.detail.scopeAll")
+                      }
+                    ]
                   : []),
                 ...(marketSpec ? [{ label: t("lab.detail.marketSpec"), value: marketSpecLabel(marketSpec, t) }] : [])
               ]}

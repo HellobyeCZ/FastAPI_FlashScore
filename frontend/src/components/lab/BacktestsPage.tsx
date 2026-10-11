@@ -122,11 +122,10 @@ export function BacktestsPage() {
           <span className="flex flex-wrap items-center gap-x-1.5 text-meta text-text-faint">
             <ModelName name={r.model} className="text-text-dim" />
             {!isAutoLabel(r) && (
-              // From xl the window has its own column.
-              <span className="contents xl:hidden">
+              <>
                 <span aria-hidden>·</span>
                 <span>{runWindow(r, locale, t)}</span>
-              </span>
+              </>
             )}
             <span aria-hidden>·</span>
             <span>#{shortId(r.id)}</span>
@@ -159,15 +158,6 @@ export function BacktestsPage() {
       firstDir: "asc",
       sortValue: (r) => r.status,
       cell: (r) => <RunStatus run={r} />
-    },
-    {
-      // Sorting by window lines up runs that are directly comparable.
-      key: "window",
-      header: t("lab.window.label"),
-      hideBelow: "xl",
-      firstDir: "asc",
-      sortValue: (r) => `${r.train_until}|${r.test_until ?? "~"}`,
-      cell: (r) => <span className="whitespace-nowrap text-text-dim">{runWindow(r, locale, t)}</span>
     },
     {
       key: "bets",
