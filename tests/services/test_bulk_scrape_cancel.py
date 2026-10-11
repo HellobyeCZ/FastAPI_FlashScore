@@ -193,12 +193,14 @@ class _FakeManager:
 @pytest.fixture
 def route_client(tmp_path: Path, monkeypatch) -> Iterator[tuple]:
     monkeypatch.setenv("APP_STORAGE_DB_PATH", str(tmp_path / "snap.sqlite3"))
-    _store(tmp_path)
+    # App startup also starts the backtest manager, which needs its tables.
+    asyncio.run(_store(tmp_path).initialize())
     from app.config import get_settings
     get_settings.cache_clear()
 
     import src
 
+    src._get_backtest_manager.cache_clear()
     fake = _FakeManager()
     src.app.dependency_overrides[src.bulk_scrape_manager_dependency] = lambda: fake
     try:
@@ -206,6 +208,7 @@ def route_client(tmp_path: Path, monkeypatch) -> Iterator[tuple]:
             yield client, fake
     finally:
         src.app.dependency_overrides.pop(src.bulk_scrape_manager_dependency, None)
+        src._get_backtest_manager.cache_clear()
 
 
 def test_cancel_route_statuses(route_client):

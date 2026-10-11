@@ -146,9 +146,11 @@ def db_path(tmp_path: Path, monkeypatch) -> Path:
 
 @pytest.fixture
 def client(db_path: Path) -> Iterator[TestClient]:
-    from src import app
-    with TestClient(app) as c:
+    import src
+    src._get_backtest_manager.cache_clear()
+    with TestClient(src.app) as c:
         yield c
+    src._get_backtest_manager.cache_clear()
 
 
 def _seed_bets(db: Path) -> None:

@@ -222,8 +222,10 @@ def client(db_path: Path, monkeypatch) -> Iterator[TestClient]:
         "_get_ml_artifacts",
         lambda: SimpleNamespace(logistic=None, hgb=object(), dc_rates=None),
     )
+    src._get_backtest_manager.cache_clear()
     with TestClient(src.app) as c:
         yield c
+    src._get_backtest_manager.cache_clear()
 
 
 def test_ops_status_matches_contract(client: TestClient, monkeypatch):
