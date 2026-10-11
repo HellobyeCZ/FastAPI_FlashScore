@@ -50,7 +50,6 @@ export function TodayKpis({ query }: { query: UseQueryResult<TodayResponse> }) {
 
 function PnlStat({ data }: { data: TodayResponse }) {
   const { t, fmt } = useLocale();
-  const [ref, width] = useElementWidth<HTMLDivElement>();
   const { n, pnl, series } = data.pnl30d;
 
   if (n === 0 || pnl === null) {
@@ -80,12 +79,18 @@ function PnlStat({ data }: { data: TodayResponse }) {
       sub={n >= SMALL_SAMPLE ? <SampleSize n={n} min={SMALL_SAMPLE} /> : undefined}
       caution={n < SMALL_SAMPLE ? t("common.smallSample", { n }) : undefined}
     >
-      <div ref={ref} className="mt-1 h-7 w-full">
-        {width > 0 && (
-          <Sparkline points={points} width={width} height={28} ariaLabel={t("today.kpi.pnl.chart", { count: n })} />
-        )}
-      </div>
+      <PnlSparkline points={points} label={t("today.kpi.pnl.chart", { count: n })} />
     </Stat>
+  );
+}
+
+/** Cumulative P&L line sized to the tile (mounted only when there is a series). */
+function PnlSparkline({ points, label }: { points: number[]; label: string }) {
+  const [ref, width] = useElementWidth<HTMLDivElement>();
+  return (
+    <div ref={ref} className="mt-1 h-7 w-full">
+      {width > 0 && <Sparkline points={points} width={width} height={28} ariaLabel={label} />}
+    </div>
   );
 }
 

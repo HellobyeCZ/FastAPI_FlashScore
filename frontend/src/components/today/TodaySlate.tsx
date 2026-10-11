@@ -149,7 +149,7 @@ export function TodaySlate({ query }: { query: UseQueryResult<TodayResponse> }) 
       actions={filter}
       padding="none"
       footer={
-        data && shown.length > 0 ? (
+        data && !query.isError && shown.length > 0 ? (
           <>
             {tp("today.slate.count", shown.length)}
             {hidden > 0 && <> · {tp("today.slate.hidden", hidden)}</>}
