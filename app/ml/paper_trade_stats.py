@@ -68,14 +68,50 @@ class StatsRequest:
             )
 
 
+# Event dimensions of a bet. Archive summaries (``mes``) win; fixtures
+# captured by discovery (``uf``) fill in events the archive has not seen
+# yet (most pending bets), so a bet is filtered, grouped and displayed by
+# the same values. ``upcoming_fixtures.country`` is lowercase, the
+# archive's is uppercase, so the fallback is upper-cased.
+EVENT_DIMENSIONS = {
+    "sport": "COALESCE(mes.sport, uf.sport)",
+    "country": "COALESCE(mes.country, UPPER(uf.country))",
+    "competition": "COALESCE(mes.competition, uf.competition)",
+}
+
+# upcoming_fixtures columns read through ``uf``.
+_FIXTURE_COLUMNS = (
+    "sport",
+    "country",
+    "competition",
+    "competition_path",
+    "home_team_raw",
+    "away_team_raw",
+    "start_time_utc",
+)
+
+
+def bets_source(conn: sqlite3.Connection) -> str:
+    """``FROM`` clause for every paper_bets query: the bet (``pb``), its
+    archive summary (``mes``) and its discovered fixture (``uf``).
+
+    Archive-only databases have no ``upcoming_fixtures`` table; ``uf`` is
+    then an all-NULL stand-in, so the expressions above reduce to the
+    archive values without a second set of queries.
+    """
+    source = "paper_bets pb LEFT JOIN match_event_summaries mes ON mes.event_id = pb.event_id"
+    if "upcoming_fixtures" in table_names(conn):
+        return f"{source} LEFT JOIN upcoming_fixtures uf ON uf.event_id = pb.event_id"
+    stub = ", ".join(f"NULL AS {column}" for column in _FIXTURE_COLUMNS)
+    return f"{source} LEFT JOIN (SELECT {stub}) uf ON 0"
+
+
 # Maps group_by token -> SQL SELECT expression. Keys are validated
 # against ALLOWED_GROUP_BY in StatsRequest.__post_init__.
 _GROUP_EXPR = {
     "model": "pb.model",
     "market": "pb.market",
-    "sport": "mes.sport",
-    "country": "mes.country",
-    "competition": "mes.competition",
+    **EVENT_DIMENSIONS,
     "selection": "pb.selection",
     "edge_bucket": (
         "CASE "
@@ -132,9 +168,9 @@ def _build_where(filters: StatsFilter) -> Tuple[str, List[Any]]:
     for col, values in [
         ("pb.model", filters.model),
         ("pb.market", filters.market),
-        ("mes.sport", filters.sport),
-        ("mes.country", filters.country),
-        ("mes.competition", filters.competition),
+        (EVENT_DIMENSIONS["sport"], filters.sport),
+        (EVENT_DIMENSIONS["country"], filters.country),
+        (EVENT_DIMENSIONS["competition"], filters.competition),
         ("pb.selection", filters.selection),
     ]:
         if values:
@@ -192,37 +228,35 @@ def aggregate(request: StatsRequest) -> List[Dict[str, Any]]:
     # HAVING requires GROUP BY in SQLite. When group_by is present we can use
     # HAVING directly; when there is no GROUP BY, wrap as a subquery and filter
     # on n in the outer WHERE.  Both produce the same result set.
-    final_params = list(where_params)
-    if request.min_n_per_group > 1:
-        final_params.append(request.min_n_per_group)
-        if group_parts:
-            sql = f"""
-                SELECT {select_clause}
-                FROM paper_bets pb
-                LEFT JOIN match_event_summaries mes ON mes.event_id = pb.event_id
-                WHERE {where_clause}
-                {group_clause}
-                HAVING n >= ?
-            """
-        else:
-            inner_sql = f"""
-                SELECT {select_clause}
-                FROM paper_bets pb
-                LEFT JOIN match_event_summaries mes ON mes.event_id = pb.event_id
-                WHERE {where_clause}
-            """
-            sql = f"SELECT * FROM ({inner_sql}) WHERE n >= ?"
-    else:
-        sql = f"""
-            SELECT {select_clause}
-            FROM paper_bets pb
-            LEFT JOIN match_event_summaries mes ON mes.event_id = pb.event_id
-            WHERE {where_clause}
-            {group_clause}
-        """
-
     with ml_db.connect(read_only=True) as conn:
         conn.row_factory = sqlite3.Row
+        source = bets_source(conn)
+        final_params = list(where_params)
+        if request.min_n_per_group > 1:
+            final_params.append(request.min_n_per_group)
+            if group_parts:
+                sql = f"""
+                    SELECT {select_clause}
+                    FROM {source}
+                    WHERE {where_clause}
+                    {group_clause}
+                    HAVING n >= ?
+                """
+            else:
+                inner_sql = f"""
+                    SELECT {select_clause}
+                    FROM {source}
+                    WHERE {where_clause}
+                """
+                sql = f"SELECT * FROM ({inner_sql}) WHERE n >= ?"
+        else:
+            sql = f"""
+                SELECT {select_clause}
+                FROM {source}
+                WHERE {where_clause}
+                {group_clause}
+            """
+
         rows = conn.execute(sql, final_params).fetchall()
         out: List[Dict[str, Any]] = []
         for row in rows:
@@ -241,7 +275,7 @@ def aggregate(request: StatsRequest) -> List[Dict[str, Any]]:
             out.append(entry)
 
         # Second pass: compute max_drawdown per group from individual bets.
-        out = _attach_max_drawdown(conn, out, request, where_clause, where_params)
+        out = _attach_max_drawdown(conn, out, request, source, where_clause, where_params)
     return out
 
 
@@ -249,6 +283,7 @@ def _attach_max_drawdown(
     conn: sqlite3.Connection,
     rows: List[Dict[str, Any]],
     request: StatsRequest,
+    source: str,
     where_clause: str,
     where_params: Sequence[Any],
 ) -> List[Dict[str, Any]]:
@@ -266,8 +301,7 @@ def _attach_max_drawdown(
         bets = conn.execute(
             f"""
             SELECT pb.pnl, COALESCE(pb.settled_at, pb.recommended_at) AS t
-            FROM paper_bets pb
-            LEFT JOIN match_event_summaries mes ON mes.event_id = pb.event_id
+            FROM {source}
             WHERE {where_clause}
             ORDER BY t ASC
             """,
@@ -284,8 +318,7 @@ def _attach_max_drawdown(
     bets = conn.execute(
         f"""
         SELECT {group_exprs}, pb.pnl, COALESCE(pb.settled_at, pb.recommended_at) AS t
-        FROM paper_bets pb
-        LEFT JOIN match_event_summaries mes ON mes.event_id = pb.event_id
+        FROM {source}
         WHERE {where_clause}
         ORDER BY t ASC
         """,
@@ -365,8 +398,7 @@ def calibration_buckets(
         rows = conn.execute(
             f"""
             SELECT pb.model_prob AS p, pb.result AS r
-            FROM paper_bets pb
-            LEFT JOIN match_event_summaries mes ON mes.event_id = pb.event_id
+            FROM {bets_source(conn)}
             WHERE {where_clause}
               AND pb.status = 'settled'
               AND pb.result IS NOT NULL
@@ -404,33 +436,19 @@ def calibration_buckets(
 # A pending bet whose kickoff is older than this should have been settled.
 SETTLE_GRACE = timedelta(hours=6)
 
-# Display columns for history rows. Archive summaries win; fixtures captured
-# by discovery fill in events the archive has not seen yet (most pending
-# bets). ``upcoming_fixtures.country`` is lowercase, the archive's is
-# uppercase, so the fallback is upper-cased to keep one vocabulary.
-# ``kickoff``/``home_team_raw``/``away_team_raw``/``competition_path`` keep
-# the keys the dashboard already reads.
-_HISTORY_DISPLAY_WITH_FIXTURES = """
+# Display columns for history rows, merged from archive and fixture like
+# EVENT_DIMENSIONS. ``kickoff``/``home_team_raw``/``away_team_raw``/
+# ``competition_path`` keep the keys the dashboard already reads.
+_HISTORY_DISPLAY = f"""
     COALESCE(mes.start_time_utc, uf.start_time_utc) AS kickoff,
     uf.home_team_raw AS home_team_raw,
     uf.away_team_raw AS away_team_raw,
     uf.competition_path AS competition_path,
     COALESCE(mes.home_team, uf.home_team_raw) AS home_team,
     COALESCE(mes.away_team, uf.away_team_raw) AS away_team,
-    COALESCE(mes.sport, uf.sport) AS sport,
-    COALESCE(mes.country, UPPER(uf.country)) AS country,
-    COALESCE(mes.competition, uf.competition) AS competition
-"""
-_HISTORY_DISPLAY_SUMMARIES_ONLY = """
-    mes.start_time_utc AS kickoff,
-    NULL AS home_team_raw,
-    NULL AS away_team_raw,
-    NULL AS competition_path,
-    mes.home_team AS home_team,
-    mes.away_team AS away_team,
-    mes.sport AS sport,
-    mes.country AS country,
-    mes.competition AS competition
+    {EVENT_DIMENSIONS["sport"]} AS sport,
+    {EVENT_DIMENSIONS["country"]} AS country,
+    {EVENT_DIMENSIONS["competition"]} AS competition
 """
 
 
@@ -485,15 +503,12 @@ def fetch_history(
 ) -> Tuple[int, List[Dict[str, Any]]]:
     """Live paper bets matching ``filters``, newest recommendation first.
 
-    Uses the exact WHERE clause of :func:`aggregate`, so a history page and
-    the /picks/stats panels always describe the same population. Returns
-    ``(total_matching, page)``; ``limit=None`` returns every match. Each
-    row is the full ``paper_bets`` row plus the display columns above.
-
-    Dimension filters (sport/country/competition) read the archive summary
-    like /picks/stats does, so a pending bet on a fixture the archive has
-    not captured yet is shown with fixture names but is not matched by
-    those filters.
+    Uses the exact FROM and WHERE clauses of :func:`aggregate`, so a
+    history page and the /picks/stats panels always describe the same
+    population, and a row matches a sport/country/competition filter on the
+    value it displays. Returns ``(total_matching, page)``; ``limit=None``
+    returns every match. Each row is the full ``paper_bets`` row plus the
+    display columns above.
     """
     where_clause, params = _build_where(filters)
     if event_id is not None:
@@ -501,30 +516,17 @@ def fetch_history(
         params.append(event_id)
 
     with contextlib.closing(ml_db.connect(read_only=True)) as conn:
-        tables = table_names(conn)
-        if "paper_bets" not in tables:
+        if "paper_bets" not in table_names(conn):
             return 0, []
-        joins = "LEFT JOIN match_event_summaries mes ON mes.event_id = pb.event_id"
-        if "upcoming_fixtures" in tables:
-            joins += " LEFT JOIN upcoming_fixtures uf ON uf.event_id = pb.event_id"
-            display = _HISTORY_DISPLAY_WITH_FIXTURES
-        else:
-            display = _HISTORY_DISPLAY_SUMMARIES_ONLY
-
+        source = bets_source(conn)
         total = conn.execute(
-            f"""
-            SELECT COUNT(*)
-            FROM paper_bets pb
-            LEFT JOIN match_event_summaries mes ON mes.event_id = pb.event_id
-            WHERE {where_clause}
-            """,
+            f"SELECT COUNT(*) FROM {source} WHERE {where_clause}",
             params,
         ).fetchone()[0]
         rows = conn.execute(
             f"""
-            SELECT pb.*, {display.strip()}
-            FROM paper_bets pb
-            {joins}
+            SELECT pb.*, {_HISTORY_DISPLAY.strip()}
+            FROM {source}
             WHERE {where_clause}
             ORDER BY pb.recommended_at DESC, pb.id DESC
             LIMIT ? OFFSET ?
@@ -556,8 +558,7 @@ def pipeline_freshness(
         "overdue_pending_bets": 0,
         "oldest_overdue_kickoff": None,
     }
-    tables = table_names(conn)
-    if "paper_bets" not in tables:
+    if "paper_bets" not in table_names(conn):
         return out
 
     totals = conn.execute(
@@ -577,21 +578,11 @@ def pipeline_freshness(
     if not out["pending_bets"]:
         return out
 
-    if "upcoming_fixtures" in tables:
-        kickoff_sql = """
-            SELECT COALESCE(mes.start_time_utc, uf.start_time_utc)
-            FROM paper_bets pb
-            LEFT JOIN match_event_summaries mes ON mes.event_id = pb.event_id
-            LEFT JOIN upcoming_fixtures uf ON uf.event_id = pb.event_id
-            WHERE pb.status = 'pending'
-        """
-    else:
-        kickoff_sql = """
-            SELECT mes.start_time_utc
-            FROM paper_bets pb
-            LEFT JOIN match_event_summaries mes ON mes.event_id = pb.event_id
-            WHERE pb.status = 'pending'
-        """
+    kickoff_sql = f"""
+        SELECT COALESCE(mes.start_time_utc, uf.start_time_utc)
+        FROM {bets_source(conn)}
+        WHERE pb.status = 'pending'
+    """
     parsed_kickoffs = (parse_timestamp(raw) for (raw,) in conn.execute(kickoff_sql))
     kickoffs = [k for k in parsed_kickoffs if k is not None]
     if kickoffs:

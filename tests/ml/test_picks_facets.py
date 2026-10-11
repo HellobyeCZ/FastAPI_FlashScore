@@ -113,3 +113,25 @@ def test_facets_for_backtest_unknown_run_returns_empty(db):
     f = facets_for_backtest(("does_not_exist",))
     assert f.countries == []
     assert f.models == []
+
+
+def test_facets_for_live_include_fixture_only_events(db):
+    """A bet on an event the archive has not captured is described by its
+    discovered fixture (country upper-cased), as /picks/history shows it."""
+    with sqlite3.connect(db) as c:
+        c.execute(
+            "CREATE TABLE upcoming_fixtures (event_id TEXT PRIMARY KEY, competition_path TEXT, "
+            "sport TEXT, country TEXT, competition TEXT, home_team_raw TEXT, away_team_raw TEXT, "
+            "start_time_utc TEXT)"
+        )
+        c.execute(
+            "INSERT INTO upcoming_fixtures VALUES ('U1', 'football/portugal/liga-portugal', "
+            "'football', 'portugal', 'Liga Portugal', 'Benfica', 'Porto', '2026-10-12T19:00:00+00:00')"
+        )
+        c.execute(
+            "INSERT INTO paper_bets (event_id, recommended_at, market, selection, model) "
+            "VALUES ('U1', '2026-10-11T10:00:00Z', '1x2_ft', 'home', 'hgb')"
+        )
+    f = facets_for_live()
+    assert set(f.countries) == {"ENGLAND", "GERMANY", "PORTUGAL"}
+    assert "Liga Portugal" in f.competitions

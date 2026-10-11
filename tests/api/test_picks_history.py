@@ -137,6 +137,9 @@ def test_live_history_rows_carry_match_fields(client: TestClient):
         ({"status": "voided"}, {"E4"}),
         ({"country": "ENGLAND,GERMANY"}, {"E2", "E3"}),
         ({"competition": "Chance Liga"}, {"E1"}),
+        # Fixture-only events match on the values they display.
+        ({"country": "SPAIN"}, {"U1"}),
+        ({"sport": "football", "competition": "laliga"}, {"U1"}),
         ({"edge_min": 0.06, "edge_max": 0.1}, {"E2", "U1"}),
         ({"selection": "home"}, {"E1", "E4"}),
         ({"date_from": "2026-05-02T00:00:00+00:00", "date_to": "2026-05-03T23:59:59+00:00"}, {"E2", "E3"}),
@@ -154,6 +157,7 @@ def test_live_history_filters(client: TestClient, params, expected):
         {"status": "settled"},
         {"status": "settled", "model": "logistic"},
         {"status": "all", "country": "ENGLAND,GERMANY"},
+        {"status": "all", "country": "SPAIN"},
         {"status": "settled", "edge_min": 0.05},
         {"status": "pending", "source": "both", "run_ids": "ra,rb"},
         {"status": "voided", "source": "backtest", "run_ids": "ra,rb"},
@@ -166,6 +170,14 @@ def test_history_count_matches_stats_n(client: TestClient, params):
     stats = client.get("/picks/stats", params=params).json()
     # source=both returns one live and one backtest row.
     assert history["count"] == sum(row["n"] for row in stats["rows"])
+
+
+def test_fixture_only_bets_group_and_facet_like_they_display(client: TestClient):
+    rows = client.get("/picks/stats", params={"status": "all", "group_by": "country"}).json()["rows"]
+    assert {r["country"]: r["n"] for r in rows}["SPAIN"] == 1
+    facets = client.get("/picks/facets").json()
+    assert "SPAIN" in facets["countries"]
+    assert "laliga" in facets["competitions"]
 
 
 def test_backtest_history_pages_globally_across_runs(client: TestClient):

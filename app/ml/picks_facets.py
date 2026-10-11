@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import List, Sequence
 
 from app.ml import db as ml_db
+from app.ml.paper_trade_stats import EVENT_DIMENSIONS, bets_source
 
 
 @dataclass(frozen=True)
@@ -31,25 +32,23 @@ def _distinct(conn: sqlite3.Connection, sql: str, params: tuple = ()) -> List[st
 
 
 def facets_for_live() -> FacetsResponse:
+    """Event dimensions use the /picks/stats expressions (archive summary,
+    else the discovered fixture), so every value a live row displays can
+    be picked as a filter."""
     with ml_db.connect(read_only=True) as conn:
         conn.row_factory = sqlite3.Row
+        source = bets_source(conn)
         return FacetsResponse(
             models=_distinct(conn, "SELECT DISTINCT model FROM paper_bets"),
             markets=_distinct(conn, "SELECT DISTINCT market FROM paper_bets"),
             sports=_distinct(
-                conn,
-                "SELECT DISTINCT mes.sport FROM paper_bets pb "
-                "LEFT JOIN match_event_summaries mes ON mes.event_id = pb.event_id",
+                conn, f"SELECT DISTINCT {EVENT_DIMENSIONS['sport']} FROM {source}",
             ),
             countries=_distinct(
-                conn,
-                "SELECT DISTINCT mes.country FROM paper_bets pb "
-                "LEFT JOIN match_event_summaries mes ON mes.event_id = pb.event_id",
+                conn, f"SELECT DISTINCT {EVENT_DIMENSIONS['country']} FROM {source}",
             ),
             competitions=_distinct(
-                conn,
-                "SELECT DISTINCT mes.competition FROM paper_bets pb "
-                "LEFT JOIN match_event_summaries mes ON mes.event_id = pb.event_id",
+                conn, f"SELECT DISTINCT {EVENT_DIMENSIONS['competition']} FROM {source}",
             ),
             selections=_distinct(conn, "SELECT DISTINCT selection FROM paper_bets"),
         )
