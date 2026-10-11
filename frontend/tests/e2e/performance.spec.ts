@@ -658,6 +658,7 @@ test.describe("model page", () => {
 
     const calibration = page.getByRole("region", { name: "Calibration" });
     await expect(calibration.getByText("Not enough settled bets for a calibration curve")).toBeVisible();
+    await expect(calibration.getByText("12 settled bets in this window; a curve needs at least 30.", { exact: false })).toBeVisible();
     await expect(calibration.getByRole("img", { name: "calibration plot" })).toHaveCount(0);
     await expect(calibration.locator("tbody tr")).toHaveCount(3);
     // No registered versions of picks-dixon_coles in the stub.

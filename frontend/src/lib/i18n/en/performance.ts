@@ -152,7 +152,10 @@ export const performance = {
   "performance.chart.calibration.title": "Calibration",
   "performance.chart.calibration.description": "Settled bets binned by model probability: predicted vs. observed hit rate. Only placed bets are included.",
   "performance.chart.calibration.insufficient": "Not enough settled bets for a calibration curve",
-  "performance.chart.calibration.insufficientBody": "{n} settled bets in this window; a curve needs at least {min}. The bucket counts are below.",
+  "performance.chart.calibration.insufficientBody.one": "{count} settled bet in this window; a curve needs at least {min}. The bucket counts are below.",
+  "performance.chart.calibration.insufficientBody.few": "{count} settled bets in this window; a curve needs at least {min}. The bucket counts are below.",
+  "performance.chart.calibration.insufficientBody.many": "{count} settled bets in this window; a curve needs at least {min}. The bucket counts are below.",
+  "performance.chart.calibration.insufficientBody.other": "{count} settled bets in this window; a curve needs at least {min}. The bucket counts are below.",
   "performance.chart.calibration.summary": "Predicted vs. observed: {summary}.",
 
   "performance.bets.title": "Bets",

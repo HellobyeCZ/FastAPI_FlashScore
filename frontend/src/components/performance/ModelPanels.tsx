@@ -38,7 +38,7 @@ export function CalibrationPanel({
   model: string;
   q: PicksQuery;
 }) {
-  const { t, fmt } = useLocale();
+  const { t, tp, fmt } = useLocale();
   const cal = useCalibration(model, q, state.ready);
   const status = panelStatus(state.ready, cal);
   const buckets = useMemo(
@@ -93,7 +93,7 @@ export function CalibrationPanel({
       ) : (
         <div className="flex flex-col gap-4">
           <Callout title={t("performance.chart.calibration.insufficient")}>
-            {t("performance.chart.calibration.insufficientBody", { n: fmt.int(total), min: MIN_N })}
+            {tp("performance.chart.calibration.insufficientBody", total, { count: fmt.int(total), min: MIN_N })}
           </Callout>
           {table}
         </div>
