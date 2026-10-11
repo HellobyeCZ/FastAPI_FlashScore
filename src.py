@@ -1402,7 +1402,15 @@ async def picks_facets(
 
 # You can include routers here
 # from app.routers import items_router
-# app.include_router(items_router.router, prefix="/items", tags=["items"])
+from app.routes import backtests as backtests_routes  # noqa: E402
+from app.routes import events as events_routes  # noqa: E402
+from app.routes import mlflow as mlflow_routes  # noqa: E402
+from app.routes import ops as ops_routes  # noqa: E402
+
+app.include_router(ops_routes.router)
+app.include_router(mlflow_routes.router)
+app.include_router(events_routes.router)
+app.include_router(backtests_routes.router)
 
 if __name__ == "__main__":
     import uvicorn

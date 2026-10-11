@@ -52,14 +52,14 @@ export function ScatterChart({
     return (
       <div ref={containerRef} style={{ width: "100%" }}>
         <svg width={width} height={height} role="img">
-          <rect width={width} height={height} fill="var(--bg)" />
+          <rect width={width} height={height} fill="rgb(var(--bg))" />
           <text
             x={width / 2}
             y={height / 2}
             textAnchor="middle"
             fontSize={11}
             fontFamily="var(--font-mono)"
-            fill="var(--text-dim)"
+            fill="rgb(var(--text-dim))"
           >
             no data
           </text>
@@ -71,7 +71,7 @@ export function ScatterChart({
   return (
     <div ref={containerRef} style={{ width: "100%" }}>
     <svg width={width} height={height} role="img" aria-label="scatter chart">
-      <rect width={width} height={height} fill="var(--bg)" />
+      <rect width={width} height={height} fill="rgb(var(--bg))" />
       <Group left={padding.left} top={padding.top}>
         <TerminalAxisBottom top={innerH} scale={xScale} />
         <TerminalAxisLeft scale={yScale} numTicks={5} />
@@ -80,7 +80,7 @@ export function ScatterChart({
           x2={innerW}
           y1={yScale(0)}
           y2={yScale(0)}
-          stroke="var(--text-faint)"
+          stroke="rgb(var(--text-faint))"
           strokeDasharray="2 2"
         />
         <line
@@ -88,12 +88,12 @@ export function ScatterChart({
           x2={xScale(0)}
           y1={0}
           y2={innerH}
-          stroke="var(--text-faint)"
+          stroke="rgb(var(--text-faint))"
           strokeDasharray="2 2"
         />
         {points.map((p, i) => {
           // Tone by y sign — positive returns accent, negatives muted.
-          const fill = p.y >= 0 ? "var(--accent)" : "var(--text-dim)";
+          const fill = p.y >= 0 ? "rgb(var(--accent))" : "rgb(var(--text-dim))";
           return (
             <rect
               key={i}

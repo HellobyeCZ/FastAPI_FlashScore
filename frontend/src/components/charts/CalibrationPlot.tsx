@@ -22,14 +22,14 @@ export function CalibrationPlot({ buckets, width = 480, height = 480 }: Calibrat
   if (buckets.length === 0) {
     return (
       <svg width={width} height={height} role="img">
-        <rect width={width} height={height} fill="var(--bg)" />
+        <rect width={width} height={height} fill="rgb(var(--bg))" />
         <text
           x={width / 2}
           y={height / 2}
           textAnchor="middle"
           fontSize={11}
           fontFamily="var(--font-mono)"
-          fill="var(--text-dim)"
+          fill="rgb(var(--text-dim))"
         >
           no data
         </text>
@@ -41,14 +41,14 @@ export function CalibrationPlot({ buckets, width = 480, height = 480 }: Calibrat
 
   return (
     <svg width={width} height={height} role="img" aria-label="calibration plot">
-      <rect width={width} height={height} fill="var(--bg)" />
+      <rect width={width} height={height} fill="rgb(var(--bg))" />
       <Group left={padding.left} top={padding.top}>
         <line
           x1={xScale(0)}
           y1={yScale(0)}
           x2={xScale(1)}
           y2={yScale(1)}
-          stroke="var(--text-faint)"
+          stroke="rgb(var(--text-faint))"
           strokeDasharray="2 2"
         />
         {sortedByPred.length > 1 && (
@@ -57,7 +57,7 @@ export function CalibrationPlot({ buckets, width = 480, height = 480 }: Calibrat
               .map((b) => `${xScale(b.mean_pred).toFixed(1)},${yScale(b.hit_rate).toFixed(1)}`)
               .join(" ")}
             fill="none"
-            stroke="var(--accent)"
+            stroke="rgb(var(--accent))"
             strokeWidth={1}
           />
         )}
@@ -68,7 +68,7 @@ export function CalibrationPlot({ buckets, width = 480, height = 480 }: Calibrat
             y={yScale(b.hit_rate) - 2}
             width={4}
             height={4}
-            fill="var(--accent)"
+            fill="rgb(var(--accent))"
             shapeRendering="crispEdges"
           />
         ))}

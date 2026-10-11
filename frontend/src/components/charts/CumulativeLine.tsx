@@ -22,11 +22,11 @@ interface CumulativeLineChartProps {
 
 // Fallback palette uses semantic terminal tokens.
 const SERIES_TOKENS = [
-  "var(--accent)",
-  "var(--warn)",
-  "var(--pos)",
-  "var(--neg)",
-  "var(--text-dim)",
+  "rgb(var(--accent))",
+  "rgb(var(--warn))",
+  "rgb(var(--pos))",
+  "rgb(var(--neg))",
+  "rgb(var(--text-dim))",
 ];
 
 export function CumulativeLineChart({
@@ -57,14 +57,14 @@ export function CumulativeLineChart({
   if (allPoints.length === 0) {
     return (
       <svg width={width} height={height} role="img">
-        <rect width={width} height={height} fill="var(--bg)" />
+        <rect width={width} height={height} fill="rgb(var(--bg))" />
         <text
           x={width / 2}
           y={height / 2}
           textAnchor="middle"
           fontSize={11}
           fontFamily="var(--font-mono)"
-          fill="var(--text-dim)"
+          fill="rgb(var(--text-dim))"
         >
           no data
         </text>
@@ -74,7 +74,7 @@ export function CumulativeLineChart({
 
   return (
     <svg width={width} height={height} role="img" aria-label="cumulative line chart">
-      <rect width={width} height={height} fill="var(--bg)" />
+      <rect width={width} height={height} fill="rgb(var(--bg))" />
       <Group left={padding.left} top={padding.top}>
         <TerminalAxisBottom top={innerH} scale={xScale} numTicks={6} />
         <TerminalAxisLeft scale={yScale} numTicks={5} />
@@ -83,7 +83,7 @@ export function CumulativeLineChart({
           x2={innerW}
           y1={yScale(0)}
           y2={yScale(0)}
-          stroke="var(--text-faint)"
+          stroke="rgb(var(--text-faint))"
           strokeDasharray="2 2"
         />
         {series.map((s, idx) => {
@@ -128,7 +128,7 @@ export function CumulativeLineChart({
                     y={9}
                     fontSize={10}
                     fontFamily="var(--font-mono)"
-                    fill="var(--text-dim)"
+                    fill="rgb(var(--text-dim))"
                   >
                     {s.label}
                   </text>

@@ -36,14 +36,14 @@ export function WaterfallChart({ bars, width = 480, height = 220 }: WaterfallCha
   if (sorted.length === 0) {
     return (
       <svg width={width} height={height} role="img">
-        <rect width={width} height={height} fill="var(--bg)" />
+        <rect width={width} height={height} fill="rgb(var(--bg))" />
         <text
           x={width / 2}
           y={height / 2}
           textAnchor="middle"
           fontSize={11}
           fontFamily="var(--font-mono)"
-          fill="var(--text-dim)"
+          fill="rgb(var(--text-dim))"
         >
           no data
         </text>
@@ -60,13 +60,13 @@ export function WaterfallChart({ bars, width = 480, height = 220 }: WaterfallCha
 
   return (
     <svg width={width} height={height} role="img" aria-label="waterfall by competition">
-      <rect width={width} height={height} fill="var(--bg)" />
+      <rect width={width} height={height} fill="rgb(var(--bg))" />
       <Group left={padding.left} top={padding.top}>
         <TerminalAxisBottom
           top={innerH}
           scale={xScale}
           tickLabelProps={() => ({
-            fill: "var(--text-dim)",
+            fill: "rgb(var(--text-dim))",
             fontFamily: "var(--font-mono)",
             fontSize: 10,
             textAnchor: "end" as const,
@@ -80,7 +80,7 @@ export function WaterfallChart({ bars, width = 480, height = 220 }: WaterfallCha
           x2={innerW}
           y1={yScale(0)}
           y2={yScale(0)}
-          stroke="var(--text-faint)"
+          stroke="rgb(var(--text-faint))"
           strokeDasharray="2 2"
         />
         {sorted.map((b) => {
@@ -94,7 +94,7 @@ export function WaterfallChart({ bars, width = 480, height = 220 }: WaterfallCha
               y={Math.min(y0, y1)}
               width={xScale.bandwidth()}
               height={Math.abs(y0 - y1)}
-              fill={b.value >= 0 ? "var(--pos)" : "var(--neg)"}
+              fill={b.value >= 0 ? "rgb(var(--pos))" : "rgb(var(--neg))"}
               shapeRendering="crispEdges"
             />
           );
@@ -108,7 +108,7 @@ export function WaterfallChart({ bars, width = 480, height = 220 }: WaterfallCha
               })
               .join(" ")}
             fill="none"
-            stroke="var(--accent)"
+            stroke="rgb(var(--accent))"
             strokeWidth={1}
           />
         )}

@@ -28,9 +28,9 @@ function terminalColorScale(v: number, vmax: number): string {
   // Use CSS color-mix to interpolate between bg and accent/neg.
   const pct = Math.round(Math.abs(t) * 100);
   if (t >= 0) {
-    return `color-mix(in srgb, var(--accent) ${pct}%, var(--bg))`;
+    return `color-mix(in srgb, rgb(var(--accent)) ${pct}%, rgb(var(--bg)))`;
   }
-  return `color-mix(in srgb, var(--neg) ${pct}%, var(--bg))`;
+  return `color-mix(in srgb, rgb(var(--neg)) ${pct}%, rgb(var(--bg)))`;
 }
 
 export function HeatmapChart({
@@ -131,8 +131,8 @@ export function HeatmapChart({
                       key={c}
                       style={{
                         height: cellHeight,
-                        border: "1px solid var(--bg)",
-                        background: "color-mix(in srgb, var(--text-faint) 12%, var(--bg))",
+                        border: "1px solid rgb(var(--bg))",
+                        background: "color-mix(in srgb, rgb(var(--text-faint)) 12%, rgb(var(--bg)))",
                       }}
                       className="text-center text-text-faint"
                       title={cell ? `n=${cell.n} (too small)` : "no data"}
@@ -147,7 +147,7 @@ export function HeatmapChart({
                     style={{
                       height: cellHeight,
                       background: colorScale(cell.value, vmax),
-                      border: "1px solid var(--bg)",
+                      border: "1px solid rgb(var(--bg))",
                     }}
                     className="text-center tabular-nums text-text"
                     title={`${r} × ${c}: ${cell.value.toFixed(3)} (n=${cell.n})`}
@@ -162,7 +162,7 @@ export function HeatmapChart({
                     style={{
                       width: Math.max(2, ((rowTotals.get(r) ?? 0) / maxRowTotal) * 60),
                       height: 6,
-                      background: "var(--accent)",
+                      background: "rgb(var(--accent))",
                     }}
                   />
                   <span className="font-mono text-[10px] tabular-nums text-text-dim">

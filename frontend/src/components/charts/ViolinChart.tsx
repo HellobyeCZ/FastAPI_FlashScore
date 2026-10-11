@@ -106,14 +106,14 @@ export function ViolinChart({ series, width = 480, height = 240, referenceY }: V
   if (allValues.length === 0) {
     return (
       <svg width={width} height={height} role="img">
-        <rect width={width} height={height} fill="var(--bg)" />
+        <rect width={width} height={height} fill="rgb(var(--bg))" />
         <text
           x={width / 2}
           y={height / 2}
           textAnchor="middle"
           fontSize={11}
           fontFamily="var(--font-mono)"
-          fill="var(--text-dim)"
+          fill="rgb(var(--text-dim))"
         >
           no data
         </text>
@@ -123,7 +123,7 @@ export function ViolinChart({ series, width = 480, height = 240, referenceY }: V
 
   return (
     <svg width={width} height={height} role="img" aria-label="violin distribution">
-      <rect width={width} height={height} fill="var(--bg)" />
+      <rect width={width} height={height} fill="rgb(var(--bg))" />
       <Group left={padding.left} top={padding.top}>
         <TerminalAxisBottom top={innerH} scale={xScale} />
         <TerminalAxisLeft scale={yScale} numTicks={5} />
@@ -133,7 +133,7 @@ export function ViolinChart({ series, width = 480, height = 240, referenceY }: V
             x2={innerW}
             y1={yScale(referenceY)}
             y2={yScale(referenceY)}
-            stroke="var(--text-faint)"
+            stroke="rgb(var(--text-faint))"
             strokeDasharray="2 2"
           />
         )}
@@ -144,7 +144,7 @@ export function ViolinChart({ series, width = 480, height = 240, referenceY }: V
             <Group key={s.label} left={cx}>
               <ViolinPlot
                 data={computeKde(s.values)}
-                stroke={s.color || "var(--accent)"}
+                stroke={s.color || "rgb(var(--accent))"}
                 fill="transparent"
                 valueScale={yScale}
                 width={bandWidth * 0.85}
@@ -160,9 +160,9 @@ export function ViolinChart({ series, width = 480, height = 240, referenceY }: V
                 thirdQuartile={stats.thirdQuartile}
                 median={stats.median}
                 boxWidth={bandWidth * 0.36}
-                fill="var(--bg)"
+                fill="rgb(var(--bg))"
                 fillOpacity={1}
-                stroke="var(--text-dim)"
+                stroke="rgb(var(--text-dim))"
                 strokeWidth={1}
                 valueScale={yScale}
               />

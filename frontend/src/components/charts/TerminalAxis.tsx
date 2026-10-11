@@ -3,7 +3,7 @@
 import { AxisLeft, AxisBottom } from "@visx/axis";
 
 const baseTickLabelProps = () => ({
-  fill: "var(--text-dim)",
+  fill: "rgb(var(--text-dim))",
   fontFamily: "var(--font-mono)",
   fontSize: 10,
   textAnchor: "middle" as const,
@@ -12,8 +12,8 @@ const baseTickLabelProps = () => ({
 export function TerminalAxisLeft(props: React.ComponentProps<typeof AxisLeft>) {
   return (
     <AxisLeft
-      stroke="var(--text-faint)"
-      tickStroke="var(--text-faint)"
+      stroke="rgb(var(--text-faint))"
+      tickStroke="rgb(var(--text-faint))"
       tickLabelProps={() => ({
         ...baseTickLabelProps(),
         textAnchor: "end" as const,
@@ -27,8 +27,8 @@ export function TerminalAxisLeft(props: React.ComponentProps<typeof AxisLeft>) {
 export function TerminalAxisBottom(props: React.ComponentProps<typeof AxisBottom>) {
   return (
     <AxisBottom
-      stroke="var(--text-faint)"
-      tickStroke="var(--text-faint)"
+      stroke="rgb(var(--text-faint))"
+      tickStroke="rgb(var(--text-faint))"
       tickLabelProps={baseTickLabelProps}
       {...props}
     />
