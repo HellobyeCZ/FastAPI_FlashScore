@@ -31,6 +31,23 @@ export type BulkScrapeJobRow = {
   skipped_events: number;
 };
 
+/** One event of a job, as listed by GET /bulk-scrape/jobs/{id}. */
+export type BulkScrapeEventRow = {
+  event_id: string;
+  season_path: string | null;
+  status: "pending" | "running" | "succeeded" | "failed" | string;
+  attempts: number;
+  skipped_reason: string | null;
+  last_error: string | null;
+  created_at: string;
+  started_at: string | null;
+  updated_at: string;
+  finished_at: string | null;
+};
+
+/** GET /bulk-scrape/jobs/{id}: the job plus its first `event_limit` events (by id). */
+export type BulkScrapeJobDetailRow = BulkScrapeJobRow & { events: BulkScrapeEventRow[] };
+
 export type BulkScrapeJobList = {
   total: number;
   jobs: BulkScrapeJobRow[];

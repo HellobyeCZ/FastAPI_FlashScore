@@ -200,7 +200,9 @@ test.describe("shell", () => {
     await expect(menu).toHaveAttribute("aria-expanded", "false");
   });
 
-  test("no horizontal overflow on Today", async ({ page }) => {
+  test("no horizontal overflow on Today", async ({ page }, testInfo) => {
+    // The spec's rule is 390 px; the mobile project's Pixel 7 alone is 412 px.
+    if (isMobile(testInfo.project.name)) await page.setViewportSize({ width: 390, height: 844 });
     await stubAll(page, OPS_STATUS_STALE);
     await page.goto("/en/today");
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible({ timeout: 60_000 });
@@ -210,5 +212,6 @@ test.describe("shell", () => {
       inner: window.innerWidth
     }));
     expect(scroll).toBeLessThanOrEqual(inner);
+    if (isMobile(testInfo.project.name)) expect(scroll).toBeLessThanOrEqual(390);
   });
 });

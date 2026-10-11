@@ -2,7 +2,9 @@
 import { Fragment, useId, useState } from "react";
 import { useLocale } from "@/contexts/LocaleContext";
 import {
+  JOB_EVENT_LIMIT,
   isActiveJob,
+  useBulkScrapeJobEvents,
   useBulkScrapeJobs,
   useCancelBulkScrapeJob,
   useStartBulkScrapeJob
@@ -20,6 +22,7 @@ import {
   Label,
   Panel,
   QueryState,
+  Skeleton,
   StateBadge,
   Table,
   type Column
@@ -30,6 +33,7 @@ import {
   INITIAL_FORM,
   SEASONS,
   estimateEvents,
+  groupFailures,
   recentPaths,
   summarizeJobError,
   validateScrapeForm,
@@ -114,9 +118,59 @@ function JobProgress({ job }: { job: BulkScrapeJobRow }) {
   );
 }
 
+/**
+ * Why a job's events failed: the per-event errors grouped by message, loaded
+ * from the job detail when the disclosure is first opened.
+ */
+function FailedEvents({ job }: { job: BulkScrapeJobRow }) {
+  const { t, tp, fmt } = useLocale();
+  const [open, setOpen] = useState(false);
+  const events = useBulkScrapeJobEvents(job, open);
+  return (
+    <div className="flex min-w-0 flex-col gap-0.5 text-meta">
+      <span className="text-warn">
+        {tp("ops.failedEvents", job.failed_events, { count: fmt.int(job.failed_events) })}
+      </span>
+      <details onToggle={(e) => setOpen(e.currentTarget.open)}>
+        <summary className="cursor-pointer text-text-dim hover:text-text">{t("ops.jobs.details")}</summary>
+        {open && (
+          <div className="mt-1 flex flex-col gap-1 border-l-2 border-warn/50 pl-2">
+            <QueryState
+              query={events}
+              errorTitle={t("ops.jobs.failures.error")}
+              loading={<Skeleton lines={2} className="py-1" />}
+              isEmpty={(d) => groupFailures(d.events).length === 0}
+              empty={<p className="text-text-dim">{t("ops.jobs.failures.none")}</p>}
+            >
+              {(d) => (
+                <ul aria-label={t("ops.jobs.failures.label", { id: job.id })} className="flex flex-col gap-1">
+                  {groupFailures(d.events).map((g) => (
+                    <li key={g.message ?? ""} className="min-w-0 [overflow-wrap:anywhere]">
+                      <span className="text-neg" title={g.example ?? undefined}>
+                        {g.message ?? t("ops.jobs.failures.noMessage")}
+                      </span>
+                      <span className="text-text-faint">
+                        {" · "}
+                        {tp("ops.events", g.count, { count: fmt.int(g.count) })}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </QueryState>
+            {job.total_events > JOB_EVENT_LIMIT && (
+              <p className="text-text-faint">{t("ops.jobs.failures.partial", { count: fmt.int(JOB_EVENT_LIMIT) })}</p>
+            )}
+          </div>
+        )}
+      </details>
+    </div>
+  );
+}
+
 /** One truncated line of the job's error, with the full text behind a disclosure. */
 function JobError({ job }: { job: BulkScrapeJobRow }) {
-  const { t, tp, fmt } = useLocale();
+  const { t } = useLocale();
   if (job.last_error) {
     return (
       <div className="flex min-w-0 flex-col gap-0.5 text-meta">
@@ -133,14 +187,7 @@ function JobError({ job }: { job: BulkScrapeJobRow }) {
     );
   }
   // completed_with_errors carries no message: the failures are per event.
-  if (job.failed_events > 0) {
-    return (
-      <span className="text-meta text-warn">
-        {tp("ops.failedEvents", job.failed_events, { count: fmt.int(job.failed_events) })}
-      </span>
-    );
-  }
-  return null;
+  return job.failed_events > 0 ? <FailedEvents job={job} /> : null;
 }
 
 /** Form → validated request → confirmation stating scope and upstream cost. */
@@ -218,17 +265,15 @@ function NewScrapeForm({
             <div className="flex flex-wrap items-center gap-1.5">
               <span className="text-meta text-text-faint">{t("ops.scrape.recent")}</span>
               {recent.map((p) => (
-                <button
+                <Button
                   key={p}
-                  type="button"
+                  size="sm"
                   onClick={() => set({ path: p })}
-                  className={
-                    "max-w-full truncate border border-border px-1.5 font-mono text-meta text-text-dim " +
-                    "hover:border-text-dim hover:text-text"
-                  }
+                  title={p}
+                  className="min-w-0 max-w-full normal-case"
                 >
-                  {p}
-                </button>
+                  <span className="truncate">{p}</span>
+                </Button>
               ))}
             </div>
           )}

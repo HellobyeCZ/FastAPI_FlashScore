@@ -1,6 +1,6 @@
 import { mkdirSync } from "node:fs";
 import path from "node:path";
-import { expect, test, type Locator, type Page, type Request } from "@playwright/test";
+import { expect, test, type Locator, type Page, type Request, type TestInfo } from "@playwright/test";
 import { OPS_STATUS_OK, OPS_STATUS_STALE, stubJson, stubShell } from "./fixtures/stub";
 
 /*
@@ -186,7 +186,19 @@ async function waitForSettings(page: Page) {
   await expect(page.getByRole("region", { name: /About|O aplikaci/ })).toContainText("abc1234");
 }
 
-/** Neither the page nor any table inside it scrolls sideways. */
+/** The spec's narrowest viewport; the mobile project's Pixel 7 is 412 px wide. */
+const PHONE = { width: 390, height: 844 };
+
+/** On the mobile project, check overflow at 390 px rather than the device width. */
+async function phoneWidth(page: Page, testInfo: TestInfo) {
+  if (testInfo.project.name === "mobile") await page.setViewportSize(PHONE);
+}
+
+/**
+ * Neither the page nor any table inside it scrolls sideways. Compared with the
+ * configured viewport width: on an emulated phone, overflowing content can
+ * zoom the page out and widen window.innerWidth along with it.
+ */
 async function noHorizontalOverflow(page: Page) {
   const { scroll, inner, scrollingTables } = await page.evaluate(() => ({
     scroll: document.documentElement.scrollWidth,
@@ -195,7 +207,9 @@ async function noHorizontalOverflow(page: Page) {
       .filter((t) => t.parentElement && t.parentElement.scrollWidth > t.parentElement.clientWidth + 1)
       .map((t) => t.querySelector("caption")?.textContent)
   }));
-  expect(scroll).toBeLessThanOrEqual(inner);
+  const width = page.viewportSize()?.width ?? inner;
+  expect(scroll).toBeLessThanOrEqual(width);
+  expect(inner).toBeLessThanOrEqual(width);
   expect(scrollingTables).toEqual([]);
 }
 
@@ -412,8 +426,83 @@ test.describe("Data ops", () => {
     await failed.getByText("Details").click();
     await expect(full).toBeVisible();
 
-    // Nothing is active, so there is no stop action (and no polling).
+    // Nothing is active, so there is no stop action.
     await expect(table.getByRole("button", { name: /Stop job/ })).toHaveCount(0);
+  });
+
+  test("per-event failures of a completed_with_errors job load when expanded", async ({ page }) => {
+    await stubOps(page);
+    const event = (id: string, status: string, last_error: string | null = null) => ({
+      event_id: id,
+      season_path: "/football/czech-republic/chance-liga/",
+      status,
+      attempts: status === "failed" ? 3 : 1,
+      skipped_reason: null,
+      last_error,
+      created_at: "2026-10-10T18:00:02+00:00",
+      started_at: "2026-10-10T18:00:03+00:00",
+      updated_at: "2026-10-10T18:00:09+00:00",
+      finished_at: "2026-10-10T18:00:09+00:00"
+    });
+    const detail: string[] = [];
+    await page.route(/\/api\/backend\/bulk-scrape\/jobs\/21(\?.*)?$/, (route) => {
+      detail.push(route.request().url());
+      return route.fulfill({
+        json: {
+          ...JOBS_SETTLED[0],
+          events: [
+            event("CvsfNo26", "succeeded"),
+            event("6svnP7Xg", "failed", "Unable to contact upstream match stats service."),
+            event("tGh2Lk9q", "failed", "Upstream odds service temporarily unavailable."),
+            event("Wq8xZ1ab", "failed", "Upstream odds service temporarily unavailable.")
+          ]
+        }
+      });
+    });
+    await page.goto("/en/ops");
+    const row = page.getByRole("region", { name: "Bulk scrape" }).getByRole("row").filter({ hasText: "#21" });
+    await expect(row).toContainText("3 events failed");
+    await page.waitForTimeout(500);
+    expect(detail).toEqual([]);
+
+    await row.getByText("Details").click();
+    const reasons = row.getByRole("list", { name: "Why events of job #21 failed" }).getByRole("listitem");
+    await expect(reasons).toHaveText([
+      "Upstream odds service temporarily unavailable. · 2 events",
+      "Unable to contact upstream match stats service. · 1 event"
+    ]);
+    // Every event of the job is requested, so late failures are not missed.
+    expect(detail).toHaveLength(1);
+    expect(new URL(detail[0]).searchParams.get("event_limit")).toBe("182");
+    // No raw event ids where a reason is what matters.
+    await expect(row).not.toContainText("6svnP7Xg");
+  });
+
+  test("the jobs list polls only while a job is active", async ({ page }) => {
+    let active = 0;
+    await stubOps(page, { jobs: JOBS_ACTIVE });
+    await page.route(/\/api\/backend\/bulk-scrape\/jobs(\?.*)?$/, (route) => {
+      active += 1;
+      return route.fulfill({ json: { total: JOBS_ACTIVE.length, jobs: JOBS_ACTIVE } });
+    });
+    await page.goto("/en/ops");
+    await expect(page.getByRole("button", { name: "Stop job #22" })).toBeVisible();
+    // Every 3 s while job #22 runs: at least two refetches after the first load.
+    await expect.poll(() => active, { timeout: 10_000 }).toBeGreaterThanOrEqual(3);
+  });
+
+  test("the jobs list does not poll when every job has finished", async ({ page }) => {
+    let calls = 0;
+    await stubOps(page);
+    await page.route(/\/api\/backend\/bulk-scrape\/jobs(\?.*)?$/, (route) => {
+      calls += 1;
+      return route.fulfill({ json: { total: JOBS_SETTLED.length, jobs: JOBS_SETTLED } });
+    });
+    await page.goto("/en/ops");
+    await waitForJobs(page);
+    const loaded = calls;
+    await page.waitForTimeout(4_000);
+    expect(calls).toBe(loaded);
   });
 
   test("stopping a running job needs confirmation; a 404 is reported in place", async ({ page }) => {
@@ -588,7 +677,8 @@ test.describe("Data ops", () => {
     await expect(page.getByText("Dokončeno s chybami")).toBeVisible();
   });
 
-  test("no horizontal overflow with long paths and errors", async ({ page }) => {
+  test("no horizontal overflow with long paths and errors", async ({ page }, testInfo) => {
+    await phoneWidth(page, testInfo);
     await stubOps(page, { ops: OPS_STATUS_MIXED, jobs: JOBS_ACTIVE });
     await page.goto("/en/ops");
     await expect(page.getByText("Completed with errors")).toBeVisible();
@@ -652,7 +742,8 @@ test.describe("Settings", () => {
     await expect(page.getByLabel("Compact tables")).toBeEnabled();
   });
 
-  test("no horizontal overflow", async ({ page }) => {
+  test("no horizontal overflow", async ({ page }, testInfo) => {
+    await phoneWidth(page, testInfo);
     await stubOps(page);
     await page.goto("/en/settings");
     await expect(page.getByRole("region", { name: "About" })).toContainText("abc1234");
@@ -670,7 +761,7 @@ test.describe("screenshots", () => {
     await stubOps(page, { ops: OPS_STATUS_MIXED, jobs: JOBS_ACTIVE });
     for (const [label, size] of [
       ["desktop", { width: 1440, height: 900 }],
-      ["mobile", { width: 390, height: 844 }]
+      ["mobile", PHONE]
     ] as const) {
       await page.setViewportSize(size);
       for (const locale of ["en", "cs"]) {

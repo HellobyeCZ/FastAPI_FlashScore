@@ -1,4 +1,4 @@
-import type { BulkScrapeJobCreate, BulkScrapeJobRow } from "@/types/bulk-scrape";
+import type { BulkScrapeEventRow, BulkScrapeJobCreate, BulkScrapeJobRow } from "@/types/bulk-scrape";
 
 /** Form limits. The backend accepts more; these keep a manual backfill sane. */
 export const SEASONS = { min: 1, max: 10, initial: 5 } as const;
@@ -137,4 +137,25 @@ export function summarizeJobError(error: string): string {
     .replace(/https?:\/\/(www\.)?flashscore\.[a-z.]+\//gi, "")
     .replace(/[:\s]+$/, "")
     .trim();
+}
+
+export type FailureGroup = {
+  /** Summarised error, or null when the backend recorded none. */
+  message: string | null;
+  count: number;
+  /** One full error text of the group, for the tooltip. */
+  example: string | null;
+};
+
+/** Failed events grouped by their summarised error, most frequent first. */
+export function groupFailures(events: BulkScrapeEventRow[]): FailureGroup[] {
+  const groups = new Map<string | null, FailureGroup>();
+  for (const event of events) {
+    if (event.status !== "failed") continue;
+    const message = event.last_error ? summarizeJobError(event.last_error) || event.last_error : null;
+    const group = groups.get(message) ?? { message, count: 0, example: event.last_error };
+    group.count += 1;
+    groups.set(message, group);
+  }
+  return [...groups.values()].sort((a, b) => b.count - a.count);
 }
