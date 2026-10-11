@@ -50,10 +50,17 @@ def _ensure_paper_bets_table() -> None:
                 clv REAL,
                 status TEXT NOT NULL DEFAULT 'pending',
                 settled_at TEXT,
+                model_version TEXT,
                 UNIQUE(event_id, model, market, selection)
             )
             """
         )
+        # Additive column for tables created before the registry existed:
+        # which model version produced the pick ("<registry version>" or
+        # "file"); NULL for picks recorded before it was tracked.
+        existing = {row[1] for row in conn.execute("PRAGMA table_info(paper_bets)")}
+        if "model_version" not in existing:
+            conn.execute("ALTER TABLE paper_bets ADD COLUMN model_version TEXT")
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_paper_bets_status ON paper_bets(status, recommended_at)"
         )
@@ -79,6 +86,8 @@ class PickInput:
     devigged_prob: Optional[float]
     edge: Optional[float]
     kelly_full: Optional[float]
+    # Registry version of the model that produced the pick, or "file".
+    model_version: Optional[str] = None
 
 
 def record_picks(picks: Iterable[PickInput]) -> int:
@@ -98,14 +107,15 @@ def record_picks(picks: Iterable[PickInput]) -> int:
                         recommended_at, bet_ts,
                         price_at_recommendation,
                         model_prob, devigged_prob, edge, kelly_full,
-                        status
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+                        model_version, status
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
                     """,
                     (
                         p.event_id, p.model, p.market, p.selection,
                         now_iso, p.bet_ts,
                         p.price_at_recommendation,
                         p.model_prob, p.devigged_prob, p.edge, p.kelly_full,
+                        p.model_version,
                     ),
                 )
                 inserted += 1

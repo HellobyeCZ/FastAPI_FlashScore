@@ -9,9 +9,10 @@ Pipeline stages:
    upcoming fixtures per stored league and writes fresh odds snapshots.
 2. **settle**  — :func:`settle_pending_bets`: marks any pending paper
    bets whose events have completed.
-3. **predict** — load models, run each on upcoming events in the next
-   ``hours_ahead`` window, write positive-edge selections to
-   ``paper_bets``.
+3. **predict** — run the process's served models (registry ``@champion``
+   or ``$APP_ML_MODELS_DIR`` fallback — the same set ``/predict`` uses) on
+   upcoming events in the next ``hours_ahead`` window, write
+   positive-edge selections to ``paper_bets`` with their model version.
 """
 from __future__ import annotations
 
@@ -32,7 +33,7 @@ from app.ml.closing_odds_from_live import backfill_closing_from_live
 from app.ml.elo import EloConfig, backfill_elo
 from app.ml.labels import backfill_labels
 from app.ml.paper_trade import PickInput, record_picks, settle_pending_bets
-from app.ml.serving import list_upcoming_events, load_models, predict_event
+from app.ml.serving import get_served_artifacts, list_upcoming_events, predict_event
 from app.services.bulk_scrape import (
     LiveOddsScheduler,
     LiveOddsSchedulerConfig,
@@ -381,7 +382,7 @@ class RefreshNowManager:
 
     @staticmethod
     def _predict_sync(hours_ahead: int, min_edge: float) -> dict[str, int]:
-        artifacts = load_models()
+        artifacts = get_served_artifacts()
         upcoming = list_upcoming_events(hours_ahead=hours_ahead)
         now_iso = datetime.now(timezone.utc).isoformat()
         picks: list[PickInput] = []
@@ -404,6 +405,7 @@ class RefreshNowManager:
                         devigged_prob=r.market_devigged,
                         edge=r.edge,
                         kelly_full=r.kelly_full,
+                        model_version=r.model_version,
                     )
                 )
         inserted = record_picks(picks)
