@@ -8,7 +8,16 @@ import { usePicksStats, type RowsResult } from "@/lib/performance/api";
 import type { PicksQuery } from "@/lib/performance/filters";
 import { addDays, competitionKey, cumulativeByModel, dropFloatNoise, foldStats, pnlLine } from "@/lib/performance/stats";
 import type { PerformanceFilterState } from "@/lib/performance/useFilters";
-import { ChartPanel, joinNotes, Measured, MissingDataEmpty, NoBetsEmpty, panelStatus, useRowsNote } from "./shared";
+import {
+  ChartPanel,
+  joinNotes,
+  Measured,
+  MissingDataEmpty,
+  NoBetsEmpty,
+  panelStatus,
+  useRowsNote,
+  useWindowText
+} from "./shared";
 
 const CHART_HEIGHT = 240;
 
@@ -104,6 +113,7 @@ export function CompetitionPanel({
   className?: string;
 }) {
   const { t, tp, fmt } = useLocale();
+  const windowText = useWindowText(state);
   const stats = usePicksStats(["competition"], q, state.ready);
   const status = panelStatus(state, stats);
   const { folded, total, unknown } = useMemo(() => {
@@ -140,13 +150,17 @@ export function CompetitionPanel({
         ) : folded.length === 0 ? (
           <MissingDataEmpty
             state={state}
-            title={tp("performance.chart.noCompetition", total, { count: fmt.int(total) })}
+            title={tp("performance.chart.noCompetition", total, { count: fmt.int(total), window: windowText })}
             body={t("performance.chart.noCompetitionBody")}
           />
         ) : (
+          // Only the bets with a known competition were folded into rows.
           <MissingDataEmpty
             state={state}
-            title={tp("performance.chart.noStake", total, { count: fmt.int(total) })}
+            title={tp("performance.chart.noStake", total - unknown, {
+              count: fmt.int(total - unknown),
+              window: windowText
+            })}
             body={t("performance.chart.noStakeBody")}
           />
         )
@@ -191,6 +205,7 @@ export function ClvDistributionPanel({
   className?: string;
 }) {
   const { t, tp, fmt } = useLocale();
+  const windowText = useWindowText(state);
   const note = useRowsNote(settled);
   const status = panelStatus(state, settled);
   const perModel = useMemo(() => {
@@ -226,7 +241,7 @@ export function ClvDistributionPanel({
         ) : (
           <MissingDataEmpty
             state={state}
-            title={tp("performance.chart.noClv", total, { count: fmt.int(total) })}
+            title={tp("performance.chart.noClv", total, { count: fmt.int(total), window: windowText })}
             body={t("performance.chart.noClvBody")}
           />
         )

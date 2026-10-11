@@ -17,6 +17,7 @@ import {
   panelStatus,
   usePp,
   useRowsNote,
+  useWindowText,
   WidenActions
 } from "./shared";
 
@@ -189,6 +190,7 @@ export function ClvHeatmapPanel({
   className?: string;
 }) {
   const { t, tp, fmt } = useLocale();
+  const windowText = useWindowText(state);
   const stats = usePicksStats(["competition", "selection"], q, state.ready);
   const status = panelStatus(state, stats);
   const data = useMemo(() => {
@@ -232,13 +234,20 @@ export function ClvHeatmapPanel({
         ) : data.folded.length === 0 ? (
           <MissingDataEmpty
             state={state}
-            title={tp("performance.chart.noCompetition", data.total, { count: fmt.int(data.total) })}
+            title={tp("performance.chart.noCompetition", data.total, {
+              count: fmt.int(data.total),
+              window: windowText
+            })}
             body={t("performance.chart.noCompetitionBody")}
           />
         ) : (
+          // Only the bets with a known competition were folded into cells.
           <MissingDataEmpty
             state={state}
-            title={tp("performance.chart.noClv", data.total, { count: fmt.int(data.total) })}
+            title={tp("performance.chart.noClv", data.total - data.unknown, {
+              count: fmt.int(data.total - data.unknown),
+              window: windowText
+            })}
             body={t("performance.chart.noClvBody")}
           />
         )
@@ -268,7 +277,7 @@ export function ClvHeatmapPanel({
       {allSmall ? (
         <EmptyState
           compact
-          title={t("performance.chart.heatmap.allSmall", { min: HEATMAP_MIN_N })}
+          title={t("performance.chart.heatmap.allSmall", { min: HEATMAP_MIN_N, window: windowText })}
           action={<WidenActions state={state} />}
         >
           {t("performance.chart.heatmap.allSmallBody")}

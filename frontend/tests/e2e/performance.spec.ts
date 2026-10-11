@@ -635,7 +635,7 @@ test.describe("leaderboard", () => {
     await page.goto("/en/performance?window=all");
 
     const clv = page.getByRole("region", { name: "CLV distribution by model" });
-    await expect(clv.getByText("None of the 64 settled bets has a closing price")).toBeVisible();
+    await expect(clv.getByText("None of the 64 settled bets across all time has a closing price")).toBeVisible();
     await expect(clv.getByRole("link", { name: "Open Data ops" })).toBeVisible();
     // hgb's 10 bets have no competition: drawn competitions add up to 54, and the panel says so.
     const comps = page.getByRole("region", { name: "ROI by competition" });
@@ -782,7 +782,7 @@ test.describe("bet explorer", () => {
     await page.goto("/en/performance/explore?window=custom&from=2026-10-03&to=2026-10-05&edge_min=2.5&price_max=3");
 
     const heatmap = page.getByRole("region", { name: "Mean CLV · competition × pick" });
-    await expect(heatmap.getByText("Every cell has fewer than 5 bets")).toBeVisible();
+    await expect(heatmap.getByText("Every cell has fewer than 5 bets from Oct 3, 2026 to Oct 5, 2026")).toBeVisible();
     await expect(heatmap.getByRole("button", { name: "Show all time" })).toBeVisible();
     await heatmap.getByRole("button", { name: "Show data" }).click();
     await expect(heatmap.locator("tbody tr").first()).toBeVisible();
