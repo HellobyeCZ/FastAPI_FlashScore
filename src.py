@@ -52,6 +52,7 @@ from app.schemas.backtest import (
     ReliabilityBucketDTO,
 )
 from app.ml import backtest_stats, paper_trade_stats
+from app.ml import db as ml_db
 from app.ml.models import names as analytic_model_names
 from app.ml.picks_facets import facets_for_backtest, facets_for_both, facets_for_live
 from app.ml.trainable import TRAINABLE
@@ -1128,11 +1129,12 @@ def _filters_echo(
     }
 
 
-def _history_sort_key(row: dict) -> datetime:
-    return paper_trade_stats.parse_timestamp(row.get("recommended_at")) or _EPOCH
-
-
 _EPOCH = datetime.min.replace(tzinfo=timezone.utc)
+
+
+def _history_sort_key(row: dict) -> datetime:
+    # Live and backtest rows store recommended_at in different ISO styles.
+    return paper_trade_stats.parse_timestamp(row.get("recommended_at")) or _EPOCH
 
 
 @app.get("/picks/history")
@@ -1242,7 +1244,6 @@ def picks_summary() -> dict:
     breakdowns, settled time-series for the cumulative P&L / CLV
     dashboard chart, plus pipeline freshness (``last_recommended_at``,
     ``last_settled_at``, ``oldest_pending_kickoff``)."""
-    from app.ml import db as ml_db
     from app.ml.paper_trade import fetch_summary
 
     summary = fetch_summary()
