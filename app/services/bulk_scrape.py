@@ -584,7 +584,9 @@ class BulkScrapeManager:
             if not params:
                 return
 
-            await self._snapshot_store.mark_bulk_scrape_job_running(job_id=job_id)
+            if not await self._snapshot_store.mark_bulk_scrape_job_running(job_id=job_id):
+                # Cancelled (or finished) before this task got going.
+                return
             await self._snapshot_store.reset_running_bulk_scrape_job_events(job_id=job_id)
             pending = await self._snapshot_store.list_bulk_scrape_pending_events(job_id=job_id)
 

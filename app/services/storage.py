@@ -173,10 +173,12 @@ class SnapshotStore:
         await self.initialize()
         return await asyncio.to_thread(self._get_bulk_scrape_job_params_sync, job_id)
 
-    async def mark_bulk_scrape_job_running(self, *, job_id: int) -> None:
+    async def mark_bulk_scrape_job_running(self, *, job_id: int) -> bool:
+        """Flip a queued/running job to ``running``. Returns False (nothing
+        written) when the job is no longer active, e.g. cancelled."""
         await self.initialize()
         async with self._write_lock:
-            await asyncio.to_thread(self._mark_bulk_scrape_job_running_sync, job_id)
+            return await asyncio.to_thread(self._mark_bulk_scrape_job_running_sync, job_id)
 
     async def mark_bulk_scrape_job_failed(self, *, job_id: int, error: str) -> None:
         await self.initialize()
@@ -800,26 +802,28 @@ class SnapshotStore:
             "total_events": int(row["total_events"] or 0),
         }
 
-    def _mark_bulk_scrape_job_running_sync(self, job_id: int) -> None:
+    # The job-status writers below never overwrite ``cancelled``: a
+    # cancelled job task can still have one of these in flight in a worker
+    # thread (asyncio.to_thread cannot be interrupted), so the guard is in SQL.
+    def _mark_bulk_scrape_job_running_sync(self, job_id: int) -> bool:
         now_iso = datetime.now(timezone.utc).isoformat()
+        placeholders = ",".join("?" for _ in self._RESUMABLE_JOB_STATUSES)
         with self._connect() as connection:
-            connection.execute(
-                """
+            cursor = connection.execute(
+                f"""
                 UPDATE scrape_jobs
                 SET
                     status = 'running',
                     started_at = COALESCE(started_at, ?),
                     updated_at = ?,
                     finished_at = NULL
-                WHERE id = ?
+                WHERE id = ? AND status IN ({placeholders})
                 """,
-                (now_iso, now_iso, job_id),
+                (now_iso, now_iso, job_id, *self._RESUMABLE_JOB_STATUSES),
             )
             connection.commit()
+            return cursor.rowcount > 0
 
-    # The terminal-status writers below never overwrite ``cancelled``: a
-    # cancelled job task can still have one of these in flight in a worker
-    # thread (asyncio.to_thread cannot be interrupted), so the guard is in SQL.
     def _mark_bulk_scrape_job_failed_sync(self, job_id: int, error: str) -> None:
         now_iso = datetime.now(timezone.utc).isoformat()
         with self._connect() as connection:

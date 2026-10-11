@@ -1249,8 +1249,9 @@ def picks_summary() -> dict:
     summary = fetch_summary()
     with contextlib.closing(ml_db.connect(read_only=True)) as conn:
         freshness = paper_trade_stats.pipeline_freshness(conn, now=datetime.now(timezone.utc))
-    summary["last_recommended_at"] = freshness["last_recommended_at"]
-    summary["last_settled_at"] = freshness["last_settled_at"]
+    # Stored columns mix "Z" and "+00:00"; normalise like /ops/status does.
+    summary["last_recommended_at"] = paper_trade_stats.format_timestamp(freshness["last_recommended_at"])
+    summary["last_settled_at"] = paper_trade_stats.format_timestamp(freshness["last_settled_at"])
     summary["oldest_pending_kickoff"] = freshness["oldest_pending_kickoff"]
     return summary
 

@@ -95,11 +95,13 @@ def test_cancel_running_job(tmp_path: Path):
             assert discovery.cancelled is True
             assert job["id"] not in manager._job_tasks
 
-            # A late terminal write from an in-flight worker cannot undo it.
+            # A late status write from an in-flight worker cannot undo it.
+            assert await store.mark_bulk_scrape_job_running(job_id=job["id"]) is False
             await store.mark_bulk_scrape_job_finished(job_id=job["id"], status="completed")
             await store.mark_bulk_scrape_job_failed(job_id=job["id"], error="late")
             latest = await store.get_bulk_scrape_job(job_id=job["id"])
             assert latest["status"] == "cancelled"
+            assert latest["finished_at"] is not None
             assert latest["last_error"] is None
 
             # Cancelled jobs are not resumed on restart.
@@ -161,6 +163,31 @@ def test_cancel_resets_running_events_to_pending(tmp_path: Path):
         await store.mark_bulk_scrape_event_running(job_id=job_id, event_id="E2")
         assert (await store.get_bulk_scrape_job(job_id=job_id))["running_events"] == 0
         assert await store.cancel_bulk_scrape_job(job_id=job_id) is False
+
+    asyncio.run(scenario())
+
+
+def test_run_job_stops_when_job_was_cancelled_before_it_started(tmp_path: Path):
+    async def scenario() -> None:
+        store = _store(tmp_path)
+        await store.initialize()
+        discovery = _BlockingDiscovery()
+        manager = _manager(store, discovery)
+        try:
+            job_id = await store.create_bulk_scrape_job(
+                competition_path="football/spain/laliga", seasons=1,
+                include_stats=True, include_odds=True, max_concurrency=1,
+            )
+            assert await store.cancel_bulk_scrape_job(job_id=job_id) is True
+
+            await asyncio.wait_for(manager._run_job(job_id), timeout=5)
+
+            assert not discovery.started.is_set()
+            job = await store.get_bulk_scrape_job(job_id=job_id)
+            assert job["status"] == "cancelled"
+            assert job["started_at"] is None
+        finally:
+            await manager.shutdown()
 
     asyncio.run(scenario())
 

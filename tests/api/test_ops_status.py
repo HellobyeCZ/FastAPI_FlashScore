@@ -4,9 +4,10 @@ from __future__ import annotations
 import asyncio
 import re
 import sqlite3
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from typing import Iterator, List
 
 import pytest
@@ -318,6 +319,38 @@ def test_ops_status_survives_failing_integrations(client: TestClient, monkeypatc
     body = resp.json()
     assert [m["name"] for m in body["models"]] == ["logistic", "hgb", "dixon_coles"]
     assert body["mlflow"]["error"] == "status unavailable"
+
+
+def test_ops_status_survives_broken_integration_imports(client: TestClient, monkeypatch):
+    # A module that blows up on import with something other than ImportError
+    # (e.g. a broken mlflow install) degrades to the fallbacks.
+    def _broken(name: str):
+        raise RuntimeError("mlflow is broken")
+
+    for module_name in ("app.ml.serving", "app.ml.tracking"):
+        broken = ModuleType(module_name)
+        broken.__getattr__ = _broken  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, module_name, broken)
+
+    resp = client.get("/ops/status")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert [m["loaded"] for m in body["models"]] == [False, True, False]
+    assert body["mlflow"]["error"] == "status unavailable"
+
+
+def test_ops_status_reads_artifacts_from_main_module(client: TestClient, monkeypatch):
+    # Under ``python src.py`` the app runs as __main__ and "src" is never
+    # imported; the fallback must not import (and initialise) a second copy.
+    main = SimpleNamespace(
+        _get_ml_artifacts=lambda: SimpleNamespace(logistic=object(), hgb=None, dc_rates=None),
+    )
+    monkeypatch.delitem(sys.modules, "src")
+    monkeypatch.setitem(sys.modules, "__main__", main)
+
+    body = client.get("/ops/status").json()
+    assert [m["loaded"] for m in body["models"]] == [True, False, False]
+    assert "src" not in sys.modules
 
 
 def test_ops_status_never_scans_snapshot_tables(client: TestClient, monkeypatch):

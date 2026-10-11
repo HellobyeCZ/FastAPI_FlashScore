@@ -272,3 +272,17 @@ def test_summary_reports_pipeline_freshness(client: TestClient):
     assert body["oldest_pending_kickoff"] == "2026-05-14T19:30:00+00:00"
     # Existing keys are untouched.
     assert body["totals"]["pending"] == 1
+
+
+def test_summary_normalises_freshness_timestamps(client: TestClient, db_path: Path):
+    with sqlite3.connect(db_path) as c:
+        c.execute(
+            "INSERT INTO paper_bets (event_id, model, market, selection, recommended_at, bet_ts, "
+            "price_at_recommendation, model_prob, edge, kelly_full, result, pnl, status, settled_at) "
+            "VALUES ('E5', 'hgb', '1X2_FT', 'home', '2026-05-06T10:00:00Z', '2026-05-06T10:00:00Z', "
+            "2.0, 0.5, 0.05, 1.0, 1.0, 1.0, 'settled', '2026-05-07T08:00:00Z')"
+        )
+    body = client.get("/picks/summary").json()
+    # Same ISO style /ops/status reports, whatever the stored suffix.
+    assert body["last_recommended_at"] == "2026-05-06T10:00:00+00:00"
+    assert body["last_settled_at"] == "2026-05-07T08:00:00+00:00"

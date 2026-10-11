@@ -14,6 +14,7 @@ import dataclasses
 import os
 import sqlite3
 import subprocess
+import sys
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
@@ -172,6 +173,10 @@ def _served_models() -> List[ServedModel]:
         from app.ml.serving import served_models_info
     except ImportError:
         served_models_info = None
+    except Exception:
+        # A broken dependency (e.g. mlflow) must degrade, not 500 the poll.
+        _logger.exception("serving_import_failed")
+        served_models_info = None
     if served_models_info is not None:
         try:
             info = served_models_info()
@@ -181,20 +186,25 @@ def _served_models() -> List[ServedModel]:
         except Exception:
             _logger.exception("served_models_info_failed")
 
-    try:
-        # Imported lazily: src.py includes this router, so a module-level
-        # import would be circular.
-        from src import _get_ml_artifacts
-
-        artifacts = _get_ml_artifacts()
-        loaded = {
-            "logistic": artifacts.logistic is not None,
-            "hgb": artifacts.hgb is not None,
-            "dixon_coles": artifacts.dc_rates is not None,
-        }
-    except Exception:
-        _logger.exception("ml_artifacts_unavailable")
-        loaded = dict.fromkeys(("logistic", "hgb", "dixon_coles"), False)
+    loaded = dict.fromkeys(("logistic", "hgb", "dixon_coles"), False)
+    # Read from the running app module rather than imported: src.py includes
+    # this router (a module-level import would be circular), and under
+    # ``python src.py`` it runs as __main__, where ``import src`` would load
+    # (and initialise) a second copy of the app.
+    app_module = sys.modules.get("src") or sys.modules.get("__main__")
+    get_ml_artifacts = getattr(app_module, "_get_ml_artifacts", None)
+    if get_ml_artifacts is None:
+        _logger.warning("ml_artifacts_unavailable", reason="app module not loaded")
+    else:
+        try:
+            artifacts = get_ml_artifacts()
+            loaded = {
+                "logistic": artifacts.logistic is not None,
+                "hgb": artifacts.hgb is not None,
+                "dixon_coles": artifacts.dc_rates is not None,
+            }
+        except Exception:
+            _logger.exception("ml_artifacts_unavailable")
     return [
         ServedModel(name=name, loaded=is_loaded, source="file" if is_loaded else None)
         for name, is_loaded in loaded.items()
@@ -208,6 +218,9 @@ def _mlflow_status() -> MlflowStatus:
     try:
         from app.ml.tracking import get_status
     except ImportError:
+        get_status = None
+    except Exception:
+        _logger.exception("tracking_import_failed")
         get_status = None
     if get_status is not None:
         try:
