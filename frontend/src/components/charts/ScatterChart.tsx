@@ -129,8 +129,9 @@ function ScatterPlot({
 
   const margin = { top: 10, right: 14, bottom: 24 + (xLabel ? 20 : 0), left: 0 };
   const innerH = Math.max(40, height - margin.top - margin.bottom);
-  const y = scaleLinear<number>({ domain: [yLo, yHi], range: [innerH, 0], nice: !yDomain });
-  const yTickValues = y.ticks(tickCount(innerH, 36, 8));
+  const yCount = tickCount(innerH, 36, 8);
+  const y = scaleLinear<number>({ domain: [yLo, yHi], range: [innerH, 0], nice: yDomain ? false : yCount });
+  const yTickValues = y.ticks(yCount);
   const yDigits = stepDigits(yTickValues.length > 1 ? yTickValues[1] - yTickValues[0] : 1);
   const fmtY = formatY ?? ((v: number) => fmt.num(v, yDigits));
   const yTicks: AxisTick[] = yTickValues.map((v) => ({ value: v, pos: y(v), label: fmtY(v) }));
@@ -138,8 +139,9 @@ function ScatterPlot({
   margin.left = Math.ceil(widestY + 12 + (yLabel ? 20 : 0));
   const innerW = Math.max(40, width - margin.left - margin.right);
 
-  const x = scaleLinear<number>({ domain: [xLo, xHi], range: [0, innerW], nice: !xDomain });
-  const xTickValues = x.ticks(tickCount(innerW, 72, 10));
+  const xCount = tickCount(innerW, 72, 10);
+  const x = scaleLinear<number>({ domain: [xLo, xHi], range: [0, innerW], nice: xDomain ? false : xCount });
+  const xTickValues = x.ticks(xCount);
   const xDigits = stepDigits(xTickValues.length > 1 ? xTickValues[1] - xTickValues[0] : 1);
   const fmtX = formatX ?? ((v: number) => fmt.num(v, xDigits));
   const xTicks: AxisTick[] = xTickValues.map((v) => ({ value: v, pos: x(v), label: fmtX(v) }));
@@ -217,7 +219,7 @@ function ScatterPlot({
             color: c.color,
             shape: c.shape,
             line: false,
-            note: `n = ${fmt.int(c.n)}`
+            note: `n\u00a0=\u00a0${fmt.int(c.n)}`
           }))}
         />
       )}

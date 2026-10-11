@@ -134,6 +134,8 @@ export function HeatmapChart({
   const labelW = Math.round(Math.min(180, Math.max(96, width * 0.26)));
   const minTableW = labelW + cols.length * MIN_CELL + (showRowMean ? MEAN_COL : 0);
   const caption = ariaLabel ?? t("heatmap.aria");
+  // When the table scrolls inside its panel, row labels stay pinned on the left.
+  const pinned = width > 0 && width < minTableW && "sticky left-0 z-10 border-r border-border bg-surface";
   const empty = rows.length === 0 || cols.length === 0 || visible.length === 0;
 
   return (
@@ -161,7 +163,10 @@ export function HeatmapChart({
                 <tr>
                   <th
                     scope="col"
-                    className="truncate px-2 py-1.5 text-left align-bottom font-sans text-label font-normal uppercase tracking-label text-text-dim"
+                    className={clsx(
+                      "truncate px-2 py-1.5 text-left align-bottom font-sans text-label font-normal uppercase tracking-label text-text-dim",
+                      pinned
+                    )}
                   >
                     {rowHeader}
                   </th>
@@ -170,7 +175,7 @@ export function HeatmapChart({
                       key={c}
                       scope="col"
                       title={colLabel(c)}
-                      className="truncate px-1 py-1.5 text-center align-bottom font-sans text-label font-normal uppercase tracking-label text-text-dim"
+                      className="break-words px-1 py-1.5 text-center align-bottom font-sans text-label font-normal uppercase tracking-label text-text-dim"
                     >
                       {colLabel(c)}
                     </th>
@@ -179,7 +184,7 @@ export function HeatmapChart({
                     <th
                       scope="col"
                       title={t("heatmap.rowMeanHint")}
-                      className="truncate border-l border-border-strong px-1 py-1.5 text-center align-bottom font-sans text-label font-normal uppercase tracking-label text-text-dim"
+                      className="break-words border-l border-border-strong px-1 py-1.5 text-center align-bottom font-sans text-label font-normal uppercase tracking-label text-text-dim"
                     >
                       {t("heatmap.rowMean")}
                     </th>
@@ -194,7 +199,7 @@ export function HeatmapChart({
                       <th
                         scope="row"
                         title={rowLabel(r)}
-                        className="truncate px-2 text-left font-sans text-body font-normal text-text"
+                        className={clsx("truncate px-2 text-left font-sans text-body font-normal text-text", pinned)}
                       >
                         {rowLabel(r)}
                       </th>
@@ -303,7 +308,7 @@ function Cell({
       )}
     >
       <div className="truncate">{value}</div>
-      {n !== undefined && <div className="truncate text-label">n {n}</div>}
+      {n !== undefined && <div className="truncate text-label">{`n\u00a0${n}`}</div>}
     </td>
   );
 }

@@ -108,12 +108,18 @@ function LinePlot({
     const pad = Math.abs(yLo) * 0.1 || 1;
     yLo -= pad;
     yHi += pad;
+  } else {
+    // Headroom so extreme points don't sit on the frame; a zero baseline stays put.
+    const pad = (yHi - yLo) * 0.04;
+    if (yHi !== 0) yHi += pad;
+    if (yLo !== 0) yLo -= pad;
   }
 
   const margin = { top: 10, right: 14, bottom: 24 + (xLabel ? 20 : 0), left: 0 };
   const innerH = Math.max(40, height - margin.top - margin.bottom);
-  const yScale = scaleLinear<number>({ domain: [yLo, yHi], range: [innerH, 0], nice: true });
-  const yTickValues = yScale.ticks(tickCount(innerH, 36, 8));
+  const yCount = tickCount(innerH, 36, 8);
+  const yScale = scaleLinear<number>({ domain: [yLo, yHi], range: [innerH, 0], nice: yCount });
+  const yTickValues = yScale.ticks(yCount);
   const yDigits = stepDigits(yTickValues.length > 1 ? yTickValues[1] - yTickValues[0] : 1);
   const fmtYTick = formatY ?? ((v: number) => fmt.num(v, yDigits));
   const fmtYValue = formatY ?? ((v: number) => fmt.num(v, Math.max(2, yDigits)));
@@ -130,11 +136,9 @@ function LinePlot({
     xHi += pad;
   }
   const span = xHi - xLo;
-  const tickFmt = isTime ? dateFormat(locale, span, "tick") : null;
-  const readoutFmt = isTime ? dateFormat(locale, span, "readout") : null;
+  const readoutFmt = isTime ? readoutFormat(locale, span) : null;
   const integerX = xs.every((x) => Number.isInteger(x));
   const plainX = (x: number) => (integerX ? fmt.int(x) : fmt.num(x, stepDigits(span / 10)));
-  const fmtXTick = formatX ?? ((x: number) => (tickFmt ? tickFmt.format(x) : plainX(x)));
   const fmtXValue = formatX ?? ((x: number) => (readoutFmt ? readoutFmt.format(x) : plainX(x)));
 
   const timeScale = scaleTime<number>({ domain: [new Date(xLo), new Date(xHi)], range: [0, innerW] });
@@ -143,9 +147,11 @@ function LinePlot({
   const xInvert = (px: number) => (isTime ? timeScale.invert(px).getTime() : linScale.invert(px));
 
   const nX = tickCount(innerW, 84, 8);
-  const xTicks: AxisTick[] = (
-    isTime ? timeScale.ticks(nX).map((d) => d.getTime()) : linScale.ticks(nX).filter((v) => !integerX || Number.isInteger(v))
-  ).map((v) => ({ value: v, pos: xPos(v), label: fmtXTick(v) }));
+  const xTickValues = isTime
+    ? timeScale.ticks(nX).map((d) => d.getTime())
+    : linScale.ticks(nX).filter((v) => !integerX || Number.isInteger(v));
+  const fmtXTick = formatX ?? (isTime ? timeTickFormatter(locale, xTickValues) : plainX);
+  const xTicks: AxisTick[] = xTickValues.map((v) => ({ value: v, pos: xPos(v), label: fmtXTick(v) }));
 
   const paths = series.map((s) =>
     s.points.map((p, i) => `${i === 0 ? "M" : "L"}${xPos(p.x).toFixed(1)},${yScale(p.y).toFixed(1)}`).join("")
@@ -349,17 +355,46 @@ function LinePlot({
   );
 }
 
-/** Tick labels get coarser as the span grows; the readout always shows the day. */
-function dateFormat(locale: string, span: number, kind: "tick" | "readout"): Intl.DateTimeFormat {
-  if (kind === "readout") {
-    return new Intl.DateTimeFormat(
-      locale,
-      span <= 2 * DAY
-        ? { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }
-        : { day: "numeric", month: "short", year: "numeric" }
-    );
+/** The readout always names the day; spans under two days add the time. */
+function readoutFormat(locale: string, span: number): Intl.DateTimeFormat {
+  return new Intl.DateTimeFormat(
+    locale,
+    span <= 2 * DAY
+      ? { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }
+      : { day: "numeric", month: "short", year: "numeric" }
+  );
+}
+
+/**
+ * Tick labels at the granularity the time scale chose: year ticks show the
+ * year, month ticks the month (plus the year on January and the first tick
+ * when the axis crosses a year), day ticks day + month, anything finer the
+ * time of day.
+ */
+function timeTickFormatter(locale: string, ticks: number[]): (x: number) => string {
+  const dates = ticks.map((x) => new Date(x));
+  const midnight = dates.every((d) => d.getHours() === 0 && d.getMinutes() === 0);
+  const monthStart = midnight && dates.every((d) => d.getDate() === 1);
+  const yearStart = monthStart && dates.every((d) => d.getMonth() === 0);
+  const crossesYear = new Set(dates.map((d) => d.getFullYear())).size > 1;
+  const f = (opts: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat(locale, opts);
+  if (yearStart) {
+    const year = f({ year: "numeric" });
+    return (x) => year.format(x);
   }
-  if (span > 300 * DAY) return new Intl.DateTimeFormat(locale, { month: "short", year: "numeric" });
-  if (span > 2 * DAY) return new Intl.DateTimeFormat(locale, { day: "numeric", month: "short" });
-  return new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit" });
+  if (monthStart) {
+    const month = f({ month: "short" });
+    const monthYear = f({ month: "short", year: "numeric" });
+    const first = ticks[0];
+    return (x) => {
+      const d = new Date(x);
+      return crossesYear && (x === first || d.getMonth() === 0) ? monthYear.format(x) : month.format(x);
+    };
+  }
+  if (midnight) {
+    const day = f({ day: "numeric", month: "short" });
+    return (x) => day.format(x);
+  }
+  const time = f({ hour: "2-digit", minute: "2-digit" });
+  return (x) => time.format(x);
 }

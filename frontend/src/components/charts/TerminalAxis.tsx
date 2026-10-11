@@ -1,5 +1,6 @@
 "use client";
-import { TICK_FONT, charWidth, tok, truncate } from "./frame";
+import { scaleLinear } from "@visx/scale";
+import { TICK_FONT, charWidth, stepDigits, tickCount, tok, truncate } from "./frame";
 
 /** One axis tick: data value, pixel position inside the plot, display text. */
 export type AxisTick = { value: number | string; pos: number; label: string };
@@ -153,4 +154,50 @@ function thin(ticks: AxisTick[], cw: number): AxisTick[] {
   const spacing = Math.abs(ticks[1].pos - ticks[0].pos) || 1;
   const k = Math.max(1, Math.ceil((widest + cw * 1.5) / spacing));
   return k === 1 ? ticks : ticks.filter((_, i) => i % k === 0);
+}
+
+/** Vertical offset of the second row of staggered category labels. */
+export const STAGGER = 14;
+
+export type CategoryLayout = { rows: 1 | 2; maxLabelWidth: number; labelDy: (index: number) => number };
+
+/**
+ * Category tick labels: one row when the widest label fits its slot, two
+ * staggered rows when it fits two slots, otherwise two rows of truncated
+ * labels (full text stays in each label's <title>).
+ */
+export function categoryLayout(labels: string[], step: number): CategoryLayout {
+  const widest = Math.max(0, ...labels.map((l) => l.length)) * charWidth(TICK_FONT);
+  if (labels.length < 2 || widest <= step - 6) {
+    return { rows: 1, maxLabelWidth: Math.max(charWidth(TICK_FONT), step - 6), labelDy: () => 6 };
+  }
+  return {
+    rows: 2,
+    // Same-row neighbours are two slots apart.
+    maxLabelWidth: Math.max(charWidth(TICK_FONT), 2 * step - 4),
+    labelDy: (i) => 6 + (i % 2) * STAGGER
+  };
+}
+
+/**
+ * Nice linear value scale for a plot `innerH` tall, its ticks, and the pixel
+ * width of the widest tick label (to size the left margin). `format` wins
+ * over the default locale number with step-aware decimals.
+ */
+export function valueAxis(
+  domain: [number, number],
+  innerH: number,
+  fmtNum: (v: number, digits: number) => string,
+  format?: (v: number) => string,
+  maxTicks = 8
+) {
+  // Nice to the tick count so the outermost ticks bound the plot.
+  const count = tickCount(innerH, 36, maxTicks);
+  const scale = scaleLinear<number>({ domain, range: [innerH, 0], nice: count });
+  const values = scale.ticks(count);
+  const digits = stepDigits(values.length > 1 ? values[1] - values[0] : 1);
+  const label = format ?? ((v: number) => fmtNum(v, digits));
+  const ticks: AxisTick[] = values.map((v) => ({ value: v, pos: scale(v), label: label(v) }));
+  const labelWidth = Math.max(0, ...ticks.map((tk) => tk.label.length)) * charWidth(TICK_FONT);
+  return { scale, ticks, digits, labelWidth };
 }

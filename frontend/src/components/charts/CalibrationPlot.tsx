@@ -75,7 +75,7 @@ export function CalibrationPlot({
         const margin = { top: 12, right: 14, bottom: 0, left: 44 + 20 };
         const innerW = Math.max(60, side - margin.left - margin.right);
         // Rows under the plot: tick labels, the n strip (one or two rows), title.
-        const nY = 22;
+        const nY = 26;
         const spread = (i: number) => (i === 0 ? Infinity : valid[i].mean_pred - valid[i - 1].mean_pred);
         const nLabelW = Math.max(...valid.map((b) => fmt.int(b.n).length)) * charWidth(TICK_FONT) + 6;
         const staggered = valid.some((_, i) => spread(i) * innerW < nLabelW);

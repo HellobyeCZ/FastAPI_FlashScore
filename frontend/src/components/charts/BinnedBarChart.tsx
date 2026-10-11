@@ -1,6 +1,6 @@
 "use client";
 
-import { scaleBand, scaleLinear } from "@visx/scale";
+import { scaleBand } from "@visx/scale";
 import {
   ChartFrame,
   ChartSvg,
@@ -13,7 +13,14 @@ import {
   tok,
   type LegendItem
 } from "./frame";
-import { TerminalAxisBottom, TerminalAxisLeft, type AxisTick } from "./TerminalAxis";
+import {
+  STAGGER,
+  TerminalAxisBottom,
+  TerminalAxisLeft,
+  categoryLayout,
+  valueAxis,
+  type AxisTick
+} from "./TerminalAxis";
 import { useChartText } from "./text";
 
 export type Bin = {
@@ -75,27 +82,34 @@ function BinnedPlot({
   const vals = bins
     .flatMap((b) => [b.value, b.ciLow, b.ciHigh, b.expected])
     .filter((v): v is number => isFiniteNumber(v));
-  let lo = Math.min(0, ...vals);
-  let hi = Math.max(0, ...vals);
-  if (lo === hi) hi = lo + 1;
+  const lo = Math.min(0, ...vals);
+  const hi = Math.max(0, ...vals);
+  const domain: [number, number] = lo === hi ? [lo, lo + 1] : [lo, hi];
 
-  // Bottom rows: bin label, n, optional axis title.
-  const margin = { top: 10, right: 8, bottom: 38 + (xLabel ? 20 : 0), left: 0 };
-  const innerH = Math.max(40, height - margin.top - margin.bottom);
-  const y = scaleLinear<number>({ domain: [lo, hi], range: [innerH, 0], nice: true });
-  [lo, hi] = y.domain();
-  const tickValues = y.ticks(tickCount(innerH, 36, 6));
-  const digits = stepDigits(tickValues.length > 1 ? tickValues[1] - tickValues[0] : 1);
-  const fmtTick = format ?? ((v: number) => fmt.num(v, digits));
-  const fmtValue = format ?? ((v: number) => fmt.num(v, Math.max(2, digits)));
-  const yTicks: AxisTick[] = tickValues.map((v) => ({ value: v, pos: y(v), label: fmtTick(v) }));
-  const widestY = Math.max(...yTicks.map((tk) => tk.label.length)) * charWidth(TICK_FONT);
-  margin.left = Math.ceil(widestY + 12 + (yLabel ? 20 : 0));
-  const innerW = Math.max(40, width - margin.left - margin.right);
-
-  const x = scaleBand<string>({ domain: bins.map((_, i) => String(i)), range: [0, innerW], padding: 0.2 });
+  // Bottom rows: bin label (one or two staggered rows), n, optional axis title.
+  const top = 10;
+  const right = 8;
+  const yTitle = yLabel ? 20 : 0;
+  const labels = bins.map((b) => b.label);
+  const bandFor = (w: number) =>
+    scaleBand<string>({ domain: bins.map((_, i) => String(i)), range: [0, Math.max(40, w)], padding: 0.2 });
+  let innerH = Math.max(40, height - top - 38 - (xLabel ? 20 : 0));
+  let axis = valueAxis(domain, innerH, fmt.num, format, 6);
+  let left = Math.ceil(axis.labelWidth + 12 + yTitle);
+  if (categoryLayout(labels, bandFor(width - left - right).step()).rows === 2) {
+    innerH = Math.max(40, innerH - STAGGER);
+    axis = valueAxis(domain, innerH, fmt.num, format, 6);
+    left = Math.max(left, Math.ceil(axis.labelWidth + 12 + yTitle));
+  }
+  const y = axis.scale;
+  const [yLo, yHi] = y.domain();
+  const fmtValue = format ?? ((v: number) => fmt.num(v, Math.max(2, axis.digits)));
+  const innerW = Math.max(40, width - left - right);
+  const x = bandFor(innerW);
   const band = x.bandwidth();
   const step = x.step();
+  const layout = categoryLayout(labels, step);
+  const extraRow = (layout.rows - 1) * STAGGER;
   const barW = Math.max(3, band);
   const xTicks: AxisTick[] = bins.map((b, i) => ({ value: String(i), pos: (x(String(i)) ?? 0) + band / 2, label: b.label }));
   // n labels drop the "n =" prefix when bins are too narrow for it.
@@ -119,20 +133,21 @@ function BinnedPlot({
   return (
     <>
       <ChartSvg width={width} height={height} label={ariaLabel} desc={bins.map(binText).join("; ")}>
-        <g transform={`translate(${margin.left} ${margin.top})`}>
-          <TerminalAxisLeft ticks={yTicks} height={innerH} gridWidth={innerW} title={yLabel} titleX={-margin.left + 2} />
+        <g transform={`translate(${left} ${top})`}>
+          <TerminalAxisLeft ticks={axis.ticks} height={innerH} gridWidth={innerW} title={yLabel} titleX={-left + 2} />
           <TerminalAxisBottom
             ticks={xTicks}
             width={innerW}
             top={innerH}
-            maxLabelWidth={Math.max(charWidth(TICK_FONT), step - 4)}
+            maxLabelWidth={layout.maxLabelWidth}
+            labelDy={layout.labelDy}
             title={xLabel}
-            titleY={innerH + 40}
+            titleY={innerH + 40 + extraRow}
           />
           {!nWide && (
             <text
               x={-8}
-              y={innerH + 24}
+              y={innerH + 24 + extraRow}
               textAnchor="end"
               dominantBaseline="hanging"
               fontSize={TICK_FONT}
@@ -141,7 +156,7 @@ function BinnedPlot({
               n
             </text>
           )}
-          {lo < 0 && hi > 0 && <line x1={0} x2={innerW} y1={y(0)} y2={y(0)} stroke={tok("border-strong")} />}
+          {yLo < 0 && yHi > 0 && <line x1={0} x2={innerW} y1={y(0)} y2={y(0)} stroke={tok("border-strong")} />}
           {bins.map((b, i) => {
             const cx = (x(String(i)) ?? 0) + band / 2;
             const small = b.n < minN;
@@ -182,7 +197,7 @@ function BinnedPlot({
                 )}
                 <text
                   x={cx}
-                  y={innerH + 24}
+                  y={innerH + 24 + extraRow}
                   textAnchor="middle"
                   dominantBaseline="hanging"
                   fontSize={TICK_FONT}

@@ -1,5 +1,6 @@
 "use client";
 
+import { clsx } from "clsx";
 import { DASH } from "@/lib/format";
 import { useElementWidth } from "@/hooks/useElementWidth";
 import { ChartSvg, isFiniteNumber, tok } from "./frame";
@@ -36,9 +37,11 @@ export function Sparkline({
   const w = Math.floor(width ?? (measured > 0 ? measured : measured === 0 ? FALLBACK_WIDTH : 0));
 
   // The wrapper is rendered in every state so the measured element never changes.
+  // An explicit width sizes the wrapper itself, so it never claims a whole flex row.
+  const box = width === undefined ? "w-full min-w-0" : "max-w-full";
   if (values.length < 2) {
     return (
-      <div ref={ref} className="w-full min-w-0 text-text-faint" title={ariaLabel}>
+      <div ref={ref} className={clsx(box, "text-text-faint")} style={{ width }} title={ariaLabel}>
         {DASH}
       </div>
     );
@@ -62,7 +65,7 @@ export function Sparkline({
   });
 
   return (
-    <div ref={ref} className="w-full min-w-0" style={{ height }}>
+    <div ref={ref} className={box} style={{ width, height }}>
       {w > 0 && (
         <ChartSvg width={w} height={height} label={ariaLabel} desc={desc}>
           <line x1={0} x2={w} y1={y(0)} y2={y(0)} stroke={tok("border-strong")} strokeDasharray="2 2" />

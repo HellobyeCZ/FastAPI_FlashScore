@@ -23,7 +23,9 @@ export const charWidth = (fontSize = TICK_FONT) => fontSize * 0.62;
  * Measures its container and renders `children(width)` once a width is known.
  * The wrapper is rendered in every state (measuring, empty, ready) so the
  * observed element never changes, and `min-w-0` keeps an SVG from widening a
- * grid/flex track it sits in. An explicit `width` skips measuring.
+ * grid/flex track it sits in. An explicit `width` is an upper bound: a
+ * narrower container wins, so text keeps its real size instead of the whole
+ * chart being scaled down.
  */
 export function ChartFrame({
   width,
@@ -41,7 +43,7 @@ export function ChartFrame({
   children: (width: number) => React.ReactNode;
 }) {
   const [ref, measured] = useElementWidth<HTMLDivElement>(0);
-  const w = Math.floor(width ?? measured);
+  const w = Math.floor(width === undefined ? measured : measured > 0 ? Math.min(width, measured) : width);
   return (
     <div ref={ref} className={clsx("relative w-full min-w-0", className)}>
       {empty ? (

@@ -2,21 +2,18 @@
 
 import { useMemo } from "react";
 import { Group } from "@visx/group";
-import { scaleBand, scaleLinear } from "@visx/scale";
+import { scaleBand } from "@visx/scale";
 import { BoxPlot, ViolinPlot } from "@visx/stats";
 import { seriesColor } from "@/lib/labels";
+import { ChartFrame, ChartSvg, TICK_FONT, isFiniteNumber, jitter, tok } from "./frame";
 import {
-  ChartFrame,
-  ChartSvg,
-  TICK_FONT,
-  charWidth,
-  isFiniteNumber,
-  jitter,
-  stepDigits,
-  tickCount,
-  tok
-} from "./frame";
-import { TerminalAxisBottom, TerminalAxisLeft, type AxisTick } from "./TerminalAxis";
+  STAGGER,
+  TerminalAxisBottom,
+  TerminalAxisLeft,
+  categoryLayout,
+  valueAxis,
+  type AxisTick
+} from "./TerminalAxis";
 import { useChartText } from "./text";
 
 export type ViolinSeries = {
@@ -159,24 +156,31 @@ function ViolinPlotArea({
     hi += pad;
   }
 
-  // Bottom rows: group label, n, optional axis title.
-  const margin = { top: 10, right: 12, bottom: 38 + (xLabel ? 20 : 0), left: 0 };
-  const innerH = Math.max(40, height - margin.top - margin.bottom);
-  const y = scaleLinear<number>({ domain: [lo, hi], range: [innerH, 0], nice: true });
-  const yTickValues = y.ticks(tickCount(innerH, 36, 8));
-  const yDigits = stepDigits(yTickValues.length > 1 ? yTickValues[1] - yTickValues[0] : 1);
-  const fmtTick = formatY ?? ((v: number) => fmt.num(v, yDigits));
-  const fmtValue = formatY ?? ((v: number) => fmt.num(v, Math.max(2, yDigits)));
-  const yTicks: AxisTick[] = yTickValues.map((v) => ({ value: v, pos: y(v), label: fmtTick(v) }));
-  const widestY = Math.max(...yTicks.map((tk) => tk.label.length)) * charWidth(TICK_FONT);
-  margin.left = Math.ceil(widestY + 12 + (yLabel ? 20 : 0));
-  const innerW = Math.max(40, width - margin.left - margin.right);
+  // Bottom rows: group label (one or two staggered rows), n, optional axis title.
+  const top = 10;
+  const right = 12;
+  const yTitle = yLabel ? 20 : 0;
+  const labels = series.map((s) => s.label);
+  const bandFor = (w: number) =>
+    scaleBand<string>({ domain: series.map((_, i) => String(i)), range: [0, Math.max(40, w)], padding: 0.25 });
+  let innerH = Math.max(40, height - top - 38 - (xLabel ? 20 : 0));
+  let axis = valueAxis([lo, hi], innerH, fmt.num, formatY);
+  let left = Math.ceil(axis.labelWidth + 12 + yTitle);
+  if (categoryLayout(labels, bandFor(width - left - right).step()).rows === 2) {
+    innerH = Math.max(40, innerH - STAGGER);
+    axis = valueAxis([lo, hi], innerH, fmt.num, formatY);
+    left = Math.max(left, Math.ceil(axis.labelWidth + 12 + yTitle));
+  }
+  const y = axis.scale;
+  const fmtValue = formatY ?? ((v: number) => fmt.num(v, Math.max(2, axis.digits)));
+  const innerW = Math.max(40, width - left - right);
 
   // Density tails run two bandwidths past the data; trim them to the plot.
   const [dLo, dHi] = y.domain();
-  const x = scaleBand<string>({ domain: series.map((_, i) => String(i)), range: [0, innerW], padding: 0.25 });
+  const x = bandFor(innerW);
   const band = x.bandwidth();
-  const step = x.step();
+  const layout = categoryLayout(labels, x.step());
+  const extraRow = (layout.rows - 1) * STAGGER;
   const xTicks: AxisTick[] = series.map((s, i) => ({
     value: String(i),
     pos: (x(String(i)) ?? 0) + band / 2,
@@ -189,21 +193,22 @@ function ViolinPlotArea({
 
   return (
     <ChartSvg width={width} height={height} label={ariaLabel ?? t("violin.aria")} desc={desc}>
-      <g transform={`translate(${margin.left} ${margin.top})`}>
-        <TerminalAxisLeft ticks={yTicks} height={innerH} gridWidth={innerW} title={yLabel} titleX={-margin.left + 2} />
+      <g transform={`translate(${left} ${top})`}>
+        <TerminalAxisLeft ticks={axis.ticks} height={innerH} gridWidth={innerW} title={yLabel} titleX={-left + 2} />
         <TerminalAxisBottom
           ticks={xTicks}
           width={innerW}
           top={innerH}
-          maxLabelWidth={Math.max(charWidth(TICK_FONT), step - 6)}
+          maxLabelWidth={layout.maxLabelWidth}
+          labelDy={layout.labelDy}
           title={xLabel}
-          titleY={innerH + 40}
+          titleY={innerH + 40 + extraRow}
         />
         {xTicks.map((tk, i) => (
           <text
             key={`n-${i}`}
             x={tk.pos}
-            y={innerH + 24}
+            y={innerH + 24 + extraRow}
             textAnchor="middle"
             dominantBaseline="hanging"
             fontSize={TICK_FONT}

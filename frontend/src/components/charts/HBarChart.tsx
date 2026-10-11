@@ -82,8 +82,9 @@ function HBarPlot({
   const stacked = width < STACK_BELOW;
   const labelW = stacked ? 0 : Math.round(Math.min(220, Math.max(96, width * 0.3)));
   const plotW = Math.max(40, width - labelW - valueW - nW - (stacked ? 0 : 8));
+  // Stacked rows: label line, bar, then a gap so each label reads with its own bar.
   const lineH = stacked ? 16 : 0;
-  const rowH = rowHeight + lineH;
+  const rowH = rowHeight + lineH + (stacked ? 8 : 0);
   const height = rows.length * rowH + 4;
 
   const max = Math.max(...rows.map((r) => Math.abs(r.value)), 1e-9);
