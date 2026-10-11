@@ -148,8 +148,7 @@ export function RefreshPanel() {
         <time dateTime={r.started_at} title={fmt.dateTime(r.started_at)}>
           {fmt.relative(r.started_at)}
         </time>
-      ),
-      sortValue: (r) => r.started_at
+      )
     },
     {
       key: "result",
@@ -160,7 +159,7 @@ export function RefreshPanel() {
       key: "duration",
       header: t("ops.refresh.col.duration"),
       align: "right",
-      cell: (r) => duration(r.duration_seconds)
+      cell: (r) => <span className="whitespace-nowrap">{duration(r.duration_seconds)}</span>
     }
   ];
 

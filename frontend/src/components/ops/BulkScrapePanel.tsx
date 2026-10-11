@@ -67,7 +67,7 @@ function JobProgress({ job }: { job: BulkScrapeJobRow }) {
     { n: job.failed_events, key: "ops.jobs.failed", cls: "text-neg" }
   ] as const;
   return (
-    <div className="flex w-44 max-w-full flex-col gap-1">
+    <div className="flex w-32 max-w-full flex-col gap-1 sm:w-44">
       <div
         role="progressbar"
         aria-valuemin={0}
@@ -102,12 +102,12 @@ function JobError({ job }: { job: BulkScrapeJobRow }) {
   if (job.last_error) {
     return (
       <div className="flex min-w-0 flex-col gap-0.5 text-meta">
-        <span className="truncate text-neg" title={job.last_error}>
+        <span className="line-clamp-2 text-neg [overflow-wrap:anywhere]" title={job.last_error}>
           {summarizeJobError(job.last_error) || job.last_error}
         </span>
         <details className="group">
           <summary className="cursor-pointer text-text-dim hover:text-text">{t("ops.jobs.details")}</summary>
-          <p className="mt-1 whitespace-pre-wrap break-all border-l-2 border-neg/50 pl-2 text-text-dim">
+          <p className="mt-1 whitespace-pre-wrap border-l-2 border-neg/50 pl-2 text-text-dim [overflow-wrap:anywhere]">
             {job.last_error}
           </p>
         </details>
@@ -358,7 +358,6 @@ export function BulkScrapePanel() {
   const jobsHeadingId = useId();
 
   const rows = jobs.data?.jobs ?? [];
-  const anyActive = rows.some(isActiveJob);
 
   function confirmStop() {
     if (!stopping) return;
@@ -387,15 +386,17 @@ export function BulkScrapePanel() {
       key: "competition",
       header: t("ops.jobs.col.competition"),
       cell: (j) => (
-        <div className="flex min-w-[10rem] max-w-md flex-col gap-0.5">
-          <span className="break-all text-text">{j.competition_path}</span>
+        <div className="flex min-w-[6rem] flex-col gap-0.5">
+          <span className="text-text [overflow-wrap:anywhere]">{j.competition_path}</span>
           <span className="text-meta text-text-dim">
-            #{j.id} ·{" "}
-            {t("ops.jobs.options", {
-              seasons: tp("ops.seasons", j.seasons, { count: j.seasons }),
-              data: dataLabel(j.include_stats, j.include_odds),
-              concurrency: j.max_concurrency
-            })}
+            #{j.id} · {tp("ops.seasons", j.seasons, { count: j.seasons })}
+            <span className="hidden sm:inline">
+              {" · "}
+              {t("ops.jobs.options", {
+                data: dataLabel(j.include_stats, j.include_odds),
+                concurrency: j.max_concurrency
+              })}
+            </span>
           </span>
           <JobError job={j} />
         </div>
@@ -406,7 +407,19 @@ export function BulkScrapePanel() {
       header: t("ops.jobs.col.status"),
       cell: (j) => (
         <div className="flex flex-col items-start gap-1.5">
-          <StateBadge state={j.status} />
+          <div className="flex w-full flex-wrap items-center justify-between gap-2">
+            <StateBadge state={j.status} />
+            {isActiveJob(j) && (
+              <Button
+                variant="danger"
+                size="sm"
+                onClick={() => setStopping(j)}
+                aria-label={t("ops.jobs.stopLabel", { id: j.id })}
+              >
+                {t("ops.jobs.stop")}
+              </Button>
+            )}
+          </div>
           <JobProgress job={j} />
         </div>
       )
@@ -421,34 +434,14 @@ export function BulkScrapePanel() {
           {fmt.relative(j.updated_at)}
         </time>
       )
-    },
-    ...(anyActive
-      ? [
-          {
-            key: "actions",
-            header: <span className="sr-only">{t("common.actions")}</span>,
-            align: "right" as const,
-            cell: (j: BulkScrapeJobRow) =>
-              isActiveJob(j) ? (
-                <Button
-                  variant="danger"
-                  size="sm"
-                  onClick={() => setStopping(j)}
-                  aria-label={t("ops.jobs.stopLabel", { id: j.id })}
-                >
-                  {t("ops.jobs.stop")}
-                </Button>
-              ) : null
-          }
-        ]
-      : [])
+    }
   ];
 
   const remaining = stopping ? stopping.pending_events + stopping.running_events : 0;
 
   return (
     <Panel title={t("ops.scrape.title")} description={t("ops.scrape.description")}>
-      <div className="grid gap-x-8 gap-y-6 xl:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
+      <div className="grid gap-x-8 gap-y-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
         <NewScrapeForm
           jobs={rows}
           onQueued={(job) =>

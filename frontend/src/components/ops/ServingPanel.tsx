@@ -89,6 +89,23 @@ function MlflowSection({ mlflow, now }: { mlflow: MlflowStatus; now: Date }) {
   );
 }
 
+/** Where a served model came from; "not loaded" when nothing is served for it. */
+function ServedSource({ model }: { model: ServedModel }) {
+  const { t } = useLocale();
+  if (!model.loaded) return <Badge>{t("ops.serving.notLoaded")}</Badge>;
+  if (model.source === "registry") {
+    return (
+      <Badge tone="info">
+        {model.version
+          ? t("ops.serving.source.registry", { version: model.version })
+          : t("ops.serving.source.registryAny")}
+      </Badge>
+    );
+  }
+  if (model.source === "file") return <Badge tone="pos">{t("ops.serving.source.file")}</Badge>;
+  return <Badge tone="pos">{t("ops.serving.loaded")}</Badge>;
+}
+
 /** Served models (registry champion or model file) and the MLflow server behind them. */
 export function ServingPanel() {
   const { t, fmt, locale } = useLocale();
@@ -115,29 +132,9 @@ export function ServingPanel() {
               cell: (m) => <ModelName name={m.name} />
             },
             {
-              key: "status",
-              header: t("ops.serving.col.status"),
-              cell: (m) => (
-                <Badge tone={m.loaded ? "pos" : "neutral"}>
-                  {m.loaded ? t("ops.serving.loaded") : t("ops.serving.notLoaded")}
-                </Badge>
-              )
-            },
-            {
               key: "source",
               header: t("ops.serving.col.source"),
-              cell: (m) =>
-                m.source === "registry" ? (
-                  <span className="text-info">
-                    {m.version
-                      ? t("ops.serving.source.registry", { version: m.version })
-                      : t("ops.serving.source.registryAny")}
-                  </span>
-                ) : m.source === "file" ? (
-                  <span className="text-text-dim">{t("ops.serving.source.file")}</span>
-                ) : (
-                  <span className="text-text-faint">—</span>
-                )
+              cell: (m) => <ServedSource model={m} />
             },
             {
               key: "loaded",

@@ -102,8 +102,8 @@ export function PipelinePanel() {
         key: "stage",
         header: t("ops.pipeline.col.stage"),
         cell: (r) => (
-          <div className="min-w-0 font-sans">
-            <div className="text-body text-text">{t(`ops.stage.${r.id}` as MessageKey)}</div>
+          <div className="min-w-0">
+            <div className="font-sans text-body text-text">{t(`ops.stage.${r.id}` as MessageKey)}</div>
             <div className="text-meta text-text-dim">{t(`ops.stage.${r.id}.desc` as MessageKey)}</div>
             {r.rule && <div className="text-meta text-text-faint">{t(`ops.stage.${r.id}.rule` as MessageKey)}</div>}
             {r.id === "backtests" && (
@@ -119,34 +119,31 @@ export function PipelinePanel() {
         header: t("ops.pipeline.col.last"),
         align: "right",
         cell: (r) => (
-          <div className="whitespace-nowrap text-text">
-            {r.count ? (
-              tp(r.count.unit, r.count.n, { count: fmt.int(r.count.n) })
-            ) : r.at ? (
-              <time dateTime={r.at} title={fmt.dateTime(r.at)}>
-                {fmt.relative(r.at, now)}
-              </time>
-            ) : (
-              <span className="text-text-faint">{t("common.never")}</span>
-            )}
-            {r.id === "pending" && s?.pipeline.oldest_pending_at && s.pipeline.pending_bets > 0 && (
-              <div className="text-meta text-text-dim">
-                <time dateTime={s.pipeline.oldest_pending_at} title={fmt.dateTime(s.pipeline.oldest_pending_at)}>
-                  {t("ops.stage.pending.oldest", { age: fmt.relative(s.pipeline.oldest_pending_at, now) })}
+          <div className="flex flex-col items-end gap-1">
+            <span className="whitespace-nowrap text-text">
+              {r.count ? (
+                tp(r.count.unit, r.count.n, { count: fmt.int(r.count.n) })
+              ) : r.at ? (
+                <time dateTime={r.at} title={fmt.dateTime(r.at)}>
+                  {fmt.relative(r.at, now)}
                 </time>
-              </div>
+              ) : (
+                <span className="text-text-faint">{t("common.never")}</span>
+              )}
+            </span>
+            {r.id === "pending" && s?.pipeline.oldest_pending_at && s.pipeline.pending_bets > 0 && (
+              <time
+                dateTime={s.pipeline.oldest_pending_at}
+                title={fmt.dateTime(s.pipeline.oldest_pending_at)}
+                className="text-meta text-text-dim"
+              >
+                {t("ops.stage.pending.oldest", { age: fmt.relative(s.pipeline.oldest_pending_at, now) })}
+              </time>
             )}
+            <span data-verdict={r.verdict}>
+              <Badge tone={r.tone}>{t(`ops.fresh.${r.verdict}` as MessageKey)}</Badge>
+            </span>
           </div>
-        )
-      },
-      {
-        key: "status",
-        header: t("ops.pipeline.col.status"),
-        align: "right",
-        cell: (r) => (
-          <span data-verdict={r.verdict}>
-            <Badge tone={r.tone}>{t(`ops.fresh.${r.verdict}` as MessageKey)}</Badge>
-          </span>
         )
       }
     ];

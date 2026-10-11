@@ -38,7 +38,7 @@ export function OpsPage() {
       />
       <div className="flex flex-col gap-6">
         <HealthBanner variant="full" />
-        <div className="grid items-start gap-6 xl:grid-cols-2">
+        <div className="grid gap-6 xl:grid-cols-2">
           <PipelinePanel />
           <RefreshPanel />
         </div>

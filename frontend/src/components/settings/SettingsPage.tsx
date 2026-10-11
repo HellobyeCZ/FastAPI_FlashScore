@@ -131,7 +131,7 @@ export function SettingsPage() {
   return (
     <>
       <PageHeader title={t("settings.title")} description={t("settings.description")} />
-      <div className="grid max-w-5xl items-start gap-6 lg:grid-cols-2">
+      <div className="grid max-w-5xl gap-6 lg:grid-cols-2">
         <Panel title={t("settings.language.title")} description={t("settings.language.description")}>
           <LabelledControl label={t("settings.language.label")}>
             <SegmentedControl<Locale>
