@@ -29,22 +29,26 @@ export function TodayKpis({ query }: { query: UseQueryResult<TodayResponse> }) {
     const placeholder = isLoading ? <Skeleton className="h-8 w-24" /> : DASH;
     const sub = isLoading ? <Skeleton className="h-3 w-32" /> : t("today.kpi.unavailable");
     return (
-      <StatGrid cols={4} className="grid-cols-2">
-        <Stat className={WIDE_ON_PHONE} label={t("today.kpi.pnl")} value={placeholder} sub={sub} />
-        <Stat label={t("today.kpi.open")} value={placeholder} sub={sub} />
-        <Stat label={t("today.kpi.awaiting")} value={placeholder} sub={sub} />
-        <Stat className={WIDE_ON_PHONE} label={t("today.kpi.pipeline")} value={placeholder} sub={sub} />
-      </StatGrid>
+      <section aria-label={t("today.kpi.title")} aria-busy={isLoading || undefined}>
+        <StatGrid cols={4} className="grid-cols-2">
+          <Stat className={WIDE_ON_PHONE} label={t("today.kpi.pnl")} value={placeholder} sub={sub} />
+          <Stat label={t("today.kpi.open")} value={placeholder} sub={sub} />
+          <Stat label={t("today.kpi.awaiting")} value={placeholder} sub={sub} />
+          <Stat className={WIDE_ON_PHONE} label={t("today.kpi.pipeline")} value={placeholder} sub={sub} />
+        </StatGrid>
+      </section>
     );
   }
 
   return (
-    <StatGrid cols={4} className="grid-cols-2">
-      <PnlStat data={data} />
-      <OpenStat data={data} />
-      <AwaitingStat data={data} />
-      <PipelineStat data={data} />
-    </StatGrid>
+    <section aria-label={t("today.kpi.title")}>
+      <StatGrid cols={4} className="grid-cols-2">
+        <PnlStat data={data} />
+        <OpenStat data={data} />
+        <AwaitingStat data={data} />
+        <PipelineStat data={data} />
+      </StatGrid>
+    </section>
   );
 }
 

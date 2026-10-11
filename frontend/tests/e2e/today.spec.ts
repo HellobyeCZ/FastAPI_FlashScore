@@ -127,11 +127,22 @@ const TODAY_STALE = {
   recent_settled: RECENT.map((r) => ({ ...r, settled_at: "2026-05-13T20:41:26.231Z" }))
 };
 
-let unexpected: string[] = [];
+// The route's error bodies: generic English messages the page replaces with its own copy.
+const TODAY_FAILED = {
+  error: { code: "today_query_failed", message: "Today's data could not be loaded; see the server log" }
+};
+const TODAY_BUSY = { error: { code: "today_db_busy", message: "The database is busy; try again in a moment" } };
 
-/** Pins the clock, fails any un-stubbed /api call, then stubs the shell and /api/today. */
+let unexpected: string[] = [];
+let todayRequests: URL[] = [];
+
+/**
+ * Pins the clock, fails any un-stubbed /api call, then stubs the shell and
+ * /api/today (recording each request so tests can check what was asked).
+ */
 async function setup(page: Page, { ops = OPS_STATUS_OK as unknown, today = TODAY_HEALTHY as unknown, status = 200 } = {}) {
   unexpected = [];
+  todayRequests = [];
   await page.clock.setFixedTime(new Date(NOW));
   // Registered first so every specific stub below takes precedence over it.
   await page.route("**/api/**", (route) => {
@@ -139,13 +150,17 @@ async function setup(page: Page, { ops = OPS_STATUS_OK as unknown, today = TODAY
     return route.fulfill({ status: 599, contentType: "application/json", body: "{}" });
   });
   await stubShell(page, ops);
-  await stubJson(page, TODAY_API, today, status);
+  await page.route(TODAY_API, (route) => {
+    todayRequests.push(new URL(route.request().url()));
+    return route.fulfill({ status, contentType: "application/json", body: JSON.stringify(today) });
+  });
 }
 
 test.afterEach(() => {
   expect(unexpected, "un-stubbed API requests").toEqual([]);
 });
 
+const kpis = (page: Page, name = "Key figures") => page.getByRole("region", { name });
 const slate = (page: Page, name: string | RegExp = "Today's slate") => page.getByRole("region", { name });
 const slateRows = (page: Page, name?: string) => slate(page, name).locator("tbody tr");
 
@@ -164,6 +179,9 @@ test.describe("Today cockpit", () => {
 
     await expect(page.getByRole("heading", { level: 1, name: "Today" })).toBeVisible();
     await expect(page.getByText("as of 02:00 PM")).toBeVisible();
+    // The local-day window is computed for the zone the browser reports.
+    expect(todayRequests.length).toBeGreaterThan(0);
+    for (const url of todayRequests) expect(url.searchParams.get("tz")).toBe("Europe/Prague");
     // Healthy ops status: no full banner.
     await expect(page.getByText("System status")).toHaveCount(0);
 
@@ -288,10 +306,7 @@ test.describe("Today cockpit", () => {
   });
 
   test("/api/today failing keeps the chrome, dashes the KPIs and offers a retry", async ({ page }) => {
-    await setup(page, {
-      today: { error: { code: "today_query_failed", message: "database is locked" } },
-      status: 500
-    });
+    await setup(page, { today: TODAY_FAILED, status: 500 });
     await page.goto("/en/today");
 
     await expect(page.getByRole("heading", { level: 1, name: "Today" })).toBeVisible();
@@ -299,10 +314,13 @@ test.describe("Today cockpit", () => {
     await expect(page.getByRole("group", { name: "Language" })).toBeVisible();
 
     await expect(slate(page)).toContainText("Couldn't load today's picks");
-    await expect(slate(page)).toContainText("database is locked");
+    await expect(slate(page)).toContainText("The database query failed; the server log has the details.");
+    await expect(slate(page)).not.toContainText("see the server log");
     await expect(page.getByRole("region", { name: "Last 10 settled" })).toContainText("Couldn't load settled bets");
-    await expect(page.getByText("Couldn't load", { exact: true })).toHaveCount(4);
-    await expect(page.getByText("P&L · last 30 days")).toBeVisible();
+    // Every KPI keeps its tile, with a dash for the value and the reason under it.
+    await expect(kpis(page).getByText("Couldn't load", { exact: true })).toHaveCount(4);
+    await expect(kpis(page).getByText("—", { exact: true })).toHaveCount(4);
+    await expect(kpis(page)).toContainText("P&L · last 30 days");
 
     // Served models come from /ops/status and are unaffected.
     await expect(page.getByRole("region", { name: "Served models" })).toContainText("Registry · v3");
@@ -311,6 +329,47 @@ test.describe("Today cockpit", () => {
     await slate(page).getByRole("button", { name: "Retry" }).click();
     await expect(slateRows(page)).toHaveCount(6);
     await expect(page.getByText("Couldn't load", { exact: true })).toHaveCount(0);
+    await expect(kpis(page).getByText("—", { exact: true })).toHaveCount(0);
+  });
+
+  test("a busy database is explained in the viewer's language", async ({ page }) => {
+    await setup(page, { today: TODAY_BUSY, status: 503 });
+    await page.goto("/cs/today");
+
+    const panel = slate(page, "Dnešní tipy");
+    await expect(panel).toContainText("Dnešní tipy se nepodařilo načíst");
+    await expect(panel).toContainText("Databáze je zaneprázdněná (zapisuje do ní jiná úloha).");
+    await expect(panel).not.toContainText("The database is busy");
+    await expect(kpis(page, "Klíčové ukazatele").getByText("Nepodařilo se načíst", { exact: true })).toHaveCount(4);
+    await expect(panel.getByRole("button", { name: "Zkusit znovu" })).toBeVisible();
+  });
+
+  test("a sample of 30 or more shows n without the small-sample caution", async ({ page }) => {
+    const steps = Array.from({ length: 30 }, (_, i) => (i % 3 === 0 ? -0.04 : 0.05));
+    const series = steps.map((_, i) => ({
+      settled_at: new Date(Date.parse("2026-09-12T21:00:00Z") + i * 86_400_000).toISOString(),
+      cum_pnl: Number(steps.slice(0, i + 1).reduce((a, b) => a + b, 0).toFixed(3))
+    }));
+    await setup(page, {
+      today: { ...TODAY_HEALTHY, pnl30d: { n: 30, pnl: series[29].cum_pnl, series } }
+    });
+    await page.goto("/en/today");
+
+    await expect(kpis(page).getByText("+0.60u", { exact: true })).toBeVisible();
+    await expect(kpis(page).getByText("n = 30", { exact: true })).toBeVisible();
+    await expect(kpis(page)).not.toContainText("Small sample");
+    await expect(
+      kpis(page).getByRole("img", { name: "Cumulative P&L of 30 bets settled in the last 30 days" })
+    ).toBeVisible();
+  });
+
+  test("a pick whose event has no stored teams falls back to its event id", async ({ page }) => {
+    const nameless = { ...SLATE[2], id: 109, event_id: "Xq8Zt1vm", home_team: null, away_team: null };
+    await setup(page, { today: { ...TODAY_HEALTHY, slate: [...SLATE, nameless] } });
+    await page.goto("/en/today");
+
+    await expect(slateRows(page)).toHaveCount(7);
+    await expect(slate(page).getByRole("link", { name: /Xq8Zt1vm/ })).toHaveAttribute("href", "/en/matches/Xq8Zt1vm");
   });
 
   test("Czech locale renders translated headings", async ({ page }) => {
@@ -340,7 +399,15 @@ test.describe("Today cockpit", () => {
       await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
       await expect(page.getByRole("region", { name: locale === "cs" ? "Nasazené modely" : "Served models" })).toBeVisible();
       if (today === TODAY_HEALTHY) {
-        await expect(slateRows(page, locale === "cs" ? "Dnešní tipy" : "Today's slate").first()).toBeVisible();
+        const first = slateRows(page, locale === "cs" ? "Dnešní tipy" : "Today's slate").first();
+        await expect(first).toBeVisible();
+        if (locale === "en") {
+          // The status and model columns are hidden at this width; both fold
+          // into visible cells (innerText skips display: none).
+          const text = await first.innerText();
+          expect(text).toMatch(/\bwon\b/i);
+          expect(text).toContain("Logistic");
+        }
       }
       await expectNoHorizontalOverflow(page);
     });
@@ -355,7 +422,7 @@ test.describe("Today screenshots", () => {
   const cases = [
     { name: "healthy", today: TODAY_HEALTHY, ops: OPS_STATUS_OK, status: 200 },
     { name: "stale", today: TODAY_STALE, ops: OPS_STATUS_STALE, status: 200 },
-    { name: "error", today: { error: { code: "today_query_failed", message: "database is locked" } }, ops: OPS_STATUS_OK, status: 500 }
+    { name: "error", today: TODAY_FAILED, ops: OPS_STATUS_OK, status: 500 }
   ];
   const viewports = [
     { name: "desktop", width: 1440, height: 900 },

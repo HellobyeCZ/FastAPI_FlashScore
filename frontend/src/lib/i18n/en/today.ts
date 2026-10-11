@@ -5,6 +5,7 @@ export const today = {
   "today.title": "Today",
   "today.description": "Is everything healthy, and what is on the slate?",
 
+  "today.kpi.title": "Key figures",
   "today.kpi.pnl": "P&L · last 30 days",
   "today.kpi.pnl.empty": "No settled bets in 30 days — last settled {age}",
   "today.kpi.pnl.never": "No bet has been settled yet",

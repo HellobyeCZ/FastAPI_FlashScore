@@ -4,6 +4,7 @@ export const today: Record<keyof typeof en, string> = {
   "today.title": "Dnes",
   "today.description": "Běží všechno, jak má, a co je dnes na programu?",
 
+  "today.kpi.title": "Klíčové ukazatele",
   "today.kpi.pnl": "Zisk/ztráta · posledních 30 dní",
   "today.kpi.pnl.empty": "Za 30 dní žádná vypořádaná sázka — poslední {age}",
   "today.kpi.pnl.never": "Zatím nebyla vypořádána žádná sázka",
