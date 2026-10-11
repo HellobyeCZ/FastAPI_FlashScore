@@ -6,6 +6,7 @@ import {
   ButtonLink,
   Callout,
   EmptyState,
+  ModelName,
   PageHeader,
   Panel,
   SegmentedControl,
@@ -15,7 +16,7 @@ import {
   type Column
 } from "@/components/ui";
 import { errorMessage } from "@/lib/api/http";
-import { modelColor, modelLabel } from "@/lib/labels";
+import { modelLabel } from "@/lib/labels";
 import { routes } from "@/lib/routes";
 import { isActiveRun, useBacktestRuns, type BacktestRunSummary } from "@/lib/lab/backtests";
 import { MAX_COMPARE, betMetric, isAutoLabel, runTitle, runWindow, shortId } from "@/lib/lab/format";
@@ -96,21 +97,27 @@ export function BacktestsPage() {
       headerTitle: t("lab.runs.col.run.title"),
       sortValue: (r) => r.created_at,
       cell: (r) => (
-        <span className="flex min-w-0 flex-col gap-0.5">
-          <span className="flex items-baseline gap-2 text-text">
-            <span aria-hidden className="inline-block h-2.5 w-2.5 shrink-0" style={{ background: modelColor(r.model) }} />
-            <span>{runTitle(r, locale, t)}</span>
-          </span>
-          <span className="pl-[1.125rem] text-meta text-text-faint">
-            {isAutoLabel(r) ? "" : `${modelLabel(r.model, t)} · ${runWindow(r, locale, t)} · `}#{shortId(r.id)} ·{" "}
-            {fmt.relative(r.created_at)}
+        <span className="flex min-w-0 flex-col gap-1">
+          <span className="text-text">{runTitle(r, locale, t)}</span>
+          <span className="flex flex-wrap items-center gap-x-1.5 text-meta text-text-faint">
+            <ModelName name={r.model} className="text-text-dim" />
+            {!isAutoLabel(r) && (
+              <>
+                <span aria-hidden>·</span>
+                <span>{runWindow(r, locale, t)}</span>
+              </>
+            )}
+            <span aria-hidden>·</span>
+            <span>#{shortId(r.id)}</span>
+            <span aria-hidden>·</span>
+            <span>{fmt.relative(r.created_at)}</span>
           </span>
           {r.status === "failed" && r.error && (
-            <span className="line-clamp-2 break-words pl-[1.125rem] text-meta text-neg" title={r.error}>
+            <span className="line-clamp-2 break-words text-meta text-neg" title={r.error}>
               {r.error}
             </span>
           )}
-          <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 pl-[1.125rem] sm:hidden">
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-1 sm:hidden">
             <RunStatus run={r} />
             {r.status === "completed" && r.total_bets !== null && (
               <span className="text-meta text-text-faint">

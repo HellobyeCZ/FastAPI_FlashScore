@@ -757,6 +757,37 @@ const PAGES = [
   { name: "registry", path: "lab/registry", en: /Registry/, cs: /Registr/ }
 ];
 
+test.describe("lab · error states", () => {
+  // Each stubJson is registered after stubLab, so it wins for that endpoint only.
+  test("run detail shows a retryable error, not an empty page", async ({ page }) => {
+    await stubLab(page);
+    await stubJson(page, /\/api\/backend\/backtest\/runs\/[^/?]+$/, { detail: "database is locked" }, 500);
+    await page.goto(`/en/lab/backtests/${LOGISTIC}`);
+    await expect(page.getByText("Couldn't load this backtest")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("database is locked")).toBeVisible();
+    await expect(h1(page)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
+  });
+
+  test("experiments keep their filters when the runs call fails", async ({ page }) => {
+    await stubLab(page);
+    await stubJson(page, /\/api\/backend\/mlflow\/runs(\?.*)?$/, { detail: "upstream timeout" }, 500);
+    await page.goto("/en/lab/experiments");
+    await expect(page.getByText("Couldn't load MLflow runs")).toBeVisible({ timeout: 15_000 });
+    await expect(h1(page)).toContainText("Experiments");
+    await expect(page.getByRole("radiogroup", { name: "Purpose" })).toBeVisible();
+  });
+
+  test("registry error leaves the serving panel usable", async ({ page }) => {
+    await stubLab(page);
+    await stubJson(page, /\/api\/backend\/mlflow\/registry$/, { detail: "registry unavailable" }, 500);
+    await page.goto("/en/lab/registry");
+    await expect(page.getByText("Couldn't load the model registry")).toBeVisible({ timeout: 15_000 });
+    await expect(h1(page)).toContainText("Registry");
+    await expect(page.getByText("Serving now")).toBeVisible();
+  });
+});
+
 test.describe("lab · locale and layout", () => {
   test("Czech locale renders translated headings", async ({ page }) => {
     await stubLab(page);
@@ -772,12 +803,14 @@ test.describe("lab · locale and layout", () => {
   test("no horizontal overflow on phones", async ({ page }, info) => {
     test.skip(info.project.name !== "mobile", "mobile viewport only");
     await stubLab(page);
-    for (const p of PAGES) {
-      await page.goto(`/en/${p.path}`);
-      await expect(h1(page)).toHaveText(p.en);
-      await page.waitForTimeout(300);
-      const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
-      expect(overflow, `${p.name} overflows by ${overflow}px`).toBeLessThanOrEqual(0);
+    for (const locale of ["en", "cs"] as const) {
+      for (const p of PAGES) {
+        await page.goto(`/${locale}/${p.path}`);
+        await expect(h1(page)).toHaveText(p[locale]);
+        await page.waitForTimeout(300);
+        const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+        expect(overflow, `${locale}/${p.name} overflows by ${overflow}px`).toBeLessThanOrEqual(0);
+      }
     }
   });
 
