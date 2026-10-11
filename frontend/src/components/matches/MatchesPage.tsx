@@ -1,6 +1,5 @@
 "use client";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useState } from "react";
 import {
   Badge,
   Button,
@@ -23,11 +22,12 @@ import { errorMessage } from "@/lib/api/http";
 import { competitionRoot } from "@/lib/competition";
 import type { MessageKey } from "@/lib/i18n";
 import { countryLabel, matchTitle, sportLabel } from "@/lib/matches/display";
-import { activeFilterCount, matchesQuery, parseMatchesUrl, type MatchesUrlState } from "@/lib/matches/url";
+import { activeFilterCount, type MatchesUrlState } from "@/lib/matches/url";
 import { routes } from "@/lib/routes";
 import { MATCHES_SORTS, type MatchListItem, type MatchesSort } from "@/types/scraped-matches";
 import { ActiveFilters, MatchFilters } from "./MatchFilters";
 import { MatchResult } from "./MatchStatus";
+import { useMatchesUrl } from "./useMatchesUrl";
 
 const SEARCH_DEBOUNCE_MS = 300;
 
@@ -40,16 +40,7 @@ const SORT_LABEL: Record<MatchesSort, MessageKey> = {
 /** Stored-matches index. Every filter, the search and the sort live in the URL. */
 export function MatchesPage() {
   const { t, tp, fmt, locale } = useLocale();
-  const router = useRouter();
-  const params = useSearchParams();
-  const state = useMemo(() => parseMatchesUrl(params), [params]);
-
-  const update = useCallback(
-    (patch: Partial<MatchesUrlState>) => {
-      router.replace(routes.matches(locale, matchesQuery({ ...parseMatchesUrl(params), ...patch })), { scroll: false });
-    },
-    [router, locale, params]
-  );
+  const { state, update } = useMatchesUrl();
 
   // The box updates the URL after a pause; the URL (back/forward, chips) wins
   // whenever it disagrees with what was typed.
