@@ -282,7 +282,8 @@ def test_ops_status_uses_serving_and_tracking_when_available(client: TestClient,
         serving,
         "served_models_info",
         lambda: [{"name": "logistic", "loaded": True, "source": "registry", "version": "3",
-                  "run_id": "abc", "loaded_at": "2026-10-11T10:00:00+00:00", "extra": "ignored"}],
+                  "run_id": "abc", "loaded_at": datetime(2026, 10, 11, 10, tzinfo=timezone.utc),
+                  "extra": "ignored"}],
         raising=False,
     )
     monkeypatch.setattr(

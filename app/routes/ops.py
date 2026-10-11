@@ -154,7 +154,12 @@ def _as_dict(value: Any) -> Dict[str, Any]:
 
 
 def _known_fields(model: Any, values: Mapping[str, Any]) -> Dict[str, Any]:
-    return {k: v for k, v in values.items() if k in model.model_fields}
+    """Keep the contract's fields; datetimes become the ISO strings it uses."""
+    return {
+        k: format_timestamp(v) if isinstance(v, datetime) else v
+        for k, v in values.items()
+        if k in model.model_fields
+    }
 
 
 def _served_models() -> List[ServedModel]:
