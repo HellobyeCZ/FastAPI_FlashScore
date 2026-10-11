@@ -1,52 +1,14 @@
-import { NextResponse } from "next/server";
+import { proxyToBackend } from "@/lib/server/backend";
 
-const DEFAULT_BACKEND_BASE_URL = "http://127.0.0.1:8000";
-const REQUEST_TIMEOUT_MS = 15_000;
+export const dynamic = "force-dynamic";
 
-function resolveBackendBaseUrl(): string {
-  const configured = process.env.ODDS_BACKEND_BASE_URL ?? DEFAULT_BACKEND_BASE_URL;
-  return configured.replace(/\/+$/, "");
-}
-
-export async function GET(
-  _: Request,
-  { params }: { params: { eventId: string } }
-) {
-  const backendUrl = `${resolveBackendBaseUrl()}/match-stats/${encodeURIComponent(params.eventId)}`;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-
-  try {
-    const upstreamResponse = await fetch(backendUrl, {
-      method: "GET",
-      headers: {
-        Accept: "application/json"
-      },
-      cache: "no-store",
-      signal: controller.signal
-    });
-
-    const contentType = upstreamResponse.headers.get("content-type") ?? "application/json";
-    const body = await upstreamResponse.text();
-
-    return new NextResponse(body, {
-      status: upstreamResponse.status,
-      headers: {
-        "content-type": contentType
-      }
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to reach match stats backend.";
-    return NextResponse.json(
-      {
-        error: {
-          code: "match_stats_backend_unreachable",
-          message
-        }
-      },
-      { status: 502 }
-    );
-  } finally {
-    clearTimeout(timeout);
-  }
+/**
+ * Explicit "fetch latest from FlashScore" for match statistics: FastAPI
+ * GET /match-stats/{id} scrapes upstream (unless a terminal snapshot exists)
+ * and stores a new stats snapshot. Pages never call this on load — stored
+ * stats come from /api/backend/events/{id}/stats — only the confirmed action
+ * on the match page does.
+ */
+export async function GET(_req: Request, { params }: { params: { eventId: string } }) {
+  return proxyToBackend(`match-stats/${encodeURIComponent(params.eventId)}`, { timeoutMs: 45_000 });
 }
