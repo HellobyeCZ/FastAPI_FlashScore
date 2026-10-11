@@ -6,6 +6,7 @@ export const lab: Record<keyof typeof en, string> = {
 
   "lab.window": "{train} → {test}",
   "lab.window.open": "dosud",
+  "lab.window.label": "Trénink → test",
   "lab.runs.one": "{n} běh",
   "lab.runs.few": "{n} běhy",
   "lab.runs.many": "{n} běhu",
@@ -103,6 +104,8 @@ export const lab: Record<keyof typeof en, string> = {
   "lab.new.label": "Popisek",
   "lab.new.label.hint": "Nepovinné. Bez popisku se běh pojmenuje podle modelu a okna.",
   "lab.new.label.placeholder": "např. logistic · jen Premier League",
+  "lab.new.inherited": "Převzato z původního běhu",
+  "lab.new.inherited.hint": "Rozsah a trh tu změnit nelze; nový běh použije stejné.",
   "lab.new.submit": "Zařadit backtest",
   "lab.new.submitting": "Zařazuji…",
   "lab.new.failed": "Backtest se nepodařilo zařadit",
@@ -116,7 +119,7 @@ export const lab: Record<keyof typeof en, string> = {
   "lab.new.error.date": "Zadejte platné datum.",
   "lab.new.error.testBeforeTrain": "Test do musí být později než trénink do.",
   "lab.new.error.minEdge": "Zadejte číslo od 0 do 50.",
-  "lab.new.error.kelly": "Zadejte číslo větší než 0 a nejvýše 1.",
+  "lab.new.error.kelly": "Zadejte číslo od {min} do {max}.",
   "lab.new.error.label": "Popisek může mít nejvýše {max} znaků.",
 
   "lab.bets.title": "Sázky",
@@ -196,6 +199,9 @@ export const lab: Record<keyof typeof en, string> = {
   "lab.detail.mlflow.notLogged":
     "Tento běh nebyl zaznamenán do MLflow (MLflow bylo při dokončení vypnuté nebo nedostupné), takže jeho model nelze registrovat.",
   "lab.detail.mlflow.notFound": "Běh byl do MLflow zaznamenán, ale sledovací server ho už neuvádí.",
+  "lab.detail.mlflow.pending": "Běh se do MLflow zaznamená, až doběhne.",
+  "lab.detail.mlflow.logging": "Běh se zaznamenává do MLflow… Panel se po dokončení obnoví.",
+  "lab.detail.mlflow.onlyCompleted": "Do MLflow se zaznamenávají jen dokončené běhy.",
   "lab.detail.mlflow.runName": "Běh MLflow",
   "lab.detail.mlflow.logged": "Zaznamenáno",
   "lab.detail.mlflow.model": "Model",
@@ -219,6 +225,7 @@ export const lab: Record<keyof typeof en, string> = {
   "lab.register.noModel":
     "Tento běh MLflow nemá zaznamenaný model (starší běhy ukládaly jen metriky), takže není co registrovat. Spusťte backtest znovu.",
   "lab.register.notCompleted": "Model lze registrovat až po dokončení běhu.",
+  "lab.register.already": "Už je registrován jako {versions}. Verzi povýšíte v registru.",
 
   "lab.compare.title": "Porovnání backtestů",
   "lab.compare.description": "Výsledky vedle sebe. Přímo srovnatelné jsou jen běhy se stejným oknem, rozsahem a sázením.",

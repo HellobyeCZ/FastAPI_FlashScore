@@ -26,9 +26,10 @@ import { errorMessage } from "@/lib/api/http";
 import { modelLabel, type Tone } from "@/lib/labels";
 import { routes } from "@/lib/routes";
 import type { MessageKey } from "@/lib/i18n";
-import type { ModelVersion, RegisteredModel, RegistryAlias } from "@/types/mlflow";
+import type { MlflowRun, ModelVersion, RegisteredModel, RegistryAlias } from "@/types/mlflow";
 import type { ServedModel } from "@/types/ops";
 import { utcDate } from "@/lib/lab/format";
+import { useMlflowRun } from "@/lib/lab/mlflow";
 import {
   MIN_PROMOTION_BETS,
   aliasVersion,
@@ -676,46 +677,74 @@ function AliasDialog({
   );
 }
 
-/** Candidate (and current champion) evidence side by side. */
+/** A version's source MLflow run, while it loads. */
+type SourceRun = { run: MlflowRun | undefined; loading: boolean };
+type EvidenceRow = { key: string; label: string; cell: (v: ModelVersion, source: SourceRun) => React.ReactNode };
+
+/** Purposes whose source run has a test window (walk-forward backtests). */
+const BACKTEST_PURPOSES: readonly string[] = ["walk_forward_backtest", "backfill"];
+
+/**
+ * Candidate (and current champion) evidence side by side, one column per
+ * version. The registry lists only train_until per version; the test end
+ * comes from each version's source run.
+ */
 function EvidenceTable({ candidate, champion }: { candidate: ModelVersion; champion: ModelVersion | null }) {
   const { t, fmt, locale } = useLocale();
-  const cols = champion ? [candidate, champion] : [candidate];
-  const rows: { label: string; cell: (v: ModelVersion) => React.ReactNode }[] = [
-    { label: t("common.roi"), cell: (v) => <Signed value={versionMetric(v, "roi")} format="pct" /> },
-    { label: t("common.sharpeAdj"), cell: (v) => <Signed value={versionMetric(v, "sharpe_adjusted")} digits={3} /> },
-    { label: t("common.bets"), cell: (v) => fmt.int(versionMetric(v, "n_bets")) },
-    { label: t("common.brier"), cell: (v) => fmt.num(versionMetric(v, "brier"), 3) },
-    { label: t("lab.new.trainUntil"), cell: (v) => utcDate(locale, v.train_until) }
+  const candidateRun = useMlflowRun(candidate.run_id);
+  const championRun = useMlflowRun(champion?.run_id);
+  const source = (q: typeof candidateRun): SourceRun => ({ run: q.data, loading: q.isLoading });
+  const cols = [
+    {
+      version: candidate,
+      source: source(candidateRun),
+      header: t("lab.reg.evidence.candidate", { version: candidate.version })
+    },
+    ...(champion
+      ? [
+          {
+            version: champion,
+            source: source(championRun),
+            header: t("lab.reg.evidence.champion", { version: champion.version })
+          }
+        ]
+      : [])
   ];
-  return (
-    <table className="w-full border-collapse font-mono text-meta">
-      <caption className="sr-only">{t("lab.reg.evidence")}</caption>
-      <thead>
-        <tr className="border-b border-border">
-          <th scope="col" className="py-1 text-left font-sans font-normal uppercase tracking-label text-text-dim">
-            <span className="sr-only">{t("lab.compare.metric")}</span>
-          </th>
-          {cols.map((v, i) => (
-            <th key={v.version} scope="col" className="py-1 text-right font-sans font-normal uppercase tracking-label text-text-dim">
-              {i === 0 ? t("lab.reg.evidence.candidate", { version: v.version }) : t("lab.reg.evidence.champion", { version: v.version })}
-            </th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((r) => (
-          <tr key={r.label} className="border-b border-border">
-            <th scope="row" className="py-1 text-left font-sans font-normal text-text-dim">
-              {r.label}
-            </th>
-            {cols.map((v) => (
-              <td key={v.version} className="py-1 text-right tabular-nums text-text">
-                {r.cell(v)}
-              </td>
-            ))}
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
+
+  function windowText(v: ModelVersion, { run, loading }: SourceRun): string {
+    const train = utcDate(locale, run?.train_until ?? v.train_until);
+    if (!BACKTEST_PURPOSES.includes(v.purpose ?? "")) return t("lab.window", { train, test: "—" });
+    const test = run ? (run.test_until ? utcDate(locale, run.test_until) : t("lab.window.open")) : loading ? "…" : "—";
+    return t("lab.window", { train, test });
+  }
+
+  const rows: EvidenceRow[] = [
+    { key: "roi", label: t("common.roi"), cell: (v) => <Signed value={versionMetric(v, "roi")} format="pct" /> },
+    {
+      key: "sharpe",
+      label: t("common.sharpeAdj"),
+      cell: (v) => <Signed value={versionMetric(v, "sharpe_adjusted")} digits={3} />
+    },
+    { key: "bets", label: t("common.bets"), cell: (v) => fmt.int(versionMetric(v, "n_bets")) },
+    { key: "brier", label: t("common.brier"), cell: (v) => fmt.num(versionMetric(v, "brier"), 3) },
+    { key: "window", label: t("lab.window.label"), cell: windowText }
+  ];
+
+  const columns: Column<EvidenceRow>[] = [
+    {
+      key: "metric",
+      header: <span className="sr-only">{t("lab.compare.metric")}</span>,
+      cell: (r) => <span className="font-sans text-text-dim">{r.label}</span>
+    },
+    ...cols.map(
+      (c): Column<EvidenceRow> => ({
+        key: `v${c.version.version}`,
+        header: c.header,
+        align: "right",
+        cell: (r) => r.cell(c.version, c.source)
+      })
+    )
+  ];
+
+  return <Table caption={t("lab.reg.evidence")} columns={columns} rows={rows} rowKey={(r) => r.key} className="-mx-3" />;
 }

@@ -1,10 +1,11 @@
 "use client";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useId, useMemo, useState } from "react";
 import { useLocale } from "@/contexts/LocaleContext";
 import {
   Button,
   ButtonLink,
   Callout,
+  Checkbox,
   EmptyState,
   ModelName,
   PageHeader,
@@ -44,6 +45,7 @@ export function BacktestsPage() {
   const build = useCallback((q: Record<string, string>) => routes.backtests(locale, q), [locale]);
   const { params, set } = useSearchState(build);
   const [creating, setCreating] = useState(false);
+  const hintId = useId();
 
   const rawStatus = params.get("status") as StatusFilter | null;
   const status: StatusFilter = rawStatus && STATUS_FILTERS.includes(rawStatus) ? rawStatus : "all";
@@ -69,6 +71,15 @@ export function BacktestsPage() {
     set({ selected: next.slice(0, MAX_COMPARE).join(",") || null });
   }
 
+  // Visible next to "Compare selected", and the description of that button
+  // while it is disabled.
+  const compareHint =
+    selected.length >= MAX_COMPARE
+      ? t("lab.runs.selectMax", { max: MAX_COMPARE })
+      : selected.length === 1
+        ? t("lab.runs.compareNeedsTwo")
+        : t("lab.runs.compareHint", { max: MAX_COMPARE });
+
   const columns: Column<BacktestRunSummary>[] = [
     {
       key: "select",
@@ -76,17 +87,26 @@ export function BacktestsPage() {
       width: "2.5rem",
       cell: (r) => {
         const checked = selected.includes(r.id);
-        const full = !checked && selected.length >= MAX_COMPARE;
-        const disabled = !selectable(r) || full;
+        // Why a box can't be ticked is part of its (visually hidden) label:
+        // disabled controls show no tooltip.
+        const reason = checked
+          ? null
+          : !selectable(r)
+            ? t("lab.runs.selectOnlyCompleted")
+            : selected.length >= MAX_COMPARE
+              ? t("lab.runs.selectMax", { max: MAX_COMPARE })
+              : null;
         return (
-          <input
-            type="checkbox"
+          <Checkbox
             checked={checked}
-            disabled={disabled && !checked}
+            disabled={reason !== null}
             onChange={() => toggle(r.id)}
-            aria-label={t("lab.runs.selectNamed", { title: runTitle(r, locale, t) })}
-            title={!selectable(r) ? t("lab.runs.selectOnlyCompleted") : full ? t("lab.runs.selectMax", { max: MAX_COMPARE }) : undefined}
-            className="h-4 w-4 cursor-pointer align-middle accent-[rgb(var(--accent))] disabled:cursor-not-allowed disabled:opacity-40"
+            label={
+              <span className="sr-only">
+                {t("lab.runs.selectNamed", { title: runTitle(r, locale, t) })}
+                {reason && ` (${reason})`}
+              </span>
+            }
           />
         );
       }
@@ -102,10 +122,11 @@ export function BacktestsPage() {
           <span className="flex flex-wrap items-center gap-x-1.5 text-meta text-text-faint">
             <ModelName name={r.model} className="text-text-dim" />
             {!isAutoLabel(r) && (
-              <>
+              // From xl the window has its own column.
+              <span className="contents xl:hidden">
                 <span aria-hidden>·</span>
                 <span>{runWindow(r, locale, t)}</span>
-              </>
+              </span>
             )}
             <span aria-hidden>·</span>
             <span>#{shortId(r.id)}</span>
@@ -117,8 +138,11 @@ export function BacktestsPage() {
               {r.error}
             </span>
           )}
-          <span className="flex flex-wrap items-center gap-x-2 gap-y-1 sm:hidden">
-            <RunStatus run={r} />
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-1 md:hidden">
+            <span className="sm:hidden">
+              <RunStatus run={r} />
+            </span>
+            {/* The bets column appears at md: until then ROI needs its n here. */}
             {r.status === "completed" && r.total_bets !== null && (
               <span className="text-meta text-text-faint">
                 {tp("lab.bets", r.total_bets, { n: fmt.int(r.total_bets) })}
@@ -135,6 +159,15 @@ export function BacktestsPage() {
       firstDir: "asc",
       sortValue: (r) => r.status,
       cell: (r) => <RunStatus run={r} />
+    },
+    {
+      // Sorting by window lines up runs that are directly comparable.
+      key: "window",
+      header: t("lab.window.label"),
+      hideBelow: "xl",
+      firstDir: "asc",
+      sortValue: (r) => `${r.train_until}|${r.test_until ?? "~"}`,
+      cell: (r) => <span className="whitespace-nowrap text-text-dim">{runWindow(r, locale, t)}</span>
     },
     {
       key: "bets",
@@ -196,7 +229,14 @@ export function BacktestsPage() {
       header: <span className="sr-only">{t("common.actions")}</span>,
       align: "right",
       hideBelow: "sm",
-      cell: (r) => <RunActions run={r} />
+      cell: (r) => (
+        <RunActions
+          run={r}
+          onDeleted={() => {
+            if (selected.includes(r.id)) set({ selected: selected.filter((s) => s !== r.id).join(",") || null });
+          }}
+        />
+      )
     }
   ];
 
@@ -251,7 +291,9 @@ export function BacktestsPage() {
           </Select>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-meta text-text-faint">{t("lab.runs.compareHint", { max: MAX_COMPARE })}</span>
+          <span id={hintId} className="text-meta text-text-faint" aria-live="polite">
+            {compareHint}
+          </span>
           {selected.length > 0 && (
             <Button size="sm" variant="ghost" onClick={() => set({ selected: null })}>
               {t("lab.runs.clearSelection")}
@@ -262,7 +304,7 @@ export function BacktestsPage() {
               {t("lab.runs.compare", { n: selected.length })}
             </ButtonLink>
           ) : (
-            <Button size="sm" disabled title={t("lab.runs.compareNeedsTwo")}>
+            <Button size="sm" disabled aria-describedby={hintId}>
               {t("lab.runs.compare", { n: selected.length })}
             </Button>
           )}

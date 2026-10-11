@@ -5,6 +5,7 @@ export const lab = {
 
   "lab.window": "{train} → {test}",
   "lab.window.open": "open",
+  "lab.window.label": "Train → test",
   // Plurals: English only selects one/other; few/many exist for Czech.
   "lab.runs.one": "{n} run",
   "lab.runs.few": "{n} runs",
@@ -102,6 +103,8 @@ export const lab = {
   "lab.new.label": "Label",
   "lab.new.label.hint": "Optional. Without one the run is named by model and window.",
   "lab.new.label.placeholder": "e.g. logistic · Premier League only",
+  "lab.new.inherited": "Kept from the original run",
+  "lab.new.inherited.hint": "Scope and market can't be changed here; the new run uses the same ones.",
   "lab.new.submit": "Queue backtest",
   "lab.new.submitting": "Queuing…",
   "lab.new.failed": "Couldn't queue the backtest",
@@ -115,7 +118,7 @@ export const lab = {
   "lab.new.error.date": "Enter a valid date.",
   "lab.new.error.testBeforeTrain": "Test until must be after train until.",
   "lab.new.error.minEdge": "Enter a number from 0 to 50.",
-  "lab.new.error.kelly": "Enter a number above 0, at most 1.",
+  "lab.new.error.kelly": "Enter a number from {min} to {max}.",
   "lab.new.error.label": "Keep the label under {max} characters.",
 
   "lab.bets.title": "Bets",
@@ -195,6 +198,9 @@ export const lab = {
   "lab.detail.mlflow.notLogged":
     "This run wasn't logged to MLflow (MLflow was off or unreachable when it finished), so its model can't be registered.",
   "lab.detail.mlflow.notFound": "The run was logged to MLflow, but the tracking server no longer lists it.",
+  "lab.detail.mlflow.pending": "The run is logged to MLflow when it completes.",
+  "lab.detail.mlflow.logging": "Logging the run to MLflow… This panel updates when it's done.",
+  "lab.detail.mlflow.onlyCompleted": "Only completed runs are logged to MLflow.",
   "lab.detail.mlflow.runName": "MLflow run",
   "lab.detail.mlflow.logged": "Logged",
   "lab.detail.mlflow.model": "Fitted model",
@@ -218,6 +224,7 @@ export const lab = {
   "lab.register.noModel":
     "This MLflow run has no logged model (older runs logged metrics only), so there is nothing to register. Run the backtest again to log one.",
   "lab.register.notCompleted": "A model can be registered once the run has completed.",
+  "lab.register.already": "Already registered as {versions}. Promote it from the registry.",
 
   "lab.compare.title": "Compare backtests",
   "lab.compare.description": "Side-by-side results. Only runs with the same window, scope and staking are directly comparable.",

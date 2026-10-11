@@ -1,6 +1,7 @@
 "use client";
 import { useMutation, useQueries, useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { backendGet, backendSend } from "@/lib/api/http";
+import { parseDate } from "@/lib/format";
 import { opsStatusKey } from "@/hooks/useOpsStatus";
 
 /**
@@ -70,6 +71,10 @@ export type CreateBacktestRequest = {
   kelly_fraction?: number;
   force_bets?: boolean;
   label?: string | null;
+  /** (country, competition) pairs; omitted = the backend's default scope. */
+  scope?: [string, string][];
+  /** Omitted = the backend's default market ("football_1x2_ft"). */
+  market_spec?: string;
 };
 
 /** One placed backtest bet, normalised across the two endpoints that serve them. */
@@ -110,6 +115,23 @@ export function isActiveRun(run: Pick<BacktestRunSummary, "status"> | null | und
   return Boolean(run && ACTIVE.includes(run.status));
 }
 
+/** How long after completion a run without an MLflow id may still get one. */
+const MLFLOW_LOGGING_GRACE_MS = 2 * 60_000;
+
+/**
+ * The backend logs a run to MLflow only after persisting it as completed,
+ * then records the MLflow run id. A run that finished moments ago without an
+ * id is most likely still being logged.
+ */
+export function awaitingMlflow(
+  run: Pick<BacktestRunSummary, "status" | "finished_at" | "mlflow_run_id"> | null | undefined,
+  now: number = Date.now()
+): boolean {
+  if (!run || run.status !== "completed" || run.mlflow_run_id) return false;
+  const finished = parseDate(run.finished_at);
+  return Boolean(finished && now - finished.getTime() < MLFLOW_LOGGING_GRACE_MS);
+}
+
 export const backtestKeys = {
   all: ["backtest"] as const,
   runs: ["backtest", "runs"] as const,
@@ -120,13 +142,24 @@ export const backtestKeys = {
 };
 
 const POLL_MS = 3_000;
+/** Slower poll while a finished run waits for its MLflow id. */
+const MLFLOW_POLL_MS = 5_000;
 
-/** Run list; polls every 3 s only while something is queued or running. */
+function pollInterval(runs: BacktestRunSummary[]): number | false {
+  if (runs.some(isActiveRun)) return POLL_MS;
+  const now = Date.now();
+  return runs.some((r) => awaitingMlflow(r, now)) ? MLFLOW_POLL_MS : false;
+}
+
+/**
+ * Run list; polls every 3 s only while something is queued or running, then
+ * briefly while a just-finished run is being logged to MLflow.
+ */
 export function useBacktestRuns() {
   return useQuery({
     queryKey: backtestKeys.runs,
     queryFn: () => backendGet<{ items: BacktestRunSummary[] }>("backtest/runs", { limit: 200 }).then((r) => r.items),
-    refetchInterval: (q) => (q.state.data?.some(isActiveRun) ? POLL_MS : false)
+    refetchInterval: (q) => pollInterval(q.state.data ?? [])
   });
 }
 
@@ -137,11 +170,11 @@ export function backtestRunQuery(id: string) {
   };
 }
 
-/** One run with params + reliability; polls while it is queued or running. */
+/** One run with params + reliability; polls like the list while it is active or being logged. */
 export function useBacktestRun(id: string) {
   return useQuery({
     ...backtestRunQuery(id),
-    refetchInterval: (q) => (isActiveRun(q.state.data) ? POLL_MS : false)
+    refetchInterval: (q) => (q.state.data ? pollInterval([q.state.data]) : false)
   });
 }
 
@@ -331,12 +364,17 @@ export function useCancelBacktest() {
 
 export function useDeleteBacktest() {
   const qc = useQueryClient();
-  const invalidate = useInvalidateBacktests();
   return useMutation({
     mutationFn: (id: string) => backendSend<{ ok: boolean }>("DELETE", `backtest/runs/${encodeURIComponent(id)}`),
     onSuccess: (_res, id) => {
-      qc.removeQueries({ queryKey: backtestKeys.run(id) });
-      invalidate();
+      // The run's own queries (run, bets, pnl: ["backtest", kind, id, …]) are
+      // only marked stale. The run page may still be mounted until it has
+      // navigated away; refetching or dropping them now would flash "not
+      // found". A later visit refetches and gets the 404.
+      const own = (key: readonly unknown[]) => key[2] === id;
+      qc.invalidateQueries({ queryKey: backtestKeys.all, predicate: (q) => !own(q.queryKey) });
+      qc.invalidateQueries({ queryKey: backtestKeys.all, predicate: (q) => own(q.queryKey), refetchType: "none" });
+      qc.invalidateQueries({ queryKey: opsStatusKey });
     }
   });
 }

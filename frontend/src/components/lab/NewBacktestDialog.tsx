@@ -2,7 +2,7 @@
 import { useId, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useLocale } from "@/contexts/LocaleContext";
-import { Button, Callout, Checkbox, Dialog, Field, Input, Select } from "@/components/ui";
+import { Button, Callout, Checkbox, Dialog, Field, Input, KeyValue, Label, Select } from "@/components/ui";
 import { errorMessage } from "@/lib/api/http";
 import { modelLabel } from "@/lib/labels";
 import { routes } from "@/lib/routes";
@@ -12,7 +12,7 @@ import {
   type BacktestRunDetail,
   type CreateBacktestRequest
 } from "@/lib/lab/backtests";
-import { isoDay } from "@/lib/lab/format";
+import { isoDay, marketSpecLabel } from "@/lib/lab/format";
 
 export type FormState = {
   model: string;
@@ -39,9 +39,19 @@ const INITIAL: FormState = {
 
 const MAX_LABEL = 80;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
+/** Kelly fraction bounds; the input's min/step use the same floor. */
+const KELLY_MIN = 0.05;
+const KELLY_MAX = 1;
 
-/** Form values to start from, e.g. when re-running an existing run. */
-export type NewBacktestPrefill = Partial<FormState>;
+/**
+ * Form values to start from, e.g. when re-running an existing run. `scope`
+ * and `marketSpec` have no form controls: they are shown read-only and sent
+ * as they are, so a re-run keeps a custom scope or market.
+ */
+export type NewBacktestPrefill = Partial<FormState> & {
+  scope?: [string, string][];
+  marketSpec?: string;
+};
 
 /** Same settings as `run`, optionally overridden ("re-run with force bets"). */
 export function prefillFromRun(run: BacktestRunDetail, overrides: NewBacktestPrefill = {}): NewBacktestPrefill {
@@ -52,6 +62,9 @@ export function prefillFromRun(run: BacktestRunDetail, overrides: NewBacktestPre
     minEdgePct: String(Number((run.min_edge * 100).toFixed(4))),
     kelly: String(run.kelly_fraction),
     forceBets: run.force_bets,
+    // An empty scope would mean "no competitions", not the default one.
+    scope: run.scope.length > 0 ? run.scope : undefined,
+    marketSpec: run.market_spec,
     ...overrides
   };
 }
@@ -69,12 +82,13 @@ export function NewBacktestDialog({
   onClose: () => void;
   prefill?: NewBacktestPrefill;
 }) {
-  const { t, locale } = useLocale();
+  const { t, tp, fmt, locale } = useLocale();
   const router = useRouter();
   const formId = useId();
   const models = useBacktestModels();
   const create = useCreateBacktest();
-  const [form, setForm] = useState<FormState>(() => ({ ...INITIAL, ...prefill }));
+  const { scope, marketSpec, ...fields } = prefill ?? {};
+  const [form, setForm] = useState<FormState>(() => ({ ...INITIAL, ...fields }));
   const [errors, setErrors] = useState<Errors>({});
   const [touched, setTouched] = useState(false);
 
@@ -95,7 +109,9 @@ export function NewBacktestDialog({
     const edge = Number(f.minEdgePct);
     if (f.minEdgePct.trim() === "" || !Number.isFinite(edge) || edge < 0 || edge > 50) e.minEdgePct = t("lab.new.error.minEdge");
     const kelly = Number(f.kelly);
-    if (f.kelly.trim() === "" || !Number.isFinite(kelly) || kelly <= 0 || kelly > 1) e.kelly = t("lab.new.error.kelly");
+    if (f.kelly.trim() === "" || !Number.isFinite(kelly) || kelly < KELLY_MIN || kelly > KELLY_MAX) {
+      e.kelly = t("lab.new.error.kelly", { min: fmt.num(KELLY_MIN, 2), max: fmt.int(KELLY_MAX) });
+    }
     if (f.label.trim().length > MAX_LABEL) e.label = t("lab.new.error.label", { max: MAX_LABEL });
     return e;
   }
@@ -126,7 +142,9 @@ export function NewBacktestDialog({
       min_edge: Number((Number(form.minEdgePct) / 100).toFixed(6)),
       kelly_fraction: Number(form.kelly),
       force_bets: form.forceBets,
-      label: form.label.trim() || null
+      label: form.label.trim() || null,
+      scope,
+      market_spec: marketSpec
     };
     create.mutate(body, {
       onSuccess: ({ id }) => {
@@ -247,8 +265,8 @@ export function NewBacktestDialog({
                 {...p}
                 type="number"
                 inputMode="decimal"
-                min={0.05}
-                max={1}
+                min={KELLY_MIN}
+                max={KELLY_MAX}
                 step={0.05}
                 value={form.kelly}
                 onChange={(e) => update("kelly", e.target.value)}
@@ -267,6 +285,21 @@ export function NewBacktestDialog({
           <Callout tone="warn" title={t("lab.new.baselineWarning.title")}>
             {t("lab.new.baselineWarning.body")}
           </Callout>
+        )}
+
+        {(scope || marketSpec) && (
+          <div className="flex flex-col gap-1.5">
+            <Label as="div">{t("lab.new.inherited")}</Label>
+            <KeyValue
+              items={[
+                ...(scope
+                  ? [{ label: t("lab.detail.scope"), value: tp("lab.competitions", scope.length, { n: fmt.int(scope.length) }) }]
+                  : []),
+                ...(marketSpec ? [{ label: t("lab.detail.marketSpec"), value: marketSpecLabel(marketSpec, t) }] : [])
+              ]}
+            />
+            <p className="text-meta text-text-faint">{t("lab.new.inherited.hint")}</p>
+          </div>
         )}
 
         <Field label={t("lab.new.label")} hint={t("lab.new.label.hint")} error={errors.label}>

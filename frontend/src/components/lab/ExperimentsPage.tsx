@@ -10,6 +10,7 @@ import {
   ModelName,
   PageHeader,
   Panel,
+  SampleSize,
   SegmentedControl,
   Select,
   Signed,
@@ -149,7 +150,13 @@ export function ExperimentsPage() {
             header: t("common.roi"),
             align: "right",
             sortValue: (r) => metric(r, "roi"),
-            cell: (r) => <Signed value={metric(r, "roi")} format="pct" />
+            cell: (r) => (
+              // The bets column appears at md: until then ROI carries its n.
+              <span className="inline-flex flex-col items-end">
+                <Signed value={metric(r, "roi")} format="pct" />
+                <SampleSize n={metric(r, "n_bets")} className="md:hidden" />
+              </span>
+            )
           },
           {
             key: "sharpe",

@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { useLocale } from "@/contexts/LocaleContext";
 import {
   Badge,
@@ -13,33 +13,63 @@ import {
   Skeleton,
   TextLink
 } from "@/components/ui";
-import { useMlflowRuns, useRegisterRun } from "@/hooks/useMlflow";
+import { useRegisterRun } from "@/hooks/useMlflow";
+import { useOpsStatus } from "@/hooks/useOpsStatus";
 import { errorMessage } from "@/lib/api/http";
 import { routes } from "@/lib/routes";
-import { isActiveRun, type BacktestRunDetail } from "@/lib/lab/backtests";
+import { awaitingMlflow, isActiveRun, type BacktestRunDetail } from "@/lib/lab/backtests";
 import { runWindow } from "@/lib/lab/format";
+import { isMlflowRunMissing, isMlflowUnavailable, useMlflowRun } from "@/lib/lab/mlflow";
 import type { MlflowRun, RegisterResponse } from "@/types/mlflow";
 import { MlflowStatusCallout } from "./MlflowStatusCallout";
 
 /**
  * The run's MLflow side: deep link, registered versions, and — when the run
  * logged its fitted model — "Register model" (optionally as @challenger).
+ * The run is looked up by the MLflow id the backend recorded for it, which
+ * also covers backtests logged later by the backfill script.
  */
 export function RunMlflowPanel({ run }: { run: BacktestRunDetail }) {
   const { t } = useLocale();
-  const runs = useMlflowRuns({ purpose: "walk_forward_backtest" });
-  const { refetch } = runs;
-  const wasActive = useRef(isActiveRun(run));
-  // A run is logged to MLflow as it completes: look again once it finishes.
-  useEffect(() => {
-    if (wasActive.current && !isActiveRun(run)) void refetch();
-    wasActive.current = isActiveRun(run);
-  }, [run, refetch]);
-  const status = runs.data?.status;
-  const tracked = runs.data?.runs.find(
-    (r) => r.backtest_run_id === run.id || (run.mlflow_run_id !== null && r.run_id === run.mlflow_run_id)
-  );
-  const link = run.mlflow_ui_url ?? tracked?.ui_url ?? null;
+  const tracked = useMlflowRun(run.mlflow_run_id);
+  const ops = useOpsStatus();
+  const mlflow = ops.data?.mlflow;
+  const mlflowDown = Boolean(mlflow && !(mlflow.enabled && mlflow.reachable));
+  const link = run.mlflow_ui_url ?? tracked.data?.ui_url ?? null;
+
+  let body: React.ReactNode;
+  if (!run.mlflow_run_id) {
+    const reason = isActiveRun(run)
+      ? "lab.detail.mlflow.pending"
+      : run.status !== "completed"
+        ? "lab.detail.mlflow.onlyCompleted"
+        : awaitingMlflow(run) && mlflow?.enabled !== false
+          ? "lab.detail.mlflow.logging"
+          : "lab.detail.mlflow.notLogged";
+    body = <p className="text-body text-text-dim">{t(reason)}</p>;
+  } else if (tracked.isLoading) {
+    body = <Skeleton lines={3} />;
+  } else if (tracked.data) {
+    body = <TrackedRun run={run} tracked={tracked.data} />;
+  } else if (isMlflowRunMissing(tracked.error)) {
+    body = <p className="text-body text-text-dim">{t("lab.detail.mlflow.notFound")}</p>;
+  } else if (isMlflowUnavailable(tracked.error) && mlflowDown) {
+    body = <MlflowStatusCallout status={mlflow} onRetry={() => tracked.refetch()} retrying={tracked.isFetching} />;
+  } else {
+    body = (
+      <Callout
+        tone="neg"
+        title={t("lab.detail.mlflow.error")}
+        action={
+          <Button size="sm" onClick={() => tracked.refetch()} loading={tracked.isFetching}>
+            {t("common.retry")}
+          </Button>
+        }
+      >
+        {errorMessage(tracked.error)}
+      </Callout>
+    );
+  }
 
   return (
     <Panel
@@ -53,29 +83,7 @@ export function RunMlflowPanel({ run }: { run: BacktestRunDetail }) {
         ) : undefined
       }
     >
-      {runs.isLoading ? (
-        <Skeleton lines={3} />
-      ) : runs.isError ? (
-        <Callout
-          tone="neg"
-          title={t("lab.detail.mlflow.error")}
-          action={
-            <Button size="sm" onClick={() => runs.refetch()} loading={runs.isFetching}>
-              {t("common.retry")}
-            </Button>
-          }
-        >
-          {errorMessage(runs.error)}
-        </Callout>
-      ) : status && !(status.enabled && status.reachable) ? (
-        <MlflowStatusCallout status={status} onRetry={() => runs.refetch()} retrying={runs.isFetching} />
-      ) : tracked ? (
-        <TrackedRun run={run} tracked={tracked} />
-      ) : (
-        <p className="text-body text-text-dim">
-          {run.mlflow_run_id ? t("lab.detail.mlflow.notFound") : t("lab.detail.mlflow.notLogged")}
-        </p>
-      )}
+      {body}
     </Panel>
   );
 }
@@ -87,6 +95,7 @@ function TrackedRun({ run, tracked }: { run: BacktestRunDetail; tracked: MlflowR
   const [asChallenger, setAsChallenger] = useState(false);
   const [done, setDone] = useState<RegisterResponse | null>(null);
   const registeredName = `picks-${tracked.model_name ?? run.model}`;
+  const versions = tracked.registered_versions;
 
   function close() {
     if (register.isPending) return;
@@ -121,9 +130,9 @@ function TrackedRun({ run, tracked }: { run: BacktestRunDetail; tracked: MlflowR
           {
             label: t("lab.detail.mlflow.versions"),
             value:
-              tracked.registered_versions.length > 0 ? (
+              versions.length > 0 ? (
                 <span className="inline-flex flex-wrap justify-end gap-1">
-                  {tracked.registered_versions.map((v) => (
+                  {versions.map((v) => (
                     <Badge key={`${v.name}-${v.version}`} tone="accent" title={v.name}>
                       v{v.version}
                     </Badge>
@@ -150,6 +159,19 @@ function TrackedRun({ run, tracked }: { run: BacktestRunDetail; tracked: MlflowR
         <p className="text-meta text-text-faint">{t("lab.register.noModel")}</p>
       ) : run.status !== "completed" ? (
         <p className="text-meta text-text-faint">{t("lab.register.notCompleted")}</p>
+      ) : versions.length > 0 ? (
+        // Registering the same run again would only add a duplicate version
+        // with identical evidence; promotion happens in the registry.
+        !done && (
+          <p className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-meta text-text-dim">
+            <span>
+              {t("lab.register.already", {
+                versions: versions.map((v) => `${v.name} v${v.version}`).join(", ")
+              })}
+            </span>
+            <TextLink href={routes.registry(locale)}>{t("lab.register.openRegistry")}</TextLink>
+          </p>
+        )
       ) : (
         <div className="flex flex-wrap items-center gap-3">
           <Button variant="secondary" onClick={() => setOpen(true)}>
