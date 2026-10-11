@@ -28,9 +28,12 @@ def _row_with_market() -> dict:
 def _log(model_name: str, trained_model) -> str:
     import mlflow
 
+    from app.ml import tracking
     from app.ml.pyfunc_wrapper import save_picks_model
 
-    with mlflow.start_run():
+    # Log into the fixture's `picks` experiment (artifacts under tmp_path),
+    # never MLflow's Default experiment (./mlruns in the working tree).
+    with mlflow.start_run(experiment_id=tracking.ensure_experiment_id()):
         return save_picks_model(model_name=model_name, trained_model=trained_model)
 
 
