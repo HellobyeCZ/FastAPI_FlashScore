@@ -46,7 +46,7 @@ def test_market_implied_baseline_forced_produces_zero_clv(backfilled_full):
         force_bets=True,
     )
     assert report.total_bets > 0
-    assert report.mean_clv == 0.0
+    assert report.mean_clv is None  # CLV is undefined for close-priced archive bets
 
 
 def test_market_implied_baseline_forced_roi_is_minus_vig(backfilled_full):

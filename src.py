@@ -962,6 +962,8 @@ def _serialize_prediction(record) -> dict:
         "edge": record.edge,
         "kelly_full": record.kelly_full,
         "notes": record.notes,
+        # Registry version that answered, "file" for $APP_ML_MODELS_DIR, or None.
+        "model_version": getattr(record, "model_version", None),
     }
 
 
@@ -984,6 +986,7 @@ def predict_event(event_id: str) -> dict:
         "predictions": [_serialize_prediction(r) for r in records],
         "available_models": {
             "logistic": artifacts.logistic is not None,
+            "hgb_pca": getattr(artifacts, "hgb_pca", None) is not None,
             "hgb": artifacts.hgb is not None,
             "dixon_coles": artifacts.dc_rates is not None,
         },

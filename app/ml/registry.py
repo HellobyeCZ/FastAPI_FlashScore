@@ -322,6 +322,7 @@ def list_registry() -> List[Dict[str, Any]]:
                     "metrics": dict(run.data.metrics) if run else {},
                     "purpose": run.data.tags.get("purpose") if run else None,
                     "train_until": run.data.params.get("train_until") if run else None,
+                    "test_until": (run.data.params.get("test_until") or None) if run else None,
                     "ui_url": tracking.model_ui_url(model.name, str(v.version)),
                 })
             model_name = app_model_name(model.name)

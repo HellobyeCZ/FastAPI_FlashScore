@@ -814,8 +814,11 @@ class FlashscoreFixturesClient:
                     sport=sport,
                     country=country,
                     competition=competition,
-                    home_team_raw=(fields.get("AF") or None),
-                    away_team_raw=(fields.get("AE") or None),
+                    # FlashScore feed fields: AE = home participant, AF = away.
+                    # (They were swapped until 2026-10; rows heal on the next
+                    # discovery refresh because the upsert overwrites names.)
+                    home_team_raw=(fields.get("AE") or None),
+                    away_team_raw=(fields.get("AF") or None),
                     start_time_utc=kickoff,
                     round_label=(fields.get("ER") or None),
                 )

@@ -717,7 +717,20 @@ function EvidenceTable({ candidate, champion }: { candidate: ModelVersion; champ
   function windowText(v: ModelVersion, { run, loading }: SourceRun): string {
     const train = day(run?.train_until ?? v.train_until);
     if (!BACKTEST_PURPOSES.includes(v.purpose ?? "")) return t("lab.window", { train, test: "—" });
-    const test = run ? (run.test_until ? day(run.test_until) : t("lab.window.open")) : loading ? "…" : "—";
+    // The registry now reports the source run's test window; older backends
+    // omit the field, so fall back to the fetched source run.
+    const test =
+      v.test_until !== undefined
+        ? v.test_until
+          ? day(v.test_until)
+          : t("lab.window.open")
+        : run
+          ? run.test_until
+            ? day(run.test_until)
+            : t("lab.window.open")
+          : loading
+            ? "…"
+            : "—";
     return t("lab.window", { train, test });
   }
 

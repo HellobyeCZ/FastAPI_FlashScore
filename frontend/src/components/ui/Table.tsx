@@ -200,6 +200,10 @@ export function Table<T>({
                   onClick={
                     clickable
                       ? (e) => {
+                          // Clicks inside portaled children (dialogs opened from a
+                          // row action) bubble through React's tree but are not in
+                          // the row's DOM; never navigate for those.
+                          if (!(e.currentTarget as Node).contains(e.target as Node)) return;
                           // Let real links/buttons inside the row handle themselves.
                           if ((e.target as HTMLElement).closest("a,button,input,select,label")) return;
                           if (onRowClick) onRowClick(row);

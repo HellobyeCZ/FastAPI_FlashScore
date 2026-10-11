@@ -97,7 +97,16 @@ export function HealthIndicator({ className }: { className?: string }) {
  * Banner listing current health issues. `variant="slim"` is the one-liner the
  * shell shows on every page; `full` lists every issue (Today, Data ops).
  */
-export function HealthBanner({ variant = "full", className }: { variant?: "slim" | "full"; className?: string }) {
+export function HealthBanner({
+  variant = "full",
+  className,
+  showAction = true
+}: {
+  variant?: "slim" | "full";
+  className?: string;
+  /** Hide the "Open Data ops" link (e.g. on the Data ops page itself). */
+  showAction?: boolean;
+}) {
   const { t, locale } = useLocale();
   const h = useShellHealth();
   if (h.level === "ok" || h.level === "unknown" || h.issues.length === 0) return null;
@@ -118,9 +127,11 @@ export function HealthBanner({ variant = "full", className }: { variant?: "slim"
           {first.text}
           {h.issues.length > 1 && <span className="text-text-dim"> +{h.issues.length - 1}</span>}
         </span>
-        <Link href={routes.ops(locale)} className="underline underline-offset-2 hover:text-text">
-          {t("health.action.ops")}
-        </Link>
+        {showAction && (
+          <Link href={routes.ops(locale)} className="underline underline-offset-2 hover:text-text">
+            {t("health.action.ops")}
+          </Link>
+        )}
       </div>
     );
   }
@@ -130,9 +141,11 @@ export function HealthBanner({ variant = "full", className }: { variant?: "slim"
       className={className}
       title={t("health.details")}
       action={
-        <ButtonLink href={routes.ops(locale)} size="sm">
-          {t("health.action.ops")}
-        </ButtonLink>
+        showAction ? (
+          <ButtonLink href={routes.ops(locale)} size="sm">
+            {t("health.action.ops")}
+          </ButtonLink>
+        ) : undefined
       }
     >
       <ul className="flex flex-col gap-1">

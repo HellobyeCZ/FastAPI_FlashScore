@@ -101,11 +101,12 @@ export function BacktestsPage() {
             checked={checked}
             disabled={reason !== null}
             onChange={() => toggle(r.id)}
+            hideLabel
             label={
-              <span className="sr-only">
+              <>
                 {t("lab.runs.selectNamed", { title: runTitle(r, locale, t) })}
                 {reason && ` (${reason})`}
-              </span>
+              </>
             }
           />
         );

@@ -9,6 +9,10 @@ export const DASH = "—";
 
 const isNum = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 
+/** Float noise such as 2.2e-16 (common in summed pnl/clv) is treated as 0. */
+const EPS = 1e-9;
+const clean = (v: number) => (Math.abs(v) < EPS ? 0 : v);
+
 export type Formatters = ReturnType<typeof makeFormatters>;
 
 export function makeFormatters(locale: Locale) {
@@ -29,7 +33,7 @@ export function makeFormatters(locale: Locale) {
     /** Plain number. */
     num(v: number | null | undefined, digits = 2): string {
       if (!isNum(v)) return DASH;
-      return get(`n${digits}`, { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(v);
+      return get(`n${digits}`, { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(clean(v));
     },
     /** Integer with grouping. */
     int(v: number | null | undefined): string {
@@ -49,7 +53,7 @@ export function makeFormatters(locale: Locale) {
         minimumFractionDigits: digits,
         maximumFractionDigits: digits,
         signDisplay: signed ? "exceptZero" : "auto"
-      }).format(v);
+      }).format(clean(v));
     },
     /** Betting units, always signed: +0.26u. */
     units(v: number | null | undefined, digits = 2): string {
@@ -58,7 +62,7 @@ export function makeFormatters(locale: Locale) {
         minimumFractionDigits: digits,
         maximumFractionDigits: digits,
         signDisplay: "exceptZero"
-      }).format(v);
+      }).format(clean(v));
       return `${s}u`;
     },
     /** Signed decimal (e.g. Sharpe, CLV). */
@@ -68,7 +72,7 @@ export function makeFormatters(locale: Locale) {
         minimumFractionDigits: digits,
         maximumFractionDigits: digits,
         signDisplay: "exceptZero"
-      }).format(v);
+      }).format(clean(v));
     },
     /** Decimal odds: 2 decimals. */
     odds(v: number | null | undefined): string {
@@ -95,7 +99,8 @@ export function makeFormatters(locale: Locale) {
         month: "short",
         day: "numeric",
         hour: "2-digit",
-        minute: "2-digit"
+        minute: "2-digit",
+        hourCycle: "h23"
       }).format(d);
     },
     date(iso: string | null | undefined): string {
@@ -106,7 +111,7 @@ export function makeFormatters(locale: Locale) {
     time(iso: string | null | undefined): string {
       const d = parseDate(iso);
       if (!d) return DASH;
-      return new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit" }).format(d);
+      return new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(d);
     },
     /** "3 hours ago", "in 2 days", "před 5 měsíci". */
     relative(iso: string | null | undefined, now: Date = new Date()): string {
@@ -146,6 +151,6 @@ export function ageHours(iso: string | null | undefined, now: Date = new Date())
 
 /** Tone for a signed metric: positive → pos, negative → neg. */
 export function signTone(v: number | null | undefined): "pos" | "neg" | "neutral" {
-  if (!isNum(v) || v === 0) return "neutral";
+  if (!isNum(v) || clean(v) === 0) return "neutral";
   return v > 0 ? "pos" : "neg";
 }

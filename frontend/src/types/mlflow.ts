@@ -52,6 +52,8 @@ export type ModelVersion = {
   metrics: Record<string, number>;
   purpose: string | null;
   train_until: string | null;
+  /** Test-window end of the source backtest ("" / null = open-ended). */
+  test_until: string | null;
   ui_url: string | null;
 };
 

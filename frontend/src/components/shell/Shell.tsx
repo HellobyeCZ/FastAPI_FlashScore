@@ -1,5 +1,6 @@
 "use client";
 import { useCallback, useState } from "react";
+import { usePathname } from "next/navigation";
 import { useLocale } from "@/contexts/LocaleContext";
 import { useSettings } from "@/hooks/useSettings";
 import { TopBar } from "./TopBar";
@@ -12,7 +13,10 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const [menu, setMenu] = useState(false);
   const closeMenu = useCallback(() => setMenu(false), []);
   const { settings } = useSettings();
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
+  const pathname = usePathname();
+  // Data ops lists every issue in full; the slim banner would repeat it.
+  const onOps = pathname === `/${locale}/ops`;
   return (
     <>
       <a
@@ -24,7 +28,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
       <TopBar onMenu={() => setMenu((v) => !v)} menuOpen={menu} />
       <Rail open={menu} onClose={closeMenu} />
       <main id="main" tabIndex={-1} className="pb-shell-bottom pt-shell-top focus:outline-none md:pl-rail">
-        <HealthBanner variant="slim" />
+        {!onOps && <HealthBanner variant="slim" />}
         <div className="mx-auto w-full max-w-[1680px] px-4 py-6 sm:px-6 lg:px-8">{children}</div>
       </main>
       <StatusBar />

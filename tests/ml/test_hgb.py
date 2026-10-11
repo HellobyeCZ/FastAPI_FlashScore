@@ -82,7 +82,7 @@ def test_hgb_model_fn_integrates_with_backtester(backfilled_full):
     )
     assert report.total_bets == 8 * 3
     assert 0.0 <= report.brier <= 1.0
-    assert report.mean_clv == 0.0
+    assert report.mean_clv is None  # CLV is undefined for close-priced archive bets
 
 
 def test_hgb_save_and_load_roundtrip(backfilled_full, tmp_path):

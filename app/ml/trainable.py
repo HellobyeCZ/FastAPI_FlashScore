@@ -57,6 +57,7 @@ def fit_logistic_at(train_until: str, spec: MarketSpec) -> ModelFn:
         fn = make_logistic_model_fn(raw, calibrated=False)
         fn.feature_columns = tuple(raw.feature_columns)
         fn.n_train_events = len(split.train.event_ids)
+        fn.trained_model = raw
         return fn
 
     calib_until = sorted(ts for _, ts in pre)[int(len(pre) * 0.75)]
@@ -68,6 +69,7 @@ def fit_logistic_at(train_until: str, spec: MarketSpec) -> ModelFn:
     fn = make_logistic_model_fn(cal, calibrated=True)
     fn.feature_columns = tuple(cal.feature_columns)
     fn.n_train_events = len(split.train.event_ids)
+    fn.trained_model = cal
     return fn
 
 
@@ -176,6 +178,7 @@ def fit_hgb_at(train_until: str, spec: MarketSpec) -> ModelFn:
         fn = make_trained_model_fn(raw, calibrated=False, name_prefix="hgb")
         fn.feature_columns = tuple(raw.feature_columns)
         fn.n_train_events = len(split.train.event_ids)
+        fn.trained_model = raw
         return fn
 
     calib_until = sorted(ts for _, ts in pre)[int(len(pre) * 0.75)]
@@ -188,6 +191,7 @@ def fit_hgb_at(train_until: str, spec: MarketSpec) -> ModelFn:
     fn = make_trained_model_fn(cal, calibrated=True, name_prefix="hgb")
     fn.feature_columns = tuple(cal.feature_columns)
     fn.n_train_events = len(split.train.event_ids)
+    fn.trained_model = cal
     return fn
 
 
@@ -264,6 +268,7 @@ def fit_hgb_pca_at(train_until: str, spec: MarketSpec) -> ModelFn:
         fn = make_trained_model_fn(raw, calibrated=False, name_prefix="hgb_pca")
         fn.feature_columns = tuple(HGB_FEATURE_COLUMNS)
         fn.n_train_events = len(split.train.event_ids)
+        fn.trained_model = raw
         return fn
 
     calib_until = sorted(ts for _, ts in pre)[int(len(pre) * 0.75)]
@@ -289,6 +294,7 @@ def fit_hgb_pca_at(train_until: str, spec: MarketSpec) -> ModelFn:
     fn = make_trained_model_fn(cal, calibrated=True, name_prefix="hgb_pca")
     fn.feature_columns = tuple(HGB_FEATURE_COLUMNS)
     fn.n_train_events = len(split.train.event_ids)
+    fn.trained_model = cal
     return fn
 
 

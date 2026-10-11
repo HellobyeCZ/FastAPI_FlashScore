@@ -40,7 +40,7 @@ export function Callout({
         {title && <div className="font-medium text-text">{title}</div>}
         {children && <div className={clsx("text-text-dim", title && "mt-0.5")}>{children}</div>}
       </div>
-      {action && <div className="flex shrink-0 items-center gap-2">{action}</div>}
+      {action && <div className="flex shrink-0 basis-full items-center gap-2 pl-6 sm:basis-auto sm:pl-0">{action}</div>}
     </div>
   );
 }

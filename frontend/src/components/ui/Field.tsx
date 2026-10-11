@@ -99,26 +99,32 @@ export function Checkbox({
   checked,
   onChange,
   disabled,
-  hint
+  hint,
+  hideLabel,
+  "aria-describedby": describedBy
 }: {
   label: React.ReactNode;
   checked: boolean;
   onChange: (next: boolean) => void;
   disabled?: boolean;
   hint?: React.ReactNode;
+  /** Keep the label for screen readers only (e.g. row-selection checkboxes). */
+  hideLabel?: boolean;
+  "aria-describedby"?: string;
 }) {
   const id = useId();
   return (
-    <div className="flex items-start gap-2">
+    <div className={clsx("flex items-start", !hideLabel && "gap-2")}>
       <input
         id={id}
         type="checkbox"
         checked={checked}
         disabled={disabled}
+        aria-describedby={describedBy}
         onChange={(e) => onChange(e.target.checked)}
         className="mt-0.5 h-4 w-4 cursor-pointer accent-[rgb(var(--accent))] disabled:cursor-not-allowed"
       />
-      <label htmlFor={id} className="cursor-pointer text-body text-text">
+      <label htmlFor={id} className={clsx(hideLabel ? "sr-only" : "cursor-pointer text-body text-text")}>
         {label}
         {hint && <span className="block text-meta text-text-faint">{hint}</span>}
       </label>

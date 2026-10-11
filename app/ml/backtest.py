@@ -344,7 +344,9 @@ def run_backtest(
                     stake_kelly_fraction=stake,
                     result=result,
                     pnl=pnl,
-                    clv=0.0,    # price_taken == closing_price for archive bets
+                    # Bets are priced at the averaged close, so CLV is undefined
+                    # (not zero). Stored as NULL; aggregates report null.
+                    clv=None,
                 ))
 
     metrics = _compute_metrics(bets, total_stake=total_stake, hits=hits, max_dd=max_dd)
