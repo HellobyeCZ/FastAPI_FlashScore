@@ -54,7 +54,12 @@ function buildRows(s: OpsStatus, now: Date): Row[] {
   const overdue = s.health.issues.some((i) => i.code === "settle_overdue");
   const settleTone: Tone = overdue ? "warn" : "pos";
   return [
-    { id: "picks", at: p.last_pick_recorded_at, rule: true, ...byAge(p.last_pick_recorded_at, PICKS_WARN_H, PICKS_ERROR_H, now) },
+    {
+      id: "picks",
+      at: p.last_pick_recorded_at,
+      rule: true,
+      ...byAge(p.last_pick_recorded_at, PICKS_WARN_H, PICKS_ERROR_H, now)
+    },
     {
       id: "settled",
       at: p.last_settled_at,

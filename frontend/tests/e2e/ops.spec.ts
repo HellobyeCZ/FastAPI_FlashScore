@@ -97,7 +97,13 @@ const DONE_RUN = {
       events_snapshotted: 58,
       live_rows_written: 1914
     },
-    phase1: { state: "done", labels_upserted: 41, closing_upserted: 38, closing_from_live_upserted: 3, elo_upserted: 41 },
+    phase1: {
+      state: "done",
+      labels_upserted: 41,
+      closing_upserted: 38,
+      closing_from_live_upserted: 3,
+      elo_upserted: 41
+    },
     settle: { state: "done", pending_at_start: 7, settled: 6, voided: 0, skipped_no_label: 1 },
     predict: { state: "done", upcoming_events: 24, candidate_picks: 5, newly_inserted: 4, duplicates_skipped: 1 }
   },
@@ -565,7 +571,8 @@ test.describe("Settings", () => {
     await stubOps(page);
     await page.goto("/en/settings");
     await waitForSettings(page);
-    await page.getByRole("radiogroup", { name: "Interface language" }).getByRole("radio", { name: "Čeština" }).click();
+    const language = page.getByRole("radiogroup", { name: "Interface language" });
+    await language.getByRole("radio", { name: "Čeština" }).click();
     await expect(page).toHaveURL(/\/cs\/settings$/);
     await expect(page.locator("html")).toHaveAttribute("lang", "cs");
     await expect(page.getByRole("heading", { level: 1, name: "Nastavení" })).toBeVisible();

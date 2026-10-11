@@ -203,7 +203,10 @@ function NewScrapeForm({
                   key={p}
                   type="button"
                   onClick={() => set({ path: p })}
-                  className="max-w-full truncate border border-border px-1.5 font-mono text-meta text-text-dim hover:border-text-dim hover:text-text"
+                  className={
+                    "max-w-full truncate border border-border px-1.5 font-mono text-meta text-text-dim " +
+                    "hover:border-text-dim hover:text-text"
+                  }
                 >
                   {p}
                 </button>

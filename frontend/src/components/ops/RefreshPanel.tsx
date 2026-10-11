@@ -138,7 +138,8 @@ export function RefreshPanel() {
   const [confirming, setConfirming] = useState(false);
   const recentId = useId();
   const current = run.data;
-  const failedStage = current?.status === "error" ? REFRESH_STAGES.find((s) => stageState(current, s) === "failed") : undefined;
+  const failedStage =
+    current?.status === "error" ? REFRESH_STAGES.find((s) => stageState(current, s) === "failed") : undefined;
 
   const columns: Column<RefreshRun>[] = [
     {

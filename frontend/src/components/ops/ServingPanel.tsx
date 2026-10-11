@@ -63,7 +63,9 @@ function MlflowSection({ mlflow, now }: { mlflow: MlflowStatus; now: Date }) {
       {state === "unreachable" && (
         <Callout tone="warn" title={t("ops.mlflow.unreachableTitle")}>
           <p>{t("ops.mlflow.unreachableBody")}</p>
-          <code className="mt-1 inline-block border border-border bg-bg px-1.5 py-0.5 font-mono text-text">make mlflow</code>
+          <code className="mt-1 inline-block border border-border bg-bg px-1.5 py-0.5 font-mono text-text">
+            make mlflow
+          </code>
           {mlflow.error && <p className="mt-1 break-all text-meta text-text-faint">{mlflow.error}</p>}
         </Callout>
       )}
