@@ -1009,6 +1009,21 @@ test.describe("Match detail", () => {
     expect(box).not.toBeNull();
     expect(box!.x + box!.width).toBeLessThanOrEqual(390);
   });
+
+  test("model and bet tables fit a 390px phone in Czech without sideways scrolling", async ({ page }) => {
+    await setup(page);
+    await stubDetail(page);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`/cs/matches/${EVENT_ID}`);
+    await expect(page.locator("#bets").getByText("Výhra").filter({ visible: true }).first()).toBeVisible();
+    await expect(page.locator("#model").getByRole("table")).toBeVisible();
+    // Only the odds board (many bookmakers) may scroll inside its panel.
+    const overflow = await page
+      .locator("#bets table, #model table")
+      .evaluateAll((tables) => tables.map((t) => t.scrollWidth - (t.parentElement?.clientWidth ?? 0)));
+    expect(overflow.length).toBeGreaterThan(0);
+    expect(Math.max(...overflow)).toBeLessThanOrEqual(0);
+  });
 });
 
 // ---------------------------------------------------------------------------

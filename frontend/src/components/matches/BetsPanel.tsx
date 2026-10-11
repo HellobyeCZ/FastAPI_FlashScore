@@ -121,7 +121,7 @@ function LiveBetsTable({ rows }: { rows: PaperBetRow[] }) {
       cell: (b) => (
         <span className="flex flex-col gap-0.5 leading-tight">
           {/* Model and status columns are hidden on phones; show them here instead. */}
-          <ModelLink model={b.model} className="sm:hidden" />
+          <ModelLink model={b.model} className="sm:hidden" wrap />
           <span>{selectionLabel(b.selection, t)}</span>
           <span className="whitespace-nowrap text-meta text-text-dim">{marketLabel(b.market, t)}</span>
           <span className="self-start sm:hidden">

@@ -60,7 +60,7 @@ export function ModelViewPanel({ eventId, teams, finished }: { eventId: string; 
       cell: (r) => (
         <span className="flex flex-col gap-0.5 leading-tight">
           {/* The model column is hidden on phones; name the model here instead. */}
-          <ModelLink model={r.model} className="sm:hidden" />
+          <ModelLink model={r.model} className="sm:hidden" wrap />
           <span>
             {selectionLabel(r.selection, t)}
             {team(r.selection) && <span className="text-text-dim"> · {team(r.selection)}</span>}
