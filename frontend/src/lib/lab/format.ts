@@ -1,4 +1,4 @@
-import { modelLabel } from "@/lib/labels";
+import { marketLabel, modelLabel } from "@/lib/labels";
 import { parseDate } from "@/lib/format";
 import type { Locale, MessageKey, MessageValues } from "@/lib/i18n";
 import type { BacktestRunDetail, BacktestRunSummary } from "./backtests";
@@ -97,4 +97,19 @@ export function differences(runs: BacktestRunDetail[]): Difference[] {
   if (differs((r) => r.market_spec)) out.push("market");
   if (differs((r) => `${r.min_edge}|${r.kelly_fraction}|${r.force_bets}`)) out.push("staking");
   return out;
+}
+
+/** "football_1x2_ft" → "Football · 1X2 · full time". */
+export function marketSpecLabel(spec: string, t: T): string {
+  const [sport, ...rest] = spec.split("_");
+  if (!sport || rest.length === 0) return spec.replace(/_/g, " ");
+  const market = marketLabel(rest.join("_").toUpperCase(), t);
+  return `${sport.charAt(0).toUpperCase()}${sport.slice(1)} · ${market}`;
+}
+
+/** Wall-clock duration of a finished run, or null while it hasn't both started and finished. */
+export function runDurationMs(run: Pick<BacktestRunSummary, "started_at" | "finished_at">): number | null {
+  const start = parseDate(run.started_at);
+  const end = parseDate(run.finished_at);
+  return start && end ? Math.max(0, end.getTime() - start.getTime()) : null;
 }

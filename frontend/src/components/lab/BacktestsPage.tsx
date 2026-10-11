@@ -334,7 +334,7 @@ export function BacktestsPage() {
       </Panel>
       {activeCount > 0 && <p className="mt-2 text-meta text-text-faint">{t("lab.runs.polling")}</p>}
 
-      <NewBacktestDialog open={creating} onClose={() => setCreating(false)} />
+      {creating && <NewBacktestDialog open onClose={() => setCreating(false)} />}
     </>
   );
 }

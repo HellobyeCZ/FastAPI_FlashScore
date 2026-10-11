@@ -6,9 +6,15 @@ import { Button, Callout, Checkbox, Dialog, Field, Input, Select } from "@/compo
 import { errorMessage } from "@/lib/api/http";
 import { modelLabel } from "@/lib/labels";
 import { routes } from "@/lib/routes";
-import { useBacktestModels, useCreateBacktest, type CreateBacktestRequest } from "@/lib/lab/backtests";
+import {
+  useBacktestModels,
+  useCreateBacktest,
+  type BacktestRunDetail,
+  type CreateBacktestRequest
+} from "@/lib/lab/backtests";
+import { isoDay } from "@/lib/lab/format";
 
-type FormState = {
+export type FormState = {
   model: string;
   trainUntil: string;
   testUntil: string;
@@ -34,14 +40,41 @@ const INITIAL: FormState = {
 const MAX_LABEL = 80;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
-/** Queue a walk-forward backtest; on success opens the new run's page. */
-export function NewBacktestDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+/** Form values to start from, e.g. when re-running an existing run. */
+export type NewBacktestPrefill = Partial<FormState>;
+
+/** Same settings as `run`, optionally overridden ("re-run with force bets"). */
+export function prefillFromRun(run: BacktestRunDetail, overrides: NewBacktestPrefill = {}): NewBacktestPrefill {
+  return {
+    model: run.model,
+    trainUntil: isoDay(run.train_until),
+    testUntil: isoDay(run.test_until),
+    minEdgePct: String(Number((run.min_edge * 100).toFixed(4))),
+    kelly: String(run.kelly_fraction),
+    forceBets: run.force_bets,
+    ...overrides
+  };
+}
+
+/**
+ * Queue a walk-forward backtest; on success opens the new run's page.
+ * Mount it while open so every opening starts from `prefill`.
+ */
+export function NewBacktestDialog({
+  open,
+  onClose,
+  prefill
+}: {
+  open: boolean;
+  onClose: () => void;
+  prefill?: NewBacktestPrefill;
+}) {
   const { t, locale } = useLocale();
   const router = useRouter();
   const formId = useId();
   const models = useBacktestModels();
   const create = useCreateBacktest();
-  const [form, setForm] = useState<FormState>(INITIAL);
+  const [form, setForm] = useState<FormState>(() => ({ ...INITIAL, ...prefill }));
   const [errors, setErrors] = useState<Errors>({});
   const [touched, setTouched] = useState(false);
 
@@ -97,9 +130,6 @@ export function NewBacktestDialog({ open, onClose }: { open: boolean; onClose: (
     };
     create.mutate(body, {
       onSuccess: ({ id }) => {
-        setForm(INITIAL);
-        setErrors({});
-        setTouched(false);
         onClose();
         router.push(routes.backtest(locale, id));
       }

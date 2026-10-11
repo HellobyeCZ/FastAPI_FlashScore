@@ -2,7 +2,6 @@
 import { useMutation, useQueries, useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { backendGet, backendSend } from "@/lib/api/http";
 import { opsStatusKey } from "@/hooks/useOpsStatus";
-import type { ServedModel } from "@/types/ops";
 
 /**
  * Backtest API surface (FastAPI /backtest/* and the backtest branch of
@@ -93,12 +92,16 @@ export type RunBet = {
 
 export type RunBetsPage = { rows: RunBet[]; total: number };
 
-/** Cumulative P&L curve: x = bets placed so far, y = running P&L in units. */
+/** Running totals at the end of one betting day (UTC calendar day). */
+export type PnlDay = { day: string; bets: number; pnl: number };
+
+/** Cumulative P&L of a run by bet date; `days` is chronological. */
 export type PnlCurve = {
-  points: { x: number; y: number }[];
+  days: PnlDay[];
   first_day: string | null;
   last_day: string | null;
   bets: number;
+  pnl: number;
 };
 
 const ACTIVE: readonly string[] = ["queued", "running"];
@@ -253,20 +256,33 @@ type DayRow = { day: string; n: number; pnl_total: number | null };
 
 function toCurve(rows: DayRow[]): PnlCurve {
   const sorted = [...rows].sort((a, b) => a.day.localeCompare(b.day));
-  const points = [{ x: 0, y: 0 }];
+  const days: PnlDay[] = [];
   let bets = 0;
   let pnl = 0;
   for (const r of sorted) {
     bets += r.n;
     pnl += r.pnl_total ?? 0;
-    points.push({ x: bets, y: pnl });
+    days.push({ day: r.day, bets, pnl });
   }
   return {
-    points: sorted.length ? points : [],
+    days,
     first_day: sorted[0]?.day ?? null,
     last_day: sorted[sorted.length - 1]?.day ?? null,
-    bets
+    bets,
+    pnl
   };
+}
+
+const DAY_MS = 86_400_000;
+const dayStart = (day: string) => Date.UTC(+day.slice(0, 4), +day.slice(5, 7) - 1, +day.slice(8, 10));
+
+/**
+ * Chart points over bet time: x = whole days since `origin` (YYYY-MM-DD),
+ * y = cumulative units. A shared origin keeps several runs on one time axis.
+ */
+export function curvePoints(curve: PnlCurve, origin: string): { x: number; y: number }[] {
+  const start = dayStart(origin);
+  return curve.days.map((d) => ({ x: Math.round((dayStart(d.day) - start) / DAY_MS), y: d.pnl }));
 }
 
 function runPnlQuery(runId: string) {
@@ -321,18 +337,6 @@ export function useDeleteBacktest() {
     onSuccess: (_res, id) => {
       qc.removeQueries({ queryKey: backtestKeys.run(id) });
       invalidate();
-    }
-  });
-}
-
-/** Re-resolve served models (registry @champion, else file artifacts). */
-export function useReloadServedModels() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: () => backendSend<ServedModel[]>("POST", "ml/reload"),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: opsStatusKey });
-      qc.invalidateQueries({ queryKey: ["mlflow"] });
     }
   });
 }
