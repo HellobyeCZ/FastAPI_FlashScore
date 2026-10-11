@@ -81,7 +81,7 @@ export function FilterBar({ state }: { state: PerformanceFilterState }) {
           />
         </div>
         {windowValue === "custom" && (
-          <>
+          <div className="flex gap-3">
             <DateField
               label={t("performance.window.from")}
               value={filters.from}
@@ -94,7 +94,7 @@ export function FilterBar({ state }: { state: PerformanceFilterState }) {
               min={filters.from}
               onCommit={(to) => state.update({ window: "custom", to })}
             />
-          </>
+          </div>
         )}
         <div className="ml-auto flex items-center gap-2">
           {active > 0 && (
@@ -224,7 +224,7 @@ function DateField({
           onKeyDown={(e) => {
             if (e.key === "Enter") commit(e.currentTarget);
           }}
-          className="w-40"
+          className="w-36"
         />
       )}
     </Field>
