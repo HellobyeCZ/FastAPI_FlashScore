@@ -316,7 +316,7 @@ export function MatchCell({
   return (
     <span className={clsx("flex min-w-0 flex-col", className)}>
       {home && away ? (
-        <span className="truncate">
+        <span className="break-words sm:truncate">
           {home} – {away}
         </span>
       ) : (

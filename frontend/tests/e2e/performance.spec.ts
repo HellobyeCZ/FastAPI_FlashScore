@@ -50,21 +50,25 @@ const MATCHES: [string, string, string, string][] = [
   ["Brentford", "Fulham", "Premier League", "ENGLAND"]
 ];
 
-/** Settled bets per model: [model, n, wins]. logistic is the only model with n ≥ 30. */
-const MODEL_COUNTS: [string, number, number][] = [
-  ["logistic", 42, 17],
-  ["dixon_coles", 12, 5],
-  ["hgb", 10, 3]
+/**
+ * Settled bets per model: [model, n, wins, prices]. logistic is the only model
+ * with n ≥ 30; hgb ends up with the highest ROI on 10 bets, so it must be
+ * dimmed rather than marked best.
+ */
+const MODEL_COUNTS: [string, number, number, number[]][] = [
+  ["logistic", 42, 18, [1.85, 2.1, 2.4, 2.9, 3.4]],
+  ["dixon_coles", 12, 3, [1.85, 2.4, 3.3]],
+  ["hgb", 10, 3, [3.3, 4.6, 6.2]]
 ];
 
 function buildBets(): Bet[] {
   const bets: Bet[] = [];
   let id = 1;
-  for (const [model, n, wins] of MODEL_COUNTS) {
+  for (const [model, n, wins, prices] of MODEL_COUNTS) {
     for (let i = 0; i < n; i++) {
       const [home, away, competition, country] = MATCHES[(i + id) % MATCHES.length];
       const ou = i % 3 === 0;
-      const price = [1.85, 2.4, 3.3, 4.6, 6.2][i % 5];
+      const price = prices[i % prices.length];
       const edge = 0.01 + ((i * 7) % 13) / 100;
       const stake = 0.02 + (i % 4) * 0.015;
       // Spread exactly `wins` wins evenly over the model's bets.
@@ -152,52 +156,85 @@ function summary(lastSettled: string | null) {
   };
 }
 
-const metrics = (n: number, wins: number, stake: number, pnl: number, clv: number | null, brier: number, dd: number) => ({
-  n,
-  wins,
-  stake_total: stake,
-  pnl_total: pnl,
-  mean_clv: clv,
-  brier,
-  hit_rate: n ? wins / n : null,
-  roi: stake > 0 ? pnl / stake : null,
-  max_drawdown: dd
-});
+/** Bets matching the /picks/stats and /picks/history filter params. */
+function filterBets(url: URL, defaultStatus: string | null): Bet[] {
+  const status = url.searchParams.get("status") ?? defaultStatus;
+  const list = (name: string) => (url.searchParams.get(name) ?? "").split(",").filter(Boolean);
+  const num = (name: string) => (url.searchParams.has(name) ? Number(url.searchParams.get(name)) : null);
+  const [models, markets, comps, selections] = ["model", "market", "competition", "selection"].map(list);
+  const [edgeMin, edgeMax, priceMin, priceMax] = ["edge_min", "edge_max", "price_min", "price_max"].map(num);
+  const from = url.searchParams.get("date_from");
+  const to = url.searchParams.get("date_to");
+  return BETS.filter((b) => {
+    const t = b.settled_at ?? b.recommended_at;
+    return (
+      (!status || status === "all" || b.status === status) &&
+      (!from || Date.parse(t) >= Date.parse(from)) &&
+      (!to || Date.parse(t) <= Date.parse(to)) &&
+      (!models.length || models.includes(b.model)) &&
+      (!markets.length || markets.includes(b.market)) &&
+      (!comps.length || comps.includes(b.competition)) &&
+      (!selections.length || selections.includes(b.selection)) &&
+      (edgeMin === null || b.edge >= edgeMin) &&
+      (edgeMax === null || b.edge <= edgeMax) &&
+      (priceMin === null || b.price_at_recommendation >= priceMin) &&
+      (priceMax === null || b.price_at_recommendation <= priceMax)
+    );
+  });
+}
 
-const MODEL_ROWS = [
-  // hgb has the highest ROI but only 10 bets: it must not be marked best.
-  { model: "hgb", ...metrics(10, 3, 0.34, 0.19, 0.012, 0.25, 0.1) },
-  { model: "logistic", ...metrics(42, 17, 3.4, 0.52, 0.0081, 0.224, 0.41) },
-  { model: "dixon_coles", ...metrics(12, 5, 1.46, -0.3996, -0.0088, 0.2492, 0.5685) }
-];
+/** Same metrics as app/ml/paper_trade_stats.aggregate (null when undefined). */
+function metrics(bets: Bet[]) {
+  const n = bets.length;
+  const wins = bets.filter((b) => b.result === 1).length;
+  const stake = bets.reduce((a, b) => a + b.kelly_full, 0);
+  const pnl = bets.reduce((a, b) => a + (b.pnl ?? 0), 0);
+  const clvs = bets.map((b) => b.clv).filter((c): c is number => c !== null);
+  let running = 0;
+  let peak = 0;
+  let maxDd = 0;
+  for (const b of [...bets].sort((x, y) => (x.settled_at ?? "").localeCompare(y.settled_at ?? ""))) {
+    running += b.pnl ?? 0;
+    peak = Math.max(peak, running);
+    maxDd = Math.max(maxDd, peak - running);
+  }
+  return {
+    n,
+    wins,
+    stake_total: stake,
+    pnl_total: pnl,
+    mean_clv: clvs.length ? clvs.reduce((a, c) => a + c, 0) / clvs.length : null,
+    brier: n ? bets.reduce((a, b) => a + (b.model_prob - (b.result ?? 0)) ** 2, 0) / n : null,
+    hit_rate: n ? wins / n : null,
+    roi: stake > 0 ? pnl / stake : null,
+    max_drawdown: maxDd
+  };
+}
 
-const STATS_ROWS: Record<string, unknown[]> = {
-  "": [metrics(64, 25, 5.2, 0.3104, 0.0042, 0.231, 0.62)],
-  model: MODEL_ROWS,
-  "model,day": [
-    { model: "logistic", day: "2026-10-01", ...metrics(14, 6, 1.1, 0.21, 0.01, 0.22, 0.1) },
-    { model: "logistic", day: "2026-10-05", ...metrics(14, 5, 1.2, -0.09, 0.0, 0.23, 0.3) },
-    { model: "logistic", day: "2026-10-09", ...metrics(14, 6, 1.1, 0.4, 0.01, 0.22, 0.2) },
-    { model: "dixon_coles", day: "2026-10-02", ...metrics(6, 3, 0.7, 0.05, -0.01, 0.24, 0.2) },
-    { model: "dixon_coles", day: "2026-10-08", ...metrics(6, 2, 0.76, -0.45, -0.008, 0.26, 0.5) },
-    { model: "hgb", day: "2026-10-03", ...metrics(10, 3, 0.34, 0.19, 0.012, 0.25, 0.1) }
-  ],
-  competition: [
-    { competition: "Chance Liga - Championship Group", ...metrics(20, 8, 1.6, 0.22, 0.006, 0.22, 0.3) },
-    { competition: "Chance Liga - Relegation Group", ...metrics(8, 2, 0.6, -0.43, -0.016, 0.24, 0.43) },
-    { competition: "LaLiga", ...metrics(18, 9, 1.5, 0.61, 0.004, 0.23, 0.1) },
-    { competition: "Premier League", ...metrics(17, 6, 1.5, -0.09, 0.002, 0.24, 0.2) },
-    { competition: "Championship - Play Offs", ...metrics(1, 1, 0, 0, null, 0.28, 0) }
-  ],
-  "competition,selection": [
-    { competition: "Chance Liga - Championship Group", selection: "draw", ...metrics(9, 3, 0.7, 0.1, 0.012, 0.22, 0.1) },
-    { competition: "Chance Liga - Championship Group", selection: "home", ...metrics(11, 5, 0.9, 0.12, -0.004, 0.22, 0.2) },
-    { competition: "Chance Liga - Relegation Group", selection: "draw", ...metrics(8, 2, 0.6, -0.43, -0.016, 0.24, 0.43) },
-    { competition: "LaLiga", selection: "over", ...metrics(10, 6, 0.8, 0.5, 0.009, 0.21, 0.1) },
-    { competition: "LaLiga", selection: "under", ...metrics(8, 3, 0.7, 0.11, -0.002, 0.24, 0.1) },
-    { competition: "Premier League", selection: "away", ...metrics(17, 6, 1.5, -0.09, 0.002, 0.24, 0.2) }
-  ]
+const GROUP_KEY: Record<string, (b: Bet) => string> = {
+  model: (b) => b.model,
+  market: (b) => b.market,
+  competition: (b) => b.competition,
+  selection: (b) => b.selection,
+  day: (b) => (b.settled_at ?? b.recommended_at).slice(0, 10)
 };
+
+/** /picks/stats body: one overall row without group_by, else one row per group. */
+function statsBody(url: URL) {
+  const groupBy = (url.searchParams.get("group_by") ?? "").split(",").filter(Boolean);
+  const bets = filterBets(url, "settled");
+  if (!groupBy.length) return { group_by: [], filters: {}, rows: [metrics(bets)] };
+  const groups = new Map<string, Bet[]>();
+  for (const b of bets) {
+    const key = groupBy.map((g) => GROUP_KEY[g](b)).join("\u0000");
+    groups.set(key, [...(groups.get(key) ?? []), b]);
+  }
+  const rows = [...groups.entries()].map(([key, list]) => ({
+    ...Object.fromEntries(key.split("\u0000").map((v, i) => [groupBy[i], v])),
+    ...metrics(list)
+  }));
+  return { group_by: groupBy, filters: {}, rows };
+}
 
 const CALIBRATION: Record<string, { lower: number; upper: number; n: number; mean_pred: number; hit_rate: number }[]> = {
   logistic: [
@@ -328,26 +365,11 @@ type Options = {
   registry?: unknown;
 };
 
-function csv(url: URL, name: string): string[] {
-  return (url.searchParams.get(name) ?? "").split(",").filter(Boolean);
-}
-
-/** History stub with the new contract: filters, offset, count = total. */
-function historyBody(url: URL, empty: boolean) {
-  if (empty) return { count: 0, rows: [] };
-  const status = url.searchParams.get("status");
-  const models = csv(url, "model");
-  const markets = csv(url, "market");
-  const comps = csv(url, "competition");
-  const edgeMin = url.searchParams.get("edge_min");
-  const rows = BETS.filter(
-    (b) =>
-      (!status || b.status === status) &&
-      (!models.length || models.includes(b.model)) &&
-      (!markets.length || markets.includes(b.market)) &&
-      (!comps.length || comps.includes(b.competition)) &&
-      (edgeMin === null || b.edge >= Number(edgeMin))
-  ).sort((a, b) => b.recommended_at.localeCompare(a.recommended_at) || b.id - a.id);
+/** History stub with the new contract: filters, offset, count = total, newest first. */
+function historyBody(url: URL) {
+  const rows = filterBets(url, null).sort(
+    (a, b) => b.recommended_at.localeCompare(a.recommended_at) || b.id - a.id
+  );
   const offset = Number(url.searchParams.get("offset") ?? 0);
   const limit = Number(url.searchParams.get("limit") ?? 200);
   return { count: rows.length, rows: rows.slice(offset, offset + limit) };
@@ -381,16 +403,15 @@ async function stubPerformance(page: Page, opts: Options = {}) {
     if (failStats !== undefined && groupBy === failStats) {
       return route.fulfill({ status: 500, json: { detail: "aggregation failed: database is locked" } });
     }
-    let rows = empty ? (groupBy === "" ? [metrics(0, 0, 0, 0, null, 0, 0)] : []) : STATS_ROWS[groupBy] ?? [];
-    const models = csv(url, "model");
-    if (models.length && groupBy !== "") rows = rows.filter((r) => !("model" in (r as object)) || models.includes((r as { model: string }).model));
-    if (models.length && groupBy === "" && !empty) rows = MODEL_ROWS.filter((r) => models.includes(r.model));
-    return route.fulfill({ json: { group_by: groupBy ? groupBy.split(",") : [], filters: {}, rows } });
+    if (empty) {
+      return route.fulfill({ json: { group_by: [], filters: {}, rows: groupBy ? [] : [metrics([])] } });
+    }
+    return route.fulfill({ json: statsBody(url) });
   });
   await page.route("**/api/backend/picks/history*", (route) => {
     const url = new URL(route.request().url());
     requests.push(url);
-    return route.fulfill({ json: historyBody(url, empty) });
+    return route.fulfill({ json: empty ? { count: 0, rows: [] } : historyBody(url) });
   });
 
   await page.clock.setFixedTime(NOW);

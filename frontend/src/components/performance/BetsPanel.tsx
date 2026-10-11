@@ -22,6 +22,12 @@ import { betState, MatchCell, NoBetsEmpty, Pager, PanelError, panelStatus, usePp
 
 const PAGE_SIZE = 25;
 
+/**
+ * Settlement stores log-ratio CLV, so an unchanged price comes back as ±2e-16
+ * rather than 0; treat that as the 0 it is instead of a coloured "+0.00%".
+ */
+const dropFloatNoise = (v: number | null) => (v !== null && Math.abs(v) < 1e-9 ? 0 : v);
+
 /** Table scope; "settled" matches the population every chart on the page uses. */
 const STATUSES = ["settled", "pending", "all"] as const;
 type StatusFilter = (typeof STATUSES)[number];
@@ -79,7 +85,7 @@ export function BetsPanel({
         <MatchCell
           row={r}
           mobileSub={`${selectionLabel(r.selection, t)} · ${marketLabel(r.market, t)}`}
-          className="w-32 sm:w-auto sm:max-w-xs"
+          className="w-36 sm:w-auto sm:max-w-xs"
         />
       )
     },
@@ -141,7 +147,7 @@ export function BetsPanel({
       key: "clv",
       header: t("performance.col.clv"),
       headerTitle: t("performance.col.clvTitle"),
-      cell: (r) => <Signed value={r.clv} format="pct" digits={2} />,
+      cell: (r) => <Signed value={dropFloatNoise(r.clv)} format="pct" digits={2} />,
       align: "right",
       hideBelow: "sm"
     }

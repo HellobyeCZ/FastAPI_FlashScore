@@ -113,7 +113,6 @@ export const performance: Record<keyof typeof en, string> = {
   "performance.col.sharpe": "Sharpe (upr.)",
   "performance.col.version": "Verze",
   "performance.col.created": "Vytvořeno",
-  "performance.col.purpose": "Zdroj",
   "performance.col.links": "Odkazy",
 
   "performance.chart.showData": "Zobrazit data",
@@ -208,6 +207,5 @@ export const performance: Record<keyof typeof en, string> = {
   "performance.backtests.empty": "Žádné backtesty tohoto modelu",
   "performance.backtests.emptyBody": "Spusťte jeden v Laboratoři modelů a porovnejte ho s živými výsledky.",
   "performance.backtests.action": "Otevřít Laboratoř modelů",
-  "performance.backtests.all": "Všechny backtesty",
   "performance.backtests.noBets": "žádné sázky"
 };

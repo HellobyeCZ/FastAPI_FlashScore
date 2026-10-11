@@ -114,7 +114,6 @@ export const performance = {
   "performance.col.sharpe": "Sharpe-adj",
   "performance.col.version": "Version",
   "performance.col.created": "Created",
-  "performance.col.purpose": "Source",
   "performance.col.links": "Links",
 
   "performance.chart.showData": "Show data",
@@ -209,6 +208,5 @@ export const performance = {
   "performance.backtests.empty": "No backtests of this model",
   "performance.backtests.emptyBody": "Run one in Model lab to compare it with the live results.",
   "performance.backtests.action": "Open Model lab",
-  "performance.backtests.all": "All backtests",
   "performance.backtests.noBets": "no bets"
 } as const;
