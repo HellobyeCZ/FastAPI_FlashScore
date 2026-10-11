@@ -431,3 +431,202 @@ def test_cancel_queued_and_running_runs(db_path, monkeypatch):
         asyncio.run(go())
     finally:
         release.set()
+
+
+# ---------------------------------------------------------------------------
+# Guarded status transitions
+# ---------------------------------------------------------------------------
+
+def _seed_run(db_path, run_id, status, *, stage=None, finished_at=None, total_bets=None):
+    with sqlite3.connect(db_path) as c:
+        c.execute(
+            "INSERT INTO backtest_runs (id, label, model, train_until, min_edge, "
+            "kelly_fraction, force_bets, scope_json, status, created_at, stage, "
+            "finished_at, total_bets, market_spec) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (run_id, run_id, "market_implied", "2024-08-01T00:00:00Z", 0.02, 0.25, 0,
+             "[]", status, "2024-01-01T00:00:00Z", stage, finished_at, total_bets,
+             "football_1x2_ft"),
+        )
+        c.commit()
+
+
+def _row(db_path, run_id):
+    with sqlite3.connect(db_path) as c:
+        c.row_factory = sqlite3.Row
+        return c.execute("SELECT * FROM backtest_runs WHERE id = ?", (run_id,)).fetchone()
+
+
+def test_status_transitions_never_overwrite_a_final_status(db_path):
+    from app.services.backtest_manager import BacktestManager
+
+    mgr = BacktestManager()
+    _seed_run(db_path, "running", "running")
+    _seed_run(db_path, "cancelled", "cancelled", finished_at="2024-01-01T01:00:00Z")
+    _seed_run(db_path, "completed", "completed", finished_at="2024-01-01T01:00:00Z")
+
+    # cancel()'s queued-only transition leaves a run the worker started alone.
+    assert mgr._cancel_queued_sync("running") is False
+    assert _row(db_path, "running")["status"] == "running"
+
+    # No stage on a run that is not running.
+    mgr._mark_stage_sync("cancelled", "training")
+    assert _row(db_path, "cancelled")["stage"] is None
+
+    # A completed run stays completed.
+    mgr._mark_failed_sync("completed", "late error")
+    mgr._mark_cancelled_sync("completed")
+    done = _row(db_path, "completed")
+    assert (done["status"], done["error"]) == ("completed", None)
+
+    # The worker's cancel path clears a stale stage on an already-cancelled
+    # row and keeps its original finish time.
+    with sqlite3.connect(db_path) as c:
+        c.execute("UPDATE backtest_runs SET stage = 'backtesting' WHERE id = 'cancelled'")
+    mgr._mark_cancelled_sync("cancelled")
+    row = _row(db_path, "cancelled")
+    assert (row["status"], row["stage"], row["finished_at"]) == (
+        "cancelled", None, "2024-01-01T01:00:00Z",
+    )
+
+
+def test_cancel_after_last_checkpoint_wins_over_completion(db_path, monkeypatch):
+    """A cancel that lands after the worker's last checkpoint (here: while
+    kickoffs are looked up) must still end the run cancelled, with no bets
+    stored and nothing logged to MLflow."""
+    from app.services.backtest_manager import BacktestManager, CreateRunParams
+
+    monkeypatch.setattr(
+        "app.services.backtest_manager.run_backtest", lambda **kw: _ok_report(),
+    )
+    logged = []
+    monkeypatch.setattr(
+        "app.services.backtest_manager.log_backtest_run",
+        lambda **kw: logged.append(kw) or "should-not-be-logged",
+    )
+    real_kickoffs = BacktestManager._kickoff_map_for
+
+    def kickoffs_then_cancel(self, event_ids):
+        # Same write cancel() makes for a running run.
+        with sqlite3.connect(db_path) as c:
+            run_id = c.execute(
+                "SELECT id FROM backtest_runs WHERE status = 'running'"
+            ).fetchone()[0]
+        self._cancel_requested.add(run_id)
+        self._flag_cancelling_sync(run_id)
+        return real_kickoffs(self, event_ids)
+
+    monkeypatch.setattr(BacktestManager, "_kickoff_map_for", kickoffs_then_cancel)
+
+    async def go():
+        mgr = BacktestManager()
+        await mgr.start()
+        run_id = await mgr.create_run(
+            CreateRunParams(model="market_implied", train_until="2024-08-01T00:00:00Z")
+        )
+        row = await _wait_for(mgr, run_id, ("completed", "failed", "cancelled"))
+        await mgr.shutdown()
+        return row
+
+    row = asyncio.run(go())
+    assert row.status == "cancelled", row.error
+    assert row.stage is None
+    assert row.total_bets is None
+    with sqlite3.connect(db_path) as c:
+        assert c.execute("SELECT COUNT(*) FROM backtest_bets").fetchone()[0] == 0
+    assert logged == []
+
+
+def test_cancel_of_a_run_that_finished_meanwhile_is_rejected(db_path):
+    from app.services.backtest_manager import BacktestManager, RunNotCancellable
+
+    mgr = BacktestManager()
+    _seed_run(db_path, "r1", "running")
+
+    def worker_finishes_first(run_id):
+        # The worker persists the run between cancel()'s read and its flag
+        # write, so the flag write no longer matches.
+        with sqlite3.connect(db_path) as c:
+            c.execute("UPDATE backtest_runs SET status = 'completed' WHERE id = ?", (run_id,))
+        BacktestManager._flag_cancelling_sync(mgr, run_id)
+
+    mgr._flag_cancelling_sync = worker_finishes_first
+    with pytest.raises(RunNotCancellable) as excinfo:
+        asyncio.run(mgr.cancel("r1"))
+    assert excinfo.value.status == "completed"
+    assert "r1" not in mgr._cancel_requested
+    assert _row(db_path, "r1")["stage"] is None
+
+
+def test_sweep_finishes_a_pending_cancel_as_cancelled(db_path):
+    from app.services.backtest_manager import BacktestManager
+
+    _seed_run(db_path, "pending_cancel", "running", stage="cancelling")
+    _seed_run(db_path, "orphan", "running", stage="backtesting")
+
+    async def go():
+        mgr = BacktestManager()
+        await mgr.start()
+        await mgr.shutdown()
+
+    asyncio.run(go())
+    cancelled = _row(db_path, "pending_cancel")
+    assert (cancelled["status"], cancelled["stage"], cancelled["error"]) == (
+        "cancelled", None, None,
+    )
+    assert cancelled["finished_at"] is not None
+    orphan = _row(db_path, "orphan")
+    assert orphan["status"] == "failed" and "orphan" in orphan["error"]
+
+
+# ---------------------------------------------------------------------------
+# Undefined metrics are persisted as NULL, not 0
+# ---------------------------------------------------------------------------
+
+def test_undefined_metrics_are_persisted_as_null(db_path, monkeypatch):
+    from dataclasses import replace
+
+    report = _ok_report()
+    no_bets = replace(
+        report, bets=[], total_bets=0, hit_rate=0.0, roi=0.0, mean_clv=None,
+        brier=0.0, log_loss=0.0, max_drawdown=0.0,
+    )
+    reports = iter([no_bets, report])
+    monkeypatch.setattr(
+        "app.services.backtest_manager.run_backtest", lambda **kw: next(reports),
+    )
+
+    empty = _run_once()
+    assert (empty.status, empty.total_bets) == ("completed", 0)
+    for key in ("hit_rate", "roi", "mean_clv", "brier", "log_loss",
+                "max_drawdown", "sharpe_adjusted"):
+        assert getattr(empty, key) is None, key
+
+    # Archive bets are priced at the close: CLV is undefined, the rest is not.
+    archive = _run_once()
+    assert archive.status == "completed"
+    assert archive.mean_clv is None
+    assert archive.hit_rate == pytest.approx(1.0)
+    assert archive.roi == pytest.approx(0.044)
+
+
+def test_summary_serves_legacy_zero_bet_metrics_as_null():
+    from dataclasses import replace
+
+    from app.ml.backtest_storage import RunRow
+    from app.routes.backtests import run_row_to_summary
+
+    legacy = RunRow(
+        id="r", label="r", model="logistic", train_until="2024-08-01T00:00:00Z",
+        test_until=None, min_edge=0.02, kelly_fraction=0.25, force_bets=0,
+        scope_json="[]", status="completed", created_at="2024-01-01T00:00:00Z",
+        test_events=40, total_bets=0, hit_rate=0.0, roi=0.0, mean_clv=0.0,
+        brier=0.0, log_loss=0.0, max_drawdown=0.0, sharpe_adjusted=0.0,
+    )
+    summary = run_row_to_summary(legacy)
+    assert (summary.total_bets, summary.test_events) == (0, 40)
+    for key in ("hit_rate", "roi", "mean_clv", "brier", "log_loss",
+                "max_drawdown", "sharpe_adjusted"):
+        assert getattr(summary, key) is None, key
+
+    with_bets = run_row_to_summary(replace(legacy, total_bets=3, roi=0.0))
+    assert with_bets.roi == 0.0  # a measured zero stays zero

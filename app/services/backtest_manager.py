@@ -10,9 +10,12 @@ Structural anti-leakage checks live here:
     kickoff_ts sourced from match_event_summaries
 
 Cancellation: a queued run is cancelled immediately; a running run gets a
-flag that the worker checks between stages (before training, before the
-backtest, before persisting). The blocking training/backtest calls
-themselves are not interrupted — their results are discarded.
+flag (stage ``cancelling``) that the worker checks between stages (before
+training, before the backtest, before persisting). The blocking
+training/backtest calls themselves are not interrupted — their results are
+discarded. Every status write is a guarded transition, so a cancel that
+lands after the last checkpoint still wins over completion and nothing
+but the worker moves a running run to a final status.
 
 MLflow logging happens after the run is persisted as completed and is
 isolated: a tracking failure is logged as a warning and never turns a
@@ -40,14 +43,13 @@ from app.ml.backtest_storage import (
     delete_run,
     finalize_run,
     get_run,
-    insert_bets,
     insert_run,
     list_bets,
     list_runs,
     update_mlflow_run_id,
     update_n_train_events,
 )
-from app.ml.tracking import log_backtest_run
+from app.ml.tracking import backtest_metrics, log_backtest_run
 from app.ml.labels import FOOTBALL_PHASE1_SCOPE
 from app.ml.market_spec import get_spec
 from app.ml.trainable import TRAINABLE, resolve_model_for_backtest
@@ -226,7 +228,8 @@ class BacktestManager:
         Queued runs become ``cancelled`` immediately. Running runs are
         flagged (stage ``cancelling``) and become ``cancelled`` at the
         worker's next checkpoint. Returns None for an unknown id; raises
-        :class:`RunNotCancellable` when the run already finished.
+        :class:`RunNotCancellable` when the run already finished —
+        including when it finished before the cancel could land.
         """
         row = await self.get_run(run_id)
         if row is None:
@@ -236,11 +239,20 @@ class BacktestManager:
         self._cancel_requested.add(run_id)
         cancelled_now = False
         if row.status == "queued":
-            cancelled_now = await asyncio.to_thread(self._mark_cancelled_sync, run_id)
+            cancelled_now = await asyncio.to_thread(self._cancel_queued_sync, run_id)
         if not cancelled_now:
             # Running, or picked up by the worker between our read and write.
             await asyncio.to_thread(self._flag_cancelling_sync, run_id)
-        return await self.get_run(run_id)
+        row = await self.get_run(run_id)
+        if row is None:
+            self._cancel_requested.discard(run_id)
+            return None
+        if row.status in ("completed", "failed"):
+            # Finished between our read and the flag write; the worker
+            # has already let go of the run, so drop the flag again.
+            self._cancel_requested.discard(run_id)
+            raise RunNotCancellable(row.status)
+        return row
 
     # --- sync helpers ---
 
@@ -372,9 +384,11 @@ class BacktestManager:
                         f"leakage detected: bet_ts={br.bet_ts} >= "
                         f"kickoff_ts={br.kickoff_ts} for event {br.event_id}"
                     )
-            await asyncio.to_thread(
+            completed = await asyncio.to_thread(
                 self._persist_completed_sync, run_id, report, bet_rows
             )
+            if not completed:
+                raise _RunCancelled()  # a cancel landed after the last checkpoint
         except _RunCancelled:
             await asyncio.to_thread(self._mark_cancelled_sync, run_id)
             return
@@ -462,11 +476,13 @@ class BacktestManager:
         return out
 
     def _sweep_orphans_sync(self) -> int:
-        """Mark any rows left in queued/running state as failed.
+        """Finish any rows left in queued/running state.
 
         Called once at start(). A row in queued/running at startup is by
         definition from a dead previous process — the BacktestManager is
         single-instance and the new instance's in-memory queue is empty.
+        A row with a pending cancel (stage ``cancelling``) becomes
+        cancelled, as the operator asked; every other one becomes failed.
         Returns the number of rows swept (logged for visibility).
         """
         with _connect() as conn:
@@ -477,12 +493,16 @@ class BacktestManager:
             if not ids:
                 return 0
             placeholders = ",".join("?" * len(ids))
+            # Right-hand sides see the pre-UPDATE row, so `stage` here is
+            # the old value even though the same statement clears it.
             conn.execute(
-                f"UPDATE backtest_runs SET status = 'failed', "
-                f"finished_at = ?, stage = NULL, "
-                f"error = COALESCE(error, '') || ? "
+                f"UPDATE backtest_runs SET "
+                f"status = CASE WHEN stage = 'cancelling' THEN 'cancelled' ELSE 'failed' END, "
+                f"error = CASE WHEN stage = 'cancelling' THEN error "
+                f"ELSE COALESCE(error, '') || ? END, "
+                f"finished_at = ?, stage = NULL "
                 f"WHERE id IN ({placeholders})",
-                (_now_iso(), "orphaned at backend restart (no live worker)", *ids),
+                ("orphaned at backend restart (no live worker)", _now_iso(), *ids),
             )
             conn.commit()
         logger.info(
@@ -504,36 +524,53 @@ class BacktestManager:
             return cur.rowcount == 1
 
     def _mark_stage_sync(self, run_id: str, stage: Optional[str]) -> None:
-        # Never mask a pending cancel: 'cancelling' sticks until the
-        # worker reaches its next checkpoint.
+        # Only a running run has a stage, and a pending cancel is never
+        # masked: 'cancelling' sticks until the worker's next checkpoint.
         with _connect() as conn:
             conn.execute(
                 "UPDATE backtest_runs SET stage = ? "
-                "WHERE id = ? AND (stage IS NULL OR stage != 'cancelling')",
+                "WHERE id = ? AND status = 'running' "
+                "AND (stage IS NULL OR stage != 'cancelling')",
                 (stage, run_id),
             )
             conn.commit()
 
     def _mark_failed_sync(self, run_id: str, error: str) -> None:
-        # A cancelled run stays cancelled even if its thread later errors.
+        # Only an in-flight run can fail: a cancelled run stays cancelled
+        # even if its thread later errors, and a completed one stays
+        # completed whatever happens after it was persisted.
         with _connect() as conn:
             conn.execute(
                 "UPDATE backtest_runs SET status = 'failed', finished_at = ?, "
-                "error = ?, stage = NULL WHERE id = ? AND status != 'cancelled'",
+                "error = ?, stage = NULL WHERE id = ? AND status IN ('queued', 'running')",
                 (_now_iso(), error[:4000], run_id),
             )
             conn.commit()
 
-    def _mark_cancelled_sync(self, run_id: str) -> bool:
-        """queued/running -> cancelled. False if the run already finished."""
+    def _cancel_queued_sync(self, run_id: str) -> bool:
+        """queued -> cancelled, for cancel(). False when the run is no
+        longer queued (the worker started it in the meantime)."""
         with _connect() as conn:
             cur = conn.execute(
                 "UPDATE backtest_runs SET status = 'cancelled', finished_at = ?, "
-                "stage = NULL WHERE id = ? AND status IN ('queued', 'running')",
+                "stage = NULL WHERE id = ? AND status = 'queued'",
                 (_now_iso(), run_id),
             )
             conn.commit()
             return cur.rowcount == 1
+
+    def _mark_cancelled_sync(self, run_id: str) -> None:
+        """Worker side: queued/running -> cancelled, and always clear the
+        stage — also on a row that is already cancelled (its finish time
+        is kept). Completed and failed runs are left alone."""
+        with _connect() as conn:
+            conn.execute(
+                "UPDATE backtest_runs SET status = 'cancelled', "
+                "finished_at = COALESCE(finished_at, ?), stage = NULL "
+                "WHERE id = ? AND status IN ('queued', 'running', 'cancelled')",
+                (_now_iso(), run_id),
+            )
+            conn.commit()
 
     def _flag_cancelling_sync(self, run_id: str) -> None:
         with _connect() as conn:
@@ -553,35 +590,34 @@ class BacktestManager:
         run_id: str,
         report: BacktestReport,
         bet_rows: Sequence[BetRow],
-    ) -> None:
-        # Multi-statement, single-connection: the storage helpers (insert_bets,
-        # finalize_run) each commit internally. A reader in the tiny window
-        # between them could observe partial state (e.g. status=completed but
-        # stage=backtesting). Under single-writer SQLite + asyncio this window
-        # is sub-millisecond and benign. If it ever matters, fold stage into
-        # finalize_run's UPDATE.
+    ) -> bool:
+        """Store bets + summary and mark the run completed, atomically.
+        False (nothing written) when a cancel is pending or the run is no
+        longer running.
+
+        Undefined metrics are stored as NULL, not 0 — the same values the
+        MLflow run logs: rate metrics when no bets were placed, mean_clv
+        unless CLV is defined (archive bets are priced at the close).
+        """
+        metrics = backtest_metrics(report)
+        summary = {
+            "test_events": report.test_events,
+            "total_bets": report.total_bets,
+            "hit_rate": metrics["hit_rate"],
+            "roi": metrics["roi"],
+            "mean_clv": metrics["mean_clv"],
+            "brier": metrics["brier"],
+            "log_loss": metrics["log_loss"],
+            "max_drawdown": metrics["max_drawdown"],
+            "sharpe_adjusted": metrics["sharpe_adjusted"],
+            "reliability_json": json.dumps(
+                [asdict(b) for b in report.reliability_buckets]
+            ),
+        }
         with _connect() as conn:
-            insert_bets(conn, bet_rows)
-            summary = {
-                "test_events": report.test_events,
-                "total_bets": report.total_bets,
-                "hit_rate": report.hit_rate,
-                "roi": report.roi,
-                "mean_clv": report.mean_clv,
-                "brier": report.brier,
-                "log_loss": report.log_loss,
-                "max_drawdown": report.max_drawdown,
-                "sharpe_adjusted": report.sharpe_adjusted,
-                "reliability_json": json.dumps(
-                    [asdict(b) for b in report.reliability_buckets]
-                ),
-            }
-            finalize_run(conn, run_id, finished_at=_now_iso(), summary=summary)
-            conn.execute(
-                "UPDATE backtest_runs SET stage = NULL WHERE id = ?",
-                (run_id,),
+            return finalize_run(
+                conn, run_id, finished_at=_now_iso(), summary=summary, bets=bet_rows,
             )
-            conn.commit()
 
     def _update_mlflow_id_sync(self, run_id: str, mlflow_run_id: str) -> None:
         with _connect() as conn:

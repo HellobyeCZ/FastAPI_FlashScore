@@ -6,6 +6,7 @@ module so both serialize runs identically.
 """
 from __future__ import annotations
 
+import dataclasses
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -29,6 +30,14 @@ def _backtest_manager() -> BacktestManager:
 def run_row_to_summary(
     row: RunRow, *, mlflow_experiment_id: Optional[str] = None
 ) -> BacktestRunSummary:
+    if row.total_bets == 0:
+        # Runs persisted before undefined metrics were stored as NULL
+        # carry 0.0 rate metrics when they placed no bets. Undefined is
+        # not zero: serve them as null, like newer rows.
+        row = dataclasses.replace(
+            row, hit_rate=None, roi=None, mean_clv=None, brier=None,
+            log_loss=None, max_drawdown=None, sharpe_adjusted=None,
+        )
     return BacktestRunSummary(
         id=row.id,
         label=row.label,

@@ -386,6 +386,12 @@ def _begin(stage: str):
 
 def _warn_failure(exc: BaseException, stage: str) -> None:
     down = connection_lost()
+    if not down:
+        # The server is healthy, so the cached experiment id may be what
+        # broke (experiment deleted or recreated): resolve it again on the
+        # next call instead of failing every run until a restart.
+        with _probe_lock:
+            _experiment_ids.pop(tracking_uri(), None)
     event = "mlflow_unreachable" if down else "mlflow_logging_failed"
     _log.warning(
         event,
@@ -480,13 +486,34 @@ def log_training_run(
         return None
 
 
-def _clv_available(report: "BacktestReport") -> bool:
+def clv_available(report: "BacktestReport") -> bool:
     """CLV needs a price taken before the close. Archive backtests price
     every bet at the closing line, so CLV is undefined there even though
     the bet rows carry a number."""
     if report.mean_clv is None:
         return False
     return any(b.price_taken != b.closing_price for b in report.bets)
+
+
+def backtest_metrics(report: "BacktestReport") -> Dict[str, Optional[float]]:
+    """A backtest's summary metrics with undefined values as None
+    (undefined is not zero): every rate metric is None when the run
+    placed no bets, and `mean_clv` is None unless CLV is defined.
+
+    The one definition shared by the MLflow run (None -> not logged) and
+    the persisted `backtest_runs` row (None -> NULL)."""
+    placed = report.total_bets > 0
+    return {
+        "hit_rate": report.hit_rate if placed else None,
+        "roi": report.roi if placed else None,
+        "brier": report.brier if placed else None,
+        "log_loss": report.log_loss if placed else None,
+        "max_drawdown": report.max_drawdown if placed else None,
+        "return_per_bet": report.return_per_bet if placed else None,
+        "rmse_per_bet": report.rmse_per_bet if placed else None,
+        "sharpe_adjusted": report.sharpe_adjusted if placed else None,
+        "mean_clv": report.mean_clv if clv_available(report) else None,
+    }
 
 
 def log_backtest_run(
@@ -508,9 +535,9 @@ def log_backtest_run(
     MLflow run_id, or None when tracking is disabled/unreachable or the
     run failed to log.
 
-    Rate metrics (hit rate, ROI, Brier, ...) are omitted when the run
-    placed no bets, and `mean_clv` is omitted unless CLV is defined
-    (tag `clv_available`)."""
+    Undefined metrics are omitted (see `backtest_metrics`): rate metrics
+    when the run placed no bets, `mean_clv` unless CLV is defined (tag
+    `clv_available`)."""
     began = _begin("log_backtest_run")
     if began is None:
         return None
@@ -531,24 +558,11 @@ def log_backtest_run(
         "scope_size": scope_size,
     })
 
-    clv_available = _clv_available(report)
     metrics: dict[str, Any] = {
         "n_bets": report.total_bets,
         "n_test_events": report.test_events,
+        **backtest_metrics(report),
     }
-    if report.total_bets > 0:
-        metrics.update({
-            "hit_rate": report.hit_rate,
-            "roi": report.roi,
-            "brier": report.brier,
-            "log_loss": report.log_loss,
-            "max_drawdown": report.max_drawdown,
-            "return_per_bet": report.return_per_bet,
-            "rmse_per_bet": report.rmse_per_bet,
-            "sharpe_adjusted": report.sharpe_adjusted,
-        })
-        if clv_available:
-            metrics["mean_clv"] = report.mean_clv
 
     try:
         with mlflow.start_run(
@@ -558,7 +572,7 @@ def log_backtest_run(
             mlflow.set_tags({
                 "purpose": "walk_forward_backtest",
                 "backtest_run_id": backtest_run_id,
-                "clv_available": "true" if clv_available else "false",
+                "clv_available": "true" if clv_available(report) else "false",
             })
             mlflow.log_params({k: v for k, v in params.items() if v is not None})
             mlflow.log_metrics(_finite_metrics(metrics))
