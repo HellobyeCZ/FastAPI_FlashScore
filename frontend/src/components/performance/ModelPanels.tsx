@@ -23,7 +23,7 @@ import {
   Table,
   TextLink
 } from "@/components/ui";
-import { ChartPanel, Measured, NoBetsEmpty, PanelError, panelStatus } from "./shared";
+import { CalloutBody, ChartPanel, Measured, NoBetsEmpty, OpsLink, PanelError, panelStatus } from "./shared";
 
 // ---------------------------------------------------------------------------
 // Calibration
@@ -156,16 +156,8 @@ export function RegistryPanel({ model, className }: { model: string; className?:
   } else if (mlflow && !mlflow.reachable) {
     body = (
       <div className="p-4">
-        <Callout
-          tone="warn"
-          title={t("performance.registry.unreachable")}
-          action={
-            <ButtonLink href={routes.ops(locale)} size="sm">
-              {t("performance.stale.action")}
-            </ButtonLink>
-          }
-        >
-          {t("performance.registry.unreachableBody")}
+        <Callout tone="warn" title={t("performance.registry.unreachable")}>
+          <CalloutBody action={<OpsLink />}>{t("performance.registry.unreachableBody")}</CalloutBody>
         </Callout>
       </div>
     );

@@ -74,20 +74,34 @@ export function PerformanceTabs({ active, params }: { active: "leaderboard" | "e
 
 /** Shown when the default window fell back to all time because live data is old. */
 export function StaleWindowCallout({ since }: { since: string }) {
-  const { t, fmt, locale } = useLocale();
+  const { t, fmt } = useLocale();
   return (
-    <Callout
-      tone="warn"
-      className="mb-5"
-      title={t("performance.stale.title", { date: fmt.date(since) })}
-      action={
-        <ButtonLink href={routes.ops(locale)} size="sm">
-          {t("performance.stale.action")}
-        </ButtonLink>
-      }
-    >
-      {t("performance.stale.body", { age: fmt.relative(since) })}
+    <Callout tone="warn" className="mb-5" title={t("performance.stale.title", { date: fmt.date(since) })}>
+      <CalloutBody action={<OpsLink />}>{t("performance.stale.body", { age: fmt.relative(since) })}</CalloutBody>
     </Callout>
+  );
+}
+
+/** Link to Data ops, where the pipeline and MLflow status live. */
+export function OpsLink() {
+  const { t, locale } = useLocale();
+  return (
+    <ButtonLink href={routes.ops(locale)} size="sm">
+      {t("performance.stale.action")}
+    </ButtonLink>
+  );
+}
+
+/**
+ * Callout text with its action underneath. Long explanations keep the full
+ * width on phones instead of sharing the row with Callout's side action.
+ */
+export function CalloutBody({ action, children }: { action: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <>
+      <p>{children}</p>
+      <div className="mt-2.5 flex flex-wrap gap-2">{action}</div>
+    </>
   );
 }
 
