@@ -32,9 +32,24 @@ uvx --from "mlflow>=3,<4" mlflow server \
 
 - **Port 5050**, because macOS AirPlay Receiver listens on `:5000`.
 - **`uvx`** runs MLflow in an isolated environment: the system Python's mlflow install is broken, and the server shouldn't share the app's venv.
-- **Proxied artifacts** (`--serve-artifacts`): clients upload through the server, so artifact paths never point at a particular checkout on disk.
+- **Proxied artifacts** (`--serve-artifacts`): clients upload through the server, so artifact paths of experiments it creates (`mlflow-artifacts:/<id>`) never point at a particular checkout on disk. Experiments created earlier keep theirs — see [Artifact locations](#artifact-locations-of-existing-experiments).
 
-Backend store `mlflow/mlflow.db` and artifacts `mlflow/artifacts/` are gitignored. Keep the terminal open; Ctrl+C stops it.
+Backend store `mlflow/mlflow.db` and artifacts `mlflow/artifacts/` are gitignored and relative to where you run `make mlflow`. Run it from the main checkout, not from a worktree you may delete. Keep the terminal open; Ctrl+C stops it.
+
+#### Artifact locations of existing experiments
+
+An experiment's artifact location is fixed when the experiment is created; `--serve-artifacts` doesn't rewrite it. Check yours:
+
+```bash
+curl -s 'http://127.0.0.1:5050/api/2.0/mlflow/experiments/get-by-name?experiment_name=picks' \
+  | jq -r .experiment.artifact_location
+```
+
+`mlflow-artifacts:/2` is proxied (good). An absolute path means clients write straight into that directory — in the local store, `picks` (id 2) was created by an earlier server started from worktree `epic-saha-1c8754`, so its runs, logged models and registered versions live under that worktree's `mlflow/artifacts/2` and break if the worktree is removed. To move to proxied storage:
+
+1. In the MLflow UI, rename `picks` to `picks-legacy` (experiment page › ⋮ › Rename).
+2. Restart the API and any running scripts: the experiment id is resolved once per process, so a running API would keep logging into the renamed experiment. The next run creates a fresh `picks` under the server's `--artifacts-destination`.
+3. Register a fresh backtest from the new `picks` and move `@champion` to it before you remove the old worktree — versions registered from `picks-legacy` read their files from the old path.
 
 ### 2. Point the backend at it
 
@@ -90,7 +105,9 @@ Two honesty rules:
 - **Undefined is not zero.** With no bets the rate metrics are absent, not `0`.
 - **No CLV for archive backtests.** Backtests take the closing price, so closing-line value is undefined; `mean_clv` is not logged and the run is tagged `clv_available=false`.
 
-`return_per_bet`, `rmse_per_bet` and `sharpe_adjusted` are computed on **unit-stake** returns (per bet: `price − 1` won, `−1` lost, `0` void; `R_p = 1 + mean`, `RMSE = √mean(r²)`, `Sharpe = (R_p − 1)/RMSE`), independent of Kelly sizing — so they rank selection quality, not staking aggressiveness. Backtests completed before this change stored a Kelly-scaled `sharpe_adjusted` in SQLite; backfilled runs recompute it on unit stakes.
+`return_per_bet`, `rmse_per_bet` and `sharpe_adjusted` are computed on **unit-stake** returns (per bet: `price − 1` won, `−1` lost, `0` void; `R_p = 1 + mean`, `RMSE = √mean(r²)`, `Sharpe = (R_p − 1)/RMSE`), independent of Kelly sizing — so they rank selection quality, not staking aggressiveness. Backtests completed before this change stored a Kelly-scaled `sharpe_adjusted` in SQLite; backfilled runs recompute it on unit stakes, and `backfill_mlflow_backtests.py --normalize-sqlite` rewrites the stored values.
+
+The `backtest_runs` row follows the same rules: undefined metrics are stored as `NULL` (rate metrics of a run without bets, `mean_clv` of archive backtests), and the API serves zero-bet rows from older versions as `null` too.
 
 ### Artifacts
 
@@ -185,6 +202,8 @@ At startup (and on every reload) `app/ml/serving.py` resolves each model indepen
 
 A model with neither a champion nor a file is simply not served; Data ops warns when nothing is.
 
+The served set is resolved once per process and shared by `/predict`, `/picks/upcoming` and refresh-now's predict stage. Moving or removing `@champion` through the API reloads it; anything else doesn't — a retrain that writes a new pickle to `$APP_ML_MODELS_DIR`, or an alias changed directly in the MLflow UI, takes effect after `POST /ml/reload` (or an API restart).
+
 `scripts/record_picks.py` uses the same resolution and prints which source each model came from.
 
 ---
@@ -200,7 +219,9 @@ PYTHONPATH=. APP_STORAGE_DB_PATH=$PWD/data/flashscore_snapshots.sqlite3 \
 python scripts/backfill_mlflow_backtests.py                  # (same env) log + write ids back
 ```
 
-Each completed row becomes a `purpose=backfill` run: params and metrics from the row, unit-stake Sharpe recomputed from `backtest_bets`, the reliability chart, original start/end times — and no model. The new run id is written to `backtest_runs.mlflow_run_id`. Re-running is safe: linked rows are skipped, and a run created without its write-back (crash) is re-linked instead of duplicated.
+Each completed row becomes a `purpose=backfill` run: params and metrics from the row, unit-stake Sharpe recomputed from `backtest_bets`, the reliability chart, original start/end times — and no model. The new run id is written to `backtest_runs.mlflow_run_id`. Re-running is safe: linked rows are skipped, and a fully logged run whose write-back was lost (crash) is re-linked instead of duplicated. A run that fails half-way is deleted and its row stays pending; the script exits `1` and stops early if the server went away.
+
+`--normalize-sqlite` also rewrites the metrics stored on every completed row (not only unlinked ones) to the definitions new backtests persist, so the app's runs table compares like with like: `sharpe_adjusted` on unit stakes (older rows hold NULL or a Kelly-scaled value), rate metrics `NULL` for runs without bets, `mean_clv` `NULL` when every bet was priced at the close. Combine it with `--dry-run` first to see each change. It needs no MLflow server.
 
 ---
 
@@ -259,6 +280,8 @@ Cross-jumping: in the app every backtest links to its MLflow run (`mlflow_ui_url
 | Register returns 400 "has no 'picks_model'" | Backfilled run, Dixon–Coles backtest, or a run logged before models were attached. | Re-run the backtest (or a training script) and register that run. |
 | Promote returns 400 "not servable" | `@champion` on Dixon–Coles or an analytic baseline. | Use `@challenger`, or promote a servable model. |
 | Data ops shows `source: file` after promoting | Champion failed to load (see backend log `failed to load …@champion`) or registry unreachable at reload. | Fix the cause, then `POST /ml/reload`. |
+| New picks still come from the old model after a retrain | The served set is cached per process; only API alias changes reload it. | `POST /ml/reload`. |
+| New runs land in `picks-legacy` after renaming `picks` | The API resolved the experiment id before the rename. | Restart the API. |
 | Experiment links open the wrong experiment | Old frontend builds hard-coded `experiments/1`. | Links now come from the backend (`APP_MLFLOW_UI_URL`); `NEXT_PUBLIC_MLFLOW_URL` is no longer used. |
 | "MLflow Demo" experiment with sample runs | Created by MLflow 3 itself. | Harmless; delete it in the UI if you like. |
 

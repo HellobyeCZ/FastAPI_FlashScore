@@ -271,6 +271,25 @@ def test_data_error_does_not_disable_future_runs(mlflow_store, monkeypatch):
     assert _client(mlflow_store).get_run(second).info.status == "FINISHED"
 
 
+def test_stale_experiment_id_is_resolved_again_after_a_failure(mlflow_store):
+    """The `picks` experiment id is cached per URI. If the experiment is
+    recreated on the server, the next run fails once and the one after
+    it resolves the id again — no restart needed."""
+    from app.ml import tracking
+
+    real_id = tracking.ensure_experiment_id()
+    with tracking._probe_lock:
+        tracking._experiment_ids[mlflow_store] = "999999"  # gone from the server
+
+    report = _report([_bet(result=1.0)])
+    assert _log_backtest(report) is None
+    assert tracking.cached_experiment_id() is None
+    run_id = _log_backtest(report)
+    assert run_id is not None
+    assert _client(mlflow_store).get_run(run_id).info.experiment_id == real_id
+    assert tracking.cached_experiment_id() == real_id
+
+
 # ---------------------------------------------------------------------------
 # Status + deep links
 # ---------------------------------------------------------------------------
@@ -428,6 +447,83 @@ def test_backfill_logs_completed_runs_once(mlflow_store, tmp_path, monkeypatch, 
         assert c.execute("SELECT mlflow_run_id FROM backtest_runs").fetchone()[0] == run_id
     experiment_id = run.info.experiment_id
     assert len(client.search_runs([experiment_id], "tags.purpose = 'backfill'")) == 1
+
+
+def test_backfill_never_relinks_a_half_logged_run(mlflow_store, tmp_path, monkeypatch, capsys):
+    """A run that fails after creation is discarded, the row stays pending
+    and the script exits non-zero; the next invocation logs it afresh."""
+    import sqlite3
+
+    import mlflow
+
+    from scripts import backfill_mlflow_backtests as backfill
+
+    db = _seed_backtest_db(tmp_path, monkeypatch)
+    real_log_text = mlflow.MlflowClient.log_text
+
+    def failing_log_text(self, *args, **kwargs):
+        raise RuntimeError("artifact upload failed")
+
+    monkeypatch.setattr(mlflow.MlflowClient, "log_text", failing_log_text)
+    monkeypatch.setattr(sys, "argv", ["backfill"])
+    assert backfill.main() == 1
+    assert "FAILED old1" in capsys.readouterr().err
+    with sqlite3.connect(db) as c:
+        assert c.execute("SELECT mlflow_run_id FROM backtest_runs").fetchone()[0] is None
+    client = _client(mlflow_store)
+    experiment_id = client.get_experiment_by_name("picks").experiment_id
+    assert client.search_runs([experiment_id], "tags.backtest_run_id = 'old1'") == []
+
+    monkeypatch.setattr(mlflow.MlflowClient, "log_text", real_log_text)
+    assert backfill.main() == 0
+    with sqlite3.connect(db) as c:
+        run_id = c.execute("SELECT mlflow_run_id FROM backtest_runs").fetchone()[0]
+    assert client.get_run(run_id).info.status == "FINISHED"
+
+
+def test_backfill_normalizes_legacy_sqlite_metrics(tmp_path, monkeypatch, capsys):
+    import sqlite3
+
+    from scripts import backfill_mlflow_backtests as backfill
+
+    db = _seed_backtest_db(tmp_path, monkeypatch)
+    with sqlite3.connect(db) as c:
+        c.execute(
+            "INSERT INTO backtest_runs (id, label, model, train_until, min_edge, kelly_fraction, "
+            "force_bets, scope_json, status, created_at, test_events, total_bets, hit_rate, roi, "
+            "mean_clv, brier, log_loss, max_drawdown, market_spec, mlflow_run_id) VALUES "
+            "('empty', 'no bets', 'logistic', '2024-08-01T00:00:00Z', 0.02, 0.25, 0, '[]', "
+            "'completed', '2024-09-02T10:00:00Z', 40, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, "
+            "'football_1x2_ft', 'already-linked')"
+        )
+
+    monkeypatch.setattr(sys, "argv", ["backfill", "--dry-run", "--normalize-sqlite"])
+    assert backfill.main() == 0
+    assert "would normalize metrics of 2 completed run(s)" in capsys.readouterr().out
+    with sqlite3.connect(db) as c:
+        assert c.execute("SELECT sharpe_adjusted FROM backtest_runs WHERE id = 'old1'").fetchone()[0] == 0.0123
+
+    # MLflow is disabled for this test: the SQLite pass still runs, the
+    # MLflow backfill then reports it can't log.
+    monkeypatch.setattr(sys, "argv", ["backfill", "--normalize-sqlite"])
+    assert backfill.main() == 2
+    with sqlite3.connect(db) as c:
+        c.row_factory = sqlite3.Row
+        old, empty = (
+            c.execute("SELECT * FROM backtest_runs WHERE id = ?", (rid,)).fetchone()
+            for rid in ("old1", "empty")
+        )
+    # Unit stakes, as in test_backfill_logs_completed_runs_once.
+    assert old["sharpe_adjusted"] == pytest.approx(0.5 / 2.5 ** 0.5)
+    assert old["mean_clv"] is None  # priced at the close
+    assert old["roi"] == pytest.approx(0.1)  # defined values are kept
+    for key in ("hit_rate", "roi", "mean_clv", "brier", "log_loss", "max_drawdown"):
+        assert empty[key] is None, key
+    assert empty["test_events"] == 40
+
+    monkeypatch.setattr(sys, "argv", ["backfill", "--dry-run", "--normalize-sqlite"])
+    assert backfill.main() == 0
+    assert "would normalize metrics of 0 completed run(s)" in capsys.readouterr().out
 
 
 def test_logging_recovers_after_a_failed_run_close(mlflow_store, monkeypatch):

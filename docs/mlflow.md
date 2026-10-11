@@ -8,7 +8,9 @@ Full operator manual: [docs/mlflow/README.md](mlflow/README.md).
 make mlflow
 ```
 
-Opens on `http://127.0.0.1:5050` (not :5000 — macOS AirPlay Receiver owns that port). Backend: SQLite at `mlflow/mlflow.db`. Artifacts are proxied by the server and stored under `mlflow/artifacts/`. Both gitignored. The target runs MLflow 3 through `uvx`, isolated from the system interpreter (whose mlflow install is broken).
+Opens on `http://127.0.0.1:5050` (not :5000 — macOS AirPlay Receiver owns that port). Backend: SQLite at `mlflow/mlflow.db`. Artifacts of experiments the server creates are proxied by it and stored under `mlflow/artifacts/`. Both gitignored and relative to where you run it — use the main checkout, not a worktree. The target runs MLflow 3 through `uvx`, isolated from the system interpreter (whose mlflow install is broken).
+
+Experiments created before the switch keep their original artifact location. The local `picks` (id 2) still writes into worktree `epic-saha-1c8754`; see [Artifact locations](mlflow/README.md#artifact-locations-of-existing-experiments) for moving it (rename to `picks-legacy`, restart the API).
 
 The backend talks to `MLFLOW_TRACKING_URI` (default `http://127.0.0.1:5050`). Browser links use `APP_MLFLOW_UI_URL` (default: the tracking URI).
 
@@ -31,7 +33,7 @@ Only `logistic`, `hgb` and `hgb_pca` are servable from the registry. Dixon–Col
 
 - `APP_MLFLOW_DISABLED=1` makes every MLflow call a no-op (the pytest suite sets it).
 - If the server is unreachable, logging is skipped and the server is re-probed every 60 s — no restart needed once it's back. Backtests always complete and persist to SQLite.
-- Serving falls back to `$APP_ML_MODELS_DIR/<label>/model.pkl`.
+- Serving falls back to `$APP_ML_MODELS_DIR/<label>/model.pkl`. The served set is cached per process: after a retrain writes a new pickle there, `POST /ml/reload`.
 - `/mlflow/*` GETs return `status.reachable=false` with empty lists; registry mutations return 503.
 
 ## Backfill old backtests
@@ -41,4 +43,4 @@ PYTHONPATH=. APP_STORAGE_DB_PATH=$PWD/data/flashscore_snapshots.sqlite3 \
   python scripts/backfill_mlflow_backtests.py --dry-run   # then without --dry-run
 ```
 
-Logs completed backtests that have no `mlflow_run_id` as `purpose=backfill` runs (metrics/params only, no model) and writes the id back. Idempotent.
+Logs completed backtests that have no `mlflow_run_id` as `purpose=backfill` runs (metrics/params only, no model) and writes the id back. Idempotent. Add `--normalize-sqlite` to also rewrite legacy metric values in `backtest_runs` (unit-stake Sharpe, `NULL` for undefined metrics).

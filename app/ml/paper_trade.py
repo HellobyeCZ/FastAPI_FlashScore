@@ -60,7 +60,13 @@ def _ensure_paper_bets_table() -> None:
         # "file"); NULL for picks recorded before it was tracked.
         existing = {row[1] for row in conn.execute("PRAGMA table_info(paper_bets)")}
         if "model_version" not in existing:
-            conn.execute("ALTER TABLE paper_bets ADD COLUMN model_version TEXT")
+            try:
+                conn.execute("ALTER TABLE paper_bets ADD COLUMN model_version TEXT")
+            except sqlite3.OperationalError as exc:
+                # Another process (API refresh-now vs scripts/record_picks.py)
+                # added it between our check and the ALTER.
+                if "duplicate column" not in str(exc).lower():
+                    raise
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_paper_bets_status ON paper_bets(status, recommended_at)"
         )
