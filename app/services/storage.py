@@ -199,6 +199,13 @@ class SnapshotStore:
                 error,
             )
 
+    async def cancel_bulk_scrape_job(self, *, job_id: int) -> bool:
+        """Flip a queued/running job to ``cancelled``. Returns False when the
+        job had already reached a terminal status (nothing is written)."""
+        await self.initialize()
+        async with self._write_lock:
+            return await asyncio.to_thread(self._cancel_bulk_scrape_job_sync, job_id)
+
     async def replace_bulk_scrape_job_events(
         self,
         *,
@@ -368,6 +375,7 @@ class SnapshotStore:
             self._ensure_upcoming_tables(connection)
             self._ensure_phase1_tables(connection)
             self._ensure_backtest_tables(connection)
+            self._ensure_query_indexes(connection)
 
     def _insert_odds_snapshot_sync(
         self,
@@ -809,6 +817,9 @@ class SnapshotStore:
             )
             connection.commit()
 
+    # The terminal-status writers below never overwrite ``cancelled``: a
+    # cancelled job task can still have one of these in flight in a worker
+    # thread (asyncio.to_thread cannot be interrupted), so the guard is in SQL.
     def _mark_bulk_scrape_job_failed_sync(self, job_id: int, error: str) -> None:
         now_iso = datetime.now(timezone.utc).isoformat()
         with self._connect() as connection:
@@ -820,7 +831,7 @@ class SnapshotStore:
                     updated_at = ?,
                     finished_at = ?,
                     last_error = ?
-                WHERE id = ?
+                WHERE id = ? AND status != 'cancelled'
                 """,
                 (now_iso, now_iso, error, job_id),
             )
@@ -842,11 +853,42 @@ class SnapshotStore:
                     updated_at = ?,
                     finished_at = ?,
                     last_error = ?
-                WHERE id = ?
+                WHERE id = ? AND status != 'cancelled'
                 """,
                 (status, now_iso, now_iso, error, job_id),
             )
             connection.commit()
+
+    def _cancel_bulk_scrape_job_sync(self, job_id: int) -> bool:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        placeholders = ",".join("?" for _ in self._RESUMABLE_JOB_STATUSES)
+        with self._connect() as connection:
+            cursor = connection.execute(
+                f"""
+                UPDATE scrape_jobs
+                SET
+                    status = 'cancelled',
+                    updated_at = ?,
+                    finished_at = ?
+                WHERE id = ? AND status IN ({placeholders})
+                """,
+                (now_iso, now_iso, job_id, *self._RESUMABLE_JOB_STATUSES),
+            )
+            if cursor.rowcount == 0:
+                connection.rollback()
+                return False
+            # Events interrupted mid-scrape go back to pending so the counts
+            # say "not done" rather than "running" on a job that has stopped.
+            connection.execute(
+                """
+                UPDATE scrape_job_events
+                SET status = 'pending', started_at = NULL, updated_at = ?
+                WHERE job_id = ? AND status = 'running'
+                """,
+                (now_iso, job_id),
+            )
+            connection.commit()
+        return True
 
     def _replace_bulk_scrape_job_events_sync(
         self,
@@ -949,8 +991,11 @@ class SnapshotStore:
                     updated_at = ?,
                     finished_at = NULL
                 WHERE job_id = ? AND event_id = ?
+                  AND NOT EXISTS (
+                      SELECT 1 FROM scrape_jobs WHERE id = ? AND status = 'cancelled'
+                  )
                 """,
-                (now_iso, now_iso, job_id, event_id),
+                (now_iso, now_iso, job_id, event_id, job_id),
             )
             connection.commit()
 
@@ -1580,6 +1625,35 @@ class SnapshotStore:
         connection.commit()
 
     @staticmethod
+    def _ensure_query_indexes(connection: sqlite3.Connection) -> None:
+        """Read-path indexes for the Matches list and the cheap status probes.
+
+        ``match_event_summaries`` is filtered by sport/country/competition,
+        grouped by them for facets and sorted by kickoff. Each dimension
+        index carries ``(start_time_utc, event_id)`` so a filtered kickoff
+        page is an index range walk and the facet ``GROUP BY dim`` /
+        ``COUNT(event_id)`` is covering (single-column indexes still needed a
+        temp B-tree sort and were no faster than a scan on 52k rows).
+        ``/ops/status`` reads ``MAX(live_odds_snapshots.fetched_at)`` once a
+        minute. All are idempotent and take well under a second to build.
+        """
+        statements = (
+            "CREATE INDEX IF NOT EXISTS idx_match_event_summaries_kickoff "
+            "ON match_event_summaries(start_time_utc, event_id)",
+            "CREATE INDEX IF NOT EXISTS idx_match_event_summaries_sport_kickoff "
+            "ON match_event_summaries(sport, start_time_utc, event_id)",
+            "CREATE INDEX IF NOT EXISTS idx_match_event_summaries_country_kickoff "
+            "ON match_event_summaries(country, start_time_utc, event_id)",
+            "CREATE INDEX IF NOT EXISTS idx_match_event_summaries_competition_kickoff "
+            "ON match_event_summaries(competition, start_time_utc, event_id)",
+            "CREATE INDEX IF NOT EXISTS idx_live_odds_snapshots_fetched "
+            "ON live_odds_snapshots(fetched_at)",
+        )
+        for statement in statements:
+            connection.execute(statement)
+        connection.commit()
+
+    @staticmethod
     def _safe_int(value: Any) -> int:
         try:
             if value is None:
@@ -1656,16 +1730,22 @@ class SnapshotStore:
 
     @staticmethod
     def _has_final_score(response: MatchStatsResponse) -> bool:
-        """True iff the payload exposes a usable Final score row.
+        """True iff the payload exposes a usable Final score row."""
+        return SnapshotStore._final_score(response) is not None
+
+    @staticmethod
+    def _final_score(response: MatchStatsResponse) -> Optional[Tuple[int, int]]:
+        """Return ``(home, away)`` from the Final score row, or None.
 
         Mirrors the parser in :func:`app.ml.sports._football_labels` but is
         sport-agnostic enough for other parsers that follow the same
-        Match/Score/Final-score nesting.
+        Match/Score/Final-score nesting. The first Final score row wins; an
+        unparseable one yields None rather than falling through to a later row.
         """
         try:
             periods = response.event.periods or ()
         except AttributeError:
-            return False
+            return None
         for period in periods:
             name = (getattr(period, "name", None) or "").strip().lower()
             if name != "match":
@@ -1679,12 +1759,12 @@ class SnapshotStore:
                     if "final score" not in label:
                         continue
                     try:
-                        int(getattr(stat, "home", None))  # type: ignore[arg-type]
-                        int(getattr(stat, "away", None))  # type: ignore[arg-type]
-                        return True
+                        home = int(getattr(stat, "home", None))  # type: ignore[arg-type]
+                        away = int(getattr(stat, "away", None))  # type: ignore[arg-type]
                     except (TypeError, ValueError):
-                        return False
-        return False
+                        return None
+                    return home, away
+        return None
 
     @staticmethod
     def _dump_payload(payload: Any) -> str:
