@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLocale } from "@/contexts/LocaleContext";
 import {
   Badge,
@@ -16,7 +16,7 @@ import {
 import { useMlflowRuns, useRegisterRun } from "@/hooks/useMlflow";
 import { errorMessage } from "@/lib/api/http";
 import { routes } from "@/lib/routes";
-import type { BacktestRunDetail } from "@/lib/lab/backtests";
+import { isActiveRun, type BacktestRunDetail } from "@/lib/lab/backtests";
 import { runWindow } from "@/lib/lab/format";
 import type { MlflowRun, RegisterResponse } from "@/types/mlflow";
 import { MlflowStatusCallout } from "./MlflowStatusCallout";
@@ -28,6 +28,13 @@ import { MlflowStatusCallout } from "./MlflowStatusCallout";
 export function RunMlflowPanel({ run }: { run: BacktestRunDetail }) {
   const { t } = useLocale();
   const runs = useMlflowRuns({ purpose: "walk_forward_backtest" });
+  const { refetch } = runs;
+  const wasActive = useRef(isActiveRun(run));
+  // A run is logged to MLflow as it completes: look again once it finishes.
+  useEffect(() => {
+    if (wasActive.current && !isActiveRun(run)) void refetch();
+    wasActive.current = isActiveRun(run);
+  }, [run, refetch]);
   const status = runs.data?.status;
   const tracked = runs.data?.runs.find(
     (r) => r.backtest_run_id === run.id || (run.mlflow_run_id !== null && r.run_id === run.mlflow_run_id)

@@ -13,7 +13,7 @@ export const MIN_PROMOTION_BETS = 300;
 export function useReloadServedModels() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => backendSend<ServedModel[]>("POST", "ml/reload"),
+    mutationFn: () => backendSend<{ models: ServedModel[] }>("POST", "ml/reload"),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: opsStatusKey });
       qc.invalidateQueries({ queryKey: mlflowKeys.registry });

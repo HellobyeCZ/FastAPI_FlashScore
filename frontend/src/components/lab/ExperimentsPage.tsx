@@ -20,7 +20,7 @@ import {
 } from "@/components/ui";
 import { useMlflowRuns } from "@/hooks/useMlflow";
 import { errorMessage } from "@/lib/api/http";
-import { KNOWN_MODELS, modelLabel, type Tone } from "@/lib/labels";
+import { KNOWN_MODELS, modelLabel } from "@/lib/labels";
 import { routes } from "@/lib/routes";
 import type { MessageKey } from "@/lib/i18n";
 import type { MlflowRun } from "@/types/mlflow";
@@ -29,19 +29,10 @@ import { useSearchState } from "@/lib/lab/hooks";
 import { formatSort, parseSort, sortRows } from "@/lib/lab/sort";
 import { LabTabs } from "./LabTabs";
 import { MlflowStatusCallout } from "./MlflowStatusCallout";
+import { PURPOSES, PurposeBadge, isPurpose, type Purpose } from "./PurposeBadge";
 
-const PURPOSES = ["walk_forward_backtest", "offline_training", "scheduled_retrain", "backfill"] as const;
-type Purpose = (typeof PURPOSES)[number];
 type PurposeFilter = Purpose | "all";
 
-const PURPOSE_TONE: Record<Purpose, Tone> = {
-  walk_forward_backtest: "accent",
-  offline_training: "info",
-  scheduled_retrain: "info",
-  backfill: "neutral"
-};
-
-const isPurpose = (v: string | null | undefined): v is Purpose => (PURPOSES as readonly string[]).includes(v ?? "");
 const isTraining = (p: string | null | undefined) => p === "offline_training" || p === "scheduled_retrain";
 
 /** Training runs log calibrated/uncalibrated metrics; backtests log bet KPIs. */
@@ -49,16 +40,6 @@ const metric = (run: MlflowRun, key: string): number | null => {
   const v = run.metrics[key];
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 };
-
-export function PurposeBadge({ purpose }: { purpose: string | null }) {
-  const { t } = useLocale();
-  if (!purpose) return <span className="text-text-faint">—</span>;
-  return (
-    <Badge tone={isPurpose(purpose) ? PURPOSE_TONE[purpose] : "neutral"}>
-      {isPurpose(purpose) ? t(`lab.purpose.${purpose}` as MessageKey) : purpose.replace(/_/g, " ")}
-    </Badge>
-  );
-}
 
 /** MLflow runs of the "picks" experiment, filterable by purpose and model. */
 export function ExperimentsPage() {

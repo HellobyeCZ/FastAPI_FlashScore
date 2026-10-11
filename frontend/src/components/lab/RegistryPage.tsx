@@ -40,7 +40,7 @@ import {
 } from "@/lib/lab/serving";
 import { LabTabs } from "./LabTabs";
 import { MlflowStatusCallout } from "./MlflowStatusCallout";
-import { PurposeBadge } from "./ExperimentsPage";
+import { PurposeBadge } from "./PurposeBadge";
 
 const ALIASES: RegistryAlias[] = ["champion", "challenger"];
 
