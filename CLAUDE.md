@@ -24,7 +24,9 @@ Both apps read/write the **same SQLite file**. Schema is owned by Prisma in `fro
 - `app/services/odds_client.py`, `stats_client.py` — async httpx clients for the two upstream sources.
 - `app/services/{odds,match_stats}.py` — `map_*_payload` functions transforming upstream JSON into the response schemas under `app/schemas/`.
 - `app/services/bulk_scrape.py` — `BulkScrapeManager` runs background scraping jobs; lifecycle is bound to FastAPI startup/shutdown events in `src.py`.
-- `src.py` — single-file FastAPI app. All routes (`/odds/{event_id}`, `/match-stats/{event_id}`, `/storage/...`, `/bulk-scrape/jobs`) live here. Singletons (`OddsClient`, `MatchStatsClient`, `SnapshotStore`, `BulkScrapeManager`) are wired via `@lru_cache` factories and exposed as FastAPI dependencies.
+- `src.py` — the FastAPI app. Core routes (`/odds/{event_id}`, `/match-stats/{event_id}`, `/storage/...`, `/bulk-scrape/jobs`, `/backtest/*`, `/picks/*`, `/predict/*`) live here; newer areas are routers in `app/routes/` (`/ops/status`, `/events/*`, `/mlflow/*`) included at the bottom of `src.py`. Singletons (`OddsClient`, `MatchStatsClient`, `SnapshotStore`, `BulkScrapeManager`) are wired via `@lru_cache` factories and exposed as FastAPI dependencies.
+- Handlers that run synchronous SQLite/ML work (`/picks/*`, `/predict/*`, `/events/*`, `/ops/status`) are plain `def` endpoints so FastAPI runs them in its threadpool; keep new blocking handlers that way (or offload with `asyncio.to_thread`, as `SnapshotStore` does). Read paths resolve the DB per call via `app.ml.db.connect(read_only=True)` rather than the cached `SnapshotStore`.
+- `/events/{event_id}[/odds|/stats|/picks]` serve stored data only and never scrape; `/odds` and `/match-stats` still scrape non-terminal events. `/ops/status` must stay cheap — never `COUNT(*)` the snapshot tables there.
 - Optional Azure Monitor / OpenTelemetry telemetry initializes only if `azure-monitor-opentelemetry-exporter` is available and a connection string is configured; code uses `_NoopTracer`/`_NoopMeter` fallbacks otherwise — don't assume tracer/meter calls require the real SDK.
 
 ## Commands
