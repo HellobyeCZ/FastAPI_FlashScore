@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterator
 
@@ -140,6 +140,13 @@ def db_path(tmp_path: Path, monkeypatch) -> Path:
             "('UPC1', 'football/spain/laliga', 'football', 'spain', 'laliga', 'Oviedo', 'Real Madrid', "
             "'2026-05-14T19:30:00+00:00', '2026-05-11T20:48:02+00:00', '2026-05-13T20:40:00+00:00')"
         )
+        c.execute(
+            "INSERT INTO upcoming_fixtures (event_id, competition_path, sport, country, competition, "
+            "home_team_raw, away_team_raw, start_time_utc, discovered_at, last_refreshed_at) VALUES "
+            "('UPC2', 'football/spain/laliga', 'football', 'spain', 'laliga', 'Betis', 'Sevilla', "
+            "?, '2026-05-11T20:48:02+00:00', '2026-05-13T20:40:00+00:00')",
+            ((datetime.now(timezone.utc) + timedelta(days=3)).isoformat(),),
+        )
         c.commit()
     return db
 
@@ -199,7 +206,8 @@ def test_event_summary_for_fixture_known_only_from_discovery(client: TestClient)
     resp = client.get("/events/UPC1")
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["status"] == "scheduled"
+    # Kickoff has passed and no result is stored: status unknown, not "scheduled".
+    assert body["status"] is None
     assert body["home_team"] == "Oviedo"
     assert body["away_team"] == "Real Madrid"
     assert body["country"] == "SPAIN"
@@ -208,6 +216,12 @@ def test_event_summary_for_fixture_known_only_from_discovery(client: TestClient)
     assert body["is_terminal"] is False
     assert body["odds_snapshot_count"] == 0
     assert body["stats_snapshot_count"] == 0
+
+
+def test_fixture_with_kickoff_ahead_is_scheduled(client: TestClient):
+    body = client.get("/events/UPC2").json()
+    assert body["status"] == "scheduled"
+    assert (body["home_team"], body["away_team"]) == ("Betis", "Sevilla")
 
 
 def test_unknown_event_is_404(client: TestClient):

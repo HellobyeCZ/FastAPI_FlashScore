@@ -27,8 +27,9 @@ class EventSummary(BaseModel):
     status: Optional[str] = Field(
         default=None,
         description=(
-            'Upstream status as stored ("finished" can mean a pre-match capture); '
-            '"scheduled" for fixtures known only from discovery.'
+            'Upstream status as stored ("finished" can mean a pre-match capture). '
+            'For a fixture known only from discovery: "scheduled" while its kickoff '
+            "is ahead, null once it has passed without a stored result."
         ),
     )
     status_detail: Optional[str] = None

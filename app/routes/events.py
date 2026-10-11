@@ -10,6 +10,7 @@ from __future__ import annotations
 import contextlib
 import json
 import sqlite3
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 import structlog
@@ -22,6 +23,7 @@ from app.ml.paper_trade_stats import (
     StatsFilter,
     fetch_history,
     format_timestamp,
+    parse_timestamp,
     table_names,
 )
 from app.schemas.events import (
@@ -116,6 +118,10 @@ def get_event(event_id: str) -> EventSummary:
     elif fixture is not None:
         # Discovered by the live pipeline but never scraped into the archive.
         # Fixture countries are lowercase; the archive vocabulary is upper.
+        # It is "scheduled" only while the kickoff is ahead; past it nothing
+        # stored says what happened, so the status is unknown (null).
+        kickoff = parse_timestamp(fixture["start_time_utc"])
+        upcoming = kickoff is not None and kickoff > datetime.now(timezone.utc)
         fields = {
             "home_team": fixture["home_team_raw"],
             "away_team": fixture["away_team_raw"],
@@ -124,7 +130,7 @@ def get_event(event_id: str) -> EventSummary:
             "competition": fixture["competition"],
             "competition_path": fixture["competition_path"],
             "start_time_utc": fixture["start_time_utc"],
-            "status": "scheduled",
+            "status": "scheduled" if upcoming else None,
             "status_detail": None,
             "outcome": None,
         }
