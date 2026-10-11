@@ -13,7 +13,8 @@ export const dynamic = "force-dynamic";
 // page shows), bet_labels, then upcoming_fixtures (future fixtures only). The
 // same order supplies team names: upcoming_fixtures lists some events with
 // home/away reversed relative to the other two, and the slate must agree with
-// the match page it links to. Bets with no kick-off fall outside every window.
+// the match page it links to. Bets with no kick-off fall outside every window;
+// pending ones are counted separately so they never vanish from the cockpit.
 //
 // Timestamps are stored as ISO TEXT in mixed shapes ("…+00:00", "…Z", with and
 // without microseconds), so every comparison and sort goes through julianday()
@@ -24,7 +25,9 @@ export const dynamic = "force-dynamic";
 //   upcoming72h    pending picks with kick-off in [now, now + 72 h)
 //   pending        pending picks whose kick-off has passed; overdue after 6 h
 //                  (the same rule as the settle_overdue health check)
-//   pnl30d         settled bets with settled_at in the last 30 days
+//   pnl30d         settled bets with settled_at in the last 30 days (voided
+//                  bets have no P&L and count neither here nor in
+//                  last_settled_at)
 
 const HOUR_MS = 3_600_000;
 const ROW_LIMIT = 500;
@@ -78,6 +81,7 @@ type RawSummary = {
   last_settled_at: string | null;
   pending_count: number | bigint | null;
   overdue_count: number | bigint | null;
+  unscheduled_count: number | bigint | null;
   oldest_kickoff: string | null;
 };
 
@@ -236,11 +240,12 @@ export async function GET(request: NextRequest) {
       prisma.$queryRaw<RawSummary[]>`
         SELECT
           strftime(${ISO}, MAX(julianday(b.recommended_at))) AS last_recommended_at,
-          strftime(${ISO}, MAX(b.settled_jd)) AS last_settled_at,
+          strftime(${ISO}, MAX(CASE WHEN b.status = 'settled' THEN b.settled_jd END)) AS last_settled_at,
           SUM(CASE WHEN b.status = 'pending' AND b.kickoff_jd < julianday(${nowIso}) THEN 1 ELSE 0 END)
             AS pending_count,
           SUM(CASE WHEN b.status = 'pending' AND b.kickoff_jd < julianday(${overdueIso}) THEN 1 ELSE 0 END)
             AS overdue_count,
+          SUM(CASE WHEN b.status = 'pending' AND b.kickoff_jd IS NULL THEN 1 ELSE 0 END) AS unscheduled_count,
           strftime(${ISO}, MIN(CASE WHEN b.status = 'pending' AND b.kickoff_jd < julianday(${nowIso})
             THEN b.kickoff_jd END)) AS oldest_kickoff
         FROM (${BETS}) b
@@ -270,6 +275,7 @@ export async function GET(request: NextRequest) {
       pending: {
         count: Number(summary?.pending_count ?? 0),
         overdue_count: Number(summary?.overdue_count ?? 0),
+        unscheduled_count: Number(summary?.unscheduled_count ?? 0),
         oldest_kickoff: summary?.oldest_kickoff ?? null
       },
       last_recommended_at: summary?.last_recommended_at ?? null,

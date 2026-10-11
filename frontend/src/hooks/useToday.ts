@@ -48,10 +48,16 @@ export type TodayResponse = {
   upcoming72h: TodayPick[];
   /** Settled bets with settled_at in the last 30 days; `pnl` is null when n = 0. */
   pnl30d: { n: number; pnl: number | null; series: { settled_at: string; cum_pnl: number }[] };
+  /** Latest settled_at of a settled (not voided) bet, any age. */
   last_settled_at: string | null;
-  /** Unsettled picks whose kick-off has passed; overdue = kick-off more than 6 h ago. */
-  pending: { count: number; overdue_count: number; oldest_kickoff: string | null };
+  /**
+   * Unsettled picks whose kick-off has passed; overdue = kick-off more than
+   * 6 h ago. `unscheduled_count` = unsettled picks with no known kick-off.
+   */
+  pending: { count: number; overdue_count: number; unscheduled_count: number; oldest_kickoff: string | null };
+  /** When the picks pipeline last recorded a pick. */
   last_recommended_at: string | null;
+  /** The ten most recently settled or voided bets, newest first. */
   recent_settled: TodaySettled[];
 };
 
