@@ -51,6 +51,13 @@ export function stageState(run: RefreshRun, stage: RefreshStage): StageState {
   return run.status === "error" ? "skipped" : "pending";
 }
 
+/**
+ * Query roots whose fetch scrapes FlashScore (useOddsData, useMatchStatsData).
+ * They are only ever fetched on an explicit operator action, never by an
+ * invalidation.
+ */
+const UPSTREAM_QUERY_ROOTS: readonly unknown[] = ["odds", "match-stats"];
+
 export const refreshKeys = {
   all: ["refresh-now"] as const,
   list: ["refresh-now", "list"] as const,
@@ -60,8 +67,9 @@ export const refreshKeys = {
 /**
  * Refresh state for the Data ops panel: recent runs, the run being followed
  * (polled every 2 s while active) and the start mutation. When a followed run
- * finishes, every cached query is invalidated — a refresh changes picks,
- * settlements, fixtures and odds, so no view should keep pre-refresh data.
+ * finishes, every cached query except the upstream fetches is invalidated — a
+ * refresh changes picks, settlements, fixtures and odds, so no view should keep
+ * pre-refresh data.
  */
 export function useRefreshNow() {
   const qc = useQueryClient();
@@ -93,7 +101,7 @@ export function useRefreshNow() {
     const prev = prevStatus.current;
     prevStatus.current = status;
     if (isRunActive(prev) && !isRunActive(status)) {
-      qc.invalidateQueries();
+      qc.invalidateQueries({ predicate: (q) => !UPSTREAM_QUERY_ROOTS.includes(q.queryKey[0]) });
     }
   }, [status, qc]);
 

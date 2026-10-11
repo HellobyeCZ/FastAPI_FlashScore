@@ -1,5 +1,5 @@
 "use client";
-import { useId, useState } from "react";
+import { Fragment, useId, useState } from "react";
 import { useLocale } from "@/contexts/LocaleContext";
 import {
   isActiveJob,
@@ -42,6 +42,24 @@ function useDataLabel() {
   const { t } = useLocale();
   return (stats: boolean, odds: boolean) =>
     stats && odds ? t("ops.scrape.data.both") : stats ? t("ops.scrape.data.stats") : t("ops.scrape.data.odds");
+}
+
+/** Competition path that prefers to wrap after a slash on narrow screens. */
+function CompetitionPath({ path }: { path: string }) {
+  return (
+    <span className="text-text [overflow-wrap:anywhere]">
+      {path.split("/").map((segment, i) => (
+        <Fragment key={i}>
+          {i > 0 && (
+            <>
+              /<wbr />
+            </>
+          )}
+          {segment}
+        </Fragment>
+      ))}
+    </span>
+  );
 }
 
 function SectionHeading({ id, children }: { id: string; children: React.ReactNode }) {
@@ -390,7 +408,7 @@ export function BulkScrapePanel() {
       header: t("ops.jobs.col.competition"),
       cell: (j) => (
         <div className="flex min-w-[6rem] flex-col gap-0.5">
-          <span className="text-text [overflow-wrap:anywhere]">{j.competition_path}</span>
+          <CompetitionPath path={j.competition_path} />
           <span className="text-meta text-text-dim">
             #{j.id} · {tp("ops.seasons", j.seasons, { count: j.seasons })}
             <span className="hidden sm:inline">
