@@ -33,7 +33,7 @@ export function LeaderboardPage() {
   const overall = usePicksStats([], q, state.ready);
   const byModel = usePicksStats(["model"], q, state.ready);
   const settled = useHistoryRows(q, "settled", state.ready);
-  const boardStatus = panelStatus(state.ready, byModel);
+  const boardStatus = panelStatus(state, byModel);
   const sort = parseSort(state.searchParams);
   const lastSettled = lastSettledAt(state.summary.data);
 
@@ -56,7 +56,7 @@ export function LeaderboardPage() {
       <FilterBar state={state} />
 
       <KpiGrid
-        status={panelStatus(state.ready, overall)}
+        status={panelStatus(state, overall)}
         overall={overall.data?.rows[0]}
         rows={settled}
         windowText={windowText}

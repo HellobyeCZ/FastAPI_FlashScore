@@ -79,7 +79,7 @@ export function ModelPage({ name }: { name: string }) {
       <FilterBar state={state} />
 
       <KpiGrid
-        status={panelStatus(state.ready, overall)}
+        status={panelStatus(state, overall)}
         overall={overall.data?.rows[0]}
         rows={settled}
         windowText={windowText}

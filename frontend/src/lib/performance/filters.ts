@@ -60,23 +60,21 @@ export const SHARED_KEYS: readonly FilterKey[] = ["window", "from", "to", "marke
 /** Explorer-only refinements. */
 export const RANGE_KEYS: readonly FilterKey[] = ["selection", "edgeMin", "edgeMax", "priceMin", "priceMax"];
 
-export const EMPTY_FILTERS: PerfFilters = {
-  window: null,
-  from: null,
-  to: null,
-  market: null,
-  competition: null,
-  model: null,
-  selection: null,
-  edgeMin: null,
-  edgeMax: null,
-  priceMin: null,
-  priceMax: null
-};
-
 type ParamReader = { get(name: string): string | null };
 
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const DATE_RE = /^(\d{4})-\d{2}-\d{2}$/;
+
+/**
+ * A complete calendar day (YYYY-MM-DD) in a plausible year. Date inputs emit
+ * intermediate values such as 0002-05-01 while a year is being typed; those
+ * must never reach the URL.
+ */
+export function isPlausibleDay(v: string | null | undefined): v is string {
+  const m = v ? DATE_RE.exec(v) : null;
+  if (!m) return false;
+  const year = Number(m[1]);
+  return year >= 2000 && year <= 2100 && !Number.isNaN(Date.parse(`${v}T00:00:00Z`));
+}
 
 function readNumber(raw: string | null): number | null {
   if (raw === null || raw.trim() === "") return null;
@@ -99,8 +97,8 @@ export function parseFilters(sp: ParamReader): PerfFilters {
   const to = sp.get(PARAM.to);
   return {
     window: isWindowPreset(window) ? window : null,
-    from: from && DATE_RE.test(from) ? from : null,
-    to: to && DATE_RE.test(to) ? to : null,
+    from: isPlausibleDay(from) ? from : null,
+    to: isPlausibleDay(to) ? to : null,
     market: readText(sp.get(PARAM.market)),
     competition: readText(sp.get(PARAM.competition)),
     model: readText(sp.get(PARAM.model)),
@@ -134,10 +132,6 @@ export function applyPatch(sp: ParamReader & { toString(): string }, patch: Part
     else next.set(PARAM[k], String(v));
   }
   return next;
-}
-
-export function paramName(key: FilterKey): string {
-  return PARAM[key];
 }
 
 /** Number of non-window filters set (shown on the mobile filter toggle). */

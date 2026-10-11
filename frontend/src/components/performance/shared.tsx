@@ -30,21 +30,26 @@ export function useWindowText(state: Pick<PerformanceFilterState, "window" | "ra
   return t(`performance.window.desc.${state.window}` as MessageKey);
 }
 
+/** Decimals a typed bound needs (2.5 → 1, 5 → 0), capped at `max`. */
+const decimals = (v: number, max: number) => Math.min(max, (String(v).split(".")[1] ?? "").length);
+
 /** Human list of the active filters, e.g. "1X2 · full time · Chance Liga". */
 export function useFilterSummary(state: PerformanceFilterState): string | null {
-  const { t } = useLocale();
+  const { t, fmt } = useLocale();
   const f = state.filters;
   const parts: string[] = [];
   const has = (k: (typeof state.keys)[number]) => state.keys.includes(k) && f[k] !== null;
+  const edge = (v: number | null) => (v === null ? "…" : fmt.num(v, decimals(v, 2)));
+  const price = (v: number | null) => (v === null ? "…" : fmt.odds(v));
   if (has("model")) parts.push(modelLabel(f.model!, t));
   if (has("market")) parts.push(marketLabel(f.market!, t));
   if (has("competition")) parts.push(f.competition!);
   if (has("selection")) parts.push(selectionLabel(f.selection!, t));
   if (has("edgeMin") || has("edgeMax")) {
-    parts.push(t("performance.filter.edgeRange", { min: f.edgeMin ?? "…", max: f.edgeMax ?? "…" }));
+    parts.push(t("performance.filter.edgeRange", { min: edge(f.edgeMin), max: edge(f.edgeMax) }));
   }
   if (has("priceMin") || has("priceMax")) {
-    parts.push(t("performance.filter.priceRange", { min: f.priceMin ?? "…", max: f.priceMax ?? "…" }));
+    parts.push(t("performance.filter.priceRange", { min: price(f.priceMin), max: price(f.priceMax) }));
   }
   return parts.length ? parts.join(" · ") : null;
 }
@@ -162,14 +167,54 @@ export function NoBetsEmpty({
   );
 }
 
+/**
+ * Empty chart over bets that do exist: the window has settled bets, but none
+ * carries what the chart needs (a closing price, a competition, a stake). Says
+ * so instead of claiming there are no bets, and points at the pipeline.
+ */
+export function MissingDataEmpty({
+  state,
+  title,
+  body
+}: {
+  state: PerformanceFilterState;
+  title: string;
+  body: string;
+}) {
+  const { t } = useLocale();
+  return (
+    <EmptyState
+      compact
+      title={title}
+      action={
+        <>
+          {state.window !== "all" && (
+            <Button size="sm" onClick={() => state.update({ window: "all", from: null, to: null })}>
+              {t("performance.empty.showAll")}
+            </Button>
+          )}
+          <OpsLink />
+        </>
+      }
+    >
+      {body}
+    </EmptyState>
+  );
+}
+
+/** Panel footnotes joined into one line; falsy entries are skipped. */
+export function joinNotes(...notes: (string | false | null | undefined)[]): string | undefined {
+  const kept = notes.filter((n): n is string => !!n);
+  return kept.length ? kept.join(" ") : undefined;
+}
+
 /** Caveats for panels built from individual bets (row cap, unapplied filter). */
 export function useRowsNote(rows: Pick<RowsResult, "truncated" | "competitionIgnored">): string | undefined {
   const { t } = useLocale();
-  const notes = [
+  return joinNotes(
     rows.truncated && t("performance.chart.truncated"),
     rows.competitionIgnored && t("performance.chart.legacyCompetition")
-  ].filter((n): n is string => !!n);
-  return notes.length ? notes.join(" ") : undefined;
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -183,13 +228,37 @@ type QueryLike = {
   refetch: () => unknown;
 };
 
-export type PanelStatus = { loading: boolean; error: unknown; retry: () => void; retrying: boolean };
+export type PanelStatus = {
+  loading: boolean;
+  error: unknown;
+  retry: () => void;
+  retrying: boolean;
+  /** The error is the filter options', which the active competition filter needs. */
+  blocked?: boolean;
+};
 
-/** Merges query states for one panel; `ready` false (filters resolving) reads as loading. */
-export function panelStatus(ready: boolean, ...queries: QueryLike[]): PanelStatus {
+/** Filter readiness a panel waits on (`true` for panels that ignore the filters). */
+export type PanelGate = true | Pick<PerformanceFilterState, "ready" | "blocker">;
+
+/**
+ * Merges query states for one panel. A failed filter dependency (`blocker`)
+ * reads as this panel's error; otherwise `ready` false (filters resolving)
+ * reads as loading.
+ */
+export function panelStatus(gate: PanelGate, ...queries: QueryLike[]): PanelStatus {
+  if (gate !== true && gate.blocker) {
+    const blocker = gate.blocker;
+    return {
+      loading: false,
+      error: blocker.error,
+      retry: () => void blocker.refetch(),
+      retrying: blocker.isFetching,
+      blocked: true
+    };
+  }
   const failed = queries.filter((q) => q.isError);
   return {
-    loading: !ready || queries.some((q) => q.isLoading),
+    loading: (gate !== true && !gate.ready) || queries.some((q) => q.isLoading),
     error: failed[0]?.error ?? null,
     retry: () => failed.forEach((q) => void q.refetch()),
     retrying: failed.some((q) => q.isFetching)
@@ -201,14 +270,16 @@ export function PanelError({ status }: { status: PanelStatus }) {
   return (
     <Callout
       tone="neg"
-      title={t("performance.error.title")}
+      title={status.blocked ? t("performance.error.blockedTitle") : t("performance.error.title")}
       action={
         <Button size="sm" onClick={status.retry} loading={status.retrying}>
           {t("common.retry")}
         </Button>
       }
     >
-      {errorMessage(status.error)}
+      {status.blocked
+        ? t("performance.error.blockedBody", { error: errorMessage(status.error) })
+        : errorMessage(status.error)}
     </Callout>
   );
 }

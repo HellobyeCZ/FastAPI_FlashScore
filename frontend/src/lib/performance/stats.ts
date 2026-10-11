@@ -8,6 +8,18 @@ import type { HistoryRow, StatsRow } from "./types";
 
 const Z95 = 1.959964;
 
+/**
+ * Settlement stores log-ratio CLV, so an unchanged price comes back as ±2e-16
+ * (and means of those as ~1e-18) rather than 0. Treat that as the 0 it is, so
+ * it is neither coloured as a gain nor counted as beating the close.
+ */
+export function dropFloatNoise(v: number): number;
+export function dropFloatNoise(v: number | null | undefined): number | null;
+export function dropFloatNoise(v: number | null | undefined): number | null {
+  if (v === null || v === undefined) return null;
+  return Math.abs(v) < 1e-9 ? 0 : v;
+}
+
 export type Interval = { low: number; high: number };
 
 /** Wilson 95% score interval for a hit rate; well-behaved at small n and at 0 % / 100 %. */
@@ -205,7 +217,7 @@ export function foldStats(rows: StatsRow[], keyOf: (r: StatsRow) => string | nul
     stake: a.stake,
     pnl: a.pnl,
     roi: a.stake > 0 ? a.pnl / a.stake : null,
-    meanClv: a.clvN > 0 ? a.clvSum / a.clvN : null
+    meanClv: a.clvN > 0 ? dropFloatNoise(a.clvSum / a.clvN) : null
   }));
 }
 
@@ -235,6 +247,25 @@ export function cumulativeByModel(rows: StatsRow[]): { firstDay: string | null; 
     lastDay: sorted[sorted.length - 1]?.day ?? null,
     series: [...byModel.entries()].map(([model, points]) => ({ model, points }))
   };
+}
+
+/**
+ * Chart points for one model's running P&L, x = whole days since `origin`.
+ * The line starts at 0u the day before the model's own first settlement and
+ * stays flat over days without settlements, so it only slopes across the days
+ * on which P&L actually changed.
+ */
+export function pnlLine(points: PnlPoint[], origin: string): { x: number; y: number }[] {
+  if (points.length === 0) return [];
+  let last = { x: dayOffset(origin, points[0].day) - 1, y: 0 };
+  const out = [last];
+  for (const p of points) {
+    const x = dayOffset(origin, p.day);
+    if (x - 1 > last.x) out.push({ x: x - 1, y: last.y });
+    last = { x, y: p.cumulative };
+    out.push(last);
+  }
+  return out;
 }
 
 /** YYYY-MM-DD shifted by `days` calendar days. */

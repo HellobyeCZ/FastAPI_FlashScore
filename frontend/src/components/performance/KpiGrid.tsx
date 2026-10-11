@@ -1,7 +1,7 @@
 "use client";
 import { useLocale } from "@/contexts/LocaleContext";
 import type { RowsResult } from "@/lib/performance/api";
-import { reconciledRoiInterval, wilson, type Interval } from "@/lib/performance/stats";
+import { dropFloatNoise, reconciledRoiInterval, wilson, type Interval } from "@/lib/performance/stats";
 import type { StatsRow } from "@/lib/performance/types";
 import { SampleSize, Signed, Skeleton, Stat, StatGrid } from "@/components/ui";
 import { PanelError, type PanelStatus } from "./shared";
@@ -78,7 +78,7 @@ export function KpiGrid({
       />
       <Stat
         label={t("performance.kpi.clv")}
-        value={<Signed value={overall?.mean_clv} format="pct" digits={2} />}
+        value={<Signed value={dropFloatNoise(overall?.mean_clv)} format="pct" digits={2} />}
         sub={sub(clvRows ? tp("performance.kpi.clvCoverage", clvRows.length, { count: fmt.int(clvRows.length) }) : null)}
       />
     </StatGrid>

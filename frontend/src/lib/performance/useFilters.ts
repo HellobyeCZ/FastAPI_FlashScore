@@ -36,8 +36,12 @@ export function usePerformanceFilters(keys: readonly FilterKey[]) {
     () => windowRange(resolution.window, filters, today),
     [resolution.window, filters, today]
   );
-  // Competition roots expand to their raw stage variants, which come from facets.
-  const waitsForFacets = keys.includes("competition") && filters.competition !== null && facets.isLoading;
+  // Competition roots expand to their raw stage variants, which come from
+  // facets. Without them the filter would silently match nothing, so queries
+  // wait for facets and, if facets fail, panels report that instead.
+  const needsFacets = keys.includes("competition") && filters.competition !== null && !facets.data;
+  const waitsForFacets = needsFacets && facets.isLoading;
+  const blocker = needsFacets && facets.isError ? facets : null;
   const query = useMemo(() => toPicksQuery(filters, range, facets.data, keys), [filters, range, facets.data, keys]);
 
   const replace = useCallback(
@@ -84,7 +88,9 @@ export function usePerformanceFilters(keys: readonly FilterKey[]) {
     window: resolution.window,
     auto: resolution.auto,
     staleSince: resolution.staleSince,
-    ready: resolution.ready && !waitsForFacets,
+    ready: resolution.ready && !waitsForFacets && !blocker,
+    /** Failed query every panel depends on (facets, for a competition filter). */
+    blocker,
     range,
     query,
     facets,

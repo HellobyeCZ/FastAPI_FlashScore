@@ -4,6 +4,7 @@ import { marketLabel, selectionLabel } from "@/lib/labels";
 import { routes } from "@/lib/routes";
 import { useBetsPage, type BetStatus } from "@/lib/performance/api";
 import type { PicksQuery } from "@/lib/performance/filters";
+import { dropFloatNoise } from "@/lib/performance/stats";
 import type { HistoryRow } from "@/lib/performance/types";
 import type { PerformanceFilterState } from "@/lib/performance/useFilters";
 import {
@@ -21,12 +22,6 @@ import {
 import { betState, MatchCell, NoBetsEmpty, Pager, PanelError, panelStatus, usePp } from "./shared";
 
 const PAGE_SIZE = 25;
-
-/**
- * Settlement stores log-ratio CLV, so an unchanged price comes back as ±2e-16
- * rather than 0; treat that as the 0 it is instead of a coloured "+0.00%".
- */
-const dropFloatNoise = (v: number | null) => (v !== null && Math.abs(v) < 1e-9 ? 0 : v);
 
 /** Table scope; "settled" matches the population every chart on the page uses. */
 const STATUSES = ["settled", "pending", "all"] as const;
@@ -68,7 +63,7 @@ export function BetsPanel({
     pageSize: PAGE_SIZE,
     enabled: state.ready
   });
-  const pstatus = panelStatus(state.ready, result);
+  const pstatus = panelStatus(state, result);
   const setPage = (next: number) => state.setParam({ page: next > 0 ? String(next + 1) : null });
 
   const columns: Column<HistoryRow>[] = [

@@ -40,7 +40,7 @@ export function CalibrationPanel({
 }) {
   const { t, tp, fmt } = useLocale();
   const cal = useCalibration(model, q, state.ready);
-  const status = panelStatus(state.ready, cal);
+  const status = panelStatus(state, cal);
   const buckets = useMemo(
     () => [...(cal.data?.buckets ?? [])].sort((a, b) => a.lower - b.lower),
     [cal.data]

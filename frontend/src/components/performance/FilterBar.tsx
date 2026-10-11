@@ -1,11 +1,12 @@
 "use client";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { clsx } from "clsx";
 import { useLocale } from "@/contexts/LocaleContext";
 import { marketLabel, modelLabel, selectionLabel } from "@/lib/labels";
 import {
   activeFilterCount,
   competitionRoots,
+  isPlausibleDay,
   WINDOW_PRESETS,
   type FilterKey,
   type PerfFilters,
@@ -25,6 +26,7 @@ export function FilterBar({ state }: { state: PerformanceFilterState }) {
   const { t } = useLocale();
   const { filters, keys, facets } = state;
   const [open, setOpen] = useState(false);
+  const fieldsId = useId();
   const active = activeFilterCount(filters, keys);
   const windowValue: WindowPreset = state.window;
 
@@ -80,30 +82,18 @@ export function FilterBar({ state }: { state: PerformanceFilterState }) {
         </div>
         {windowValue === "custom" && (
           <>
-            <Field label={t("performance.window.from")}>
-              {(p) => (
-                <Input
-                  {...p}
-                  type="date"
-                  value={filters.from ?? ""}
-                  max={filters.to ?? undefined}
-                  onChange={(e) => state.update({ window: "custom", from: e.target.value || null })}
-                  className="w-40"
-                />
-              )}
-            </Field>
-            <Field label={t("performance.window.to")}>
-              {(p) => (
-                <Input
-                  {...p}
-                  type="date"
-                  value={filters.to ?? ""}
-                  min={filters.from ?? undefined}
-                  onChange={(e) => state.update({ window: "custom", to: e.target.value || null })}
-                  className="w-40"
-                />
-              )}
-            </Field>
+            <DateField
+              label={t("performance.window.from")}
+              value={filters.from}
+              max={filters.to}
+              onCommit={(from) => state.update({ window: "custom", from })}
+            />
+            <DateField
+              label={t("performance.window.to")}
+              value={filters.to}
+              min={filters.from}
+              onCommit={(to) => state.update({ window: "custom", to })}
+            />
           </>
         )}
         <div className="ml-auto flex items-center gap-2">
@@ -116,6 +106,7 @@ export function FilterBar({ state }: { state: PerformanceFilterState }) {
             size="sm"
             className="md:hidden"
             aria-expanded={open}
+            aria-controls={fieldsId}
             onClick={() => setOpen((v) => !v)}
           >
             {active > 0 ? t("performance.filter.toggleActive", { n: active }) : t("performance.filter.toggle")}
@@ -124,6 +115,7 @@ export function FilterBar({ state }: { state: PerformanceFilterState }) {
       </div>
 
       <div
+        id={fieldsId}
         className={clsx(
           "grid-cols-2 gap-3 sm:grid-cols-3",
           ranges ? "lg:grid-cols-6" : "lg:grid-cols-4",
@@ -180,6 +172,62 @@ export function FilterBar({ state }: { state: PerformanceFilterState }) {
         </p>
       )}
     </div>
+  );
+}
+
+/**
+ * Custom-window bound. The input keeps a local draft: a date input reports
+ * every edited segment (and years such as 0002 while one is typed), so only a
+ * complete, plausible day reaches the URL. Clearing applies on blur or Enter.
+ */
+function DateField({
+  label,
+  value,
+  min,
+  max,
+  onCommit
+}: {
+  label: string;
+  value: string | null;
+  min?: string | null;
+  max?: string | null;
+  onCommit: (day: string | null) => void;
+}) {
+  const [draft, setDraft] = useState(value ?? "");
+  // Follow URL changes (back/forward, "show all time") without remounting,
+  // which would drop focus mid-edit.
+  const [synced, setSynced] = useState(value);
+  if (synced !== value) {
+    setSynced(value);
+    setDraft(value ?? "");
+  }
+  const commit = (input: HTMLInputElement) => {
+    // A half-typed date reads as "" with badInput set: keep the applied day.
+    if (input.validity.badInput || (draft !== "" && !isPlausibleDay(draft))) setDraft(value ?? "");
+    else if (draft === "" && value !== null) onCommit(null);
+    else if (draft !== "" && draft !== value) onCommit(draft);
+  };
+  return (
+    <Field label={label}>
+      {(p) => (
+        <Input
+          {...p}
+          type="date"
+          value={draft}
+          min={min ?? undefined}
+          max={max ?? undefined}
+          onChange={(e) => {
+            setDraft(e.target.value);
+            if (isPlausibleDay(e.target.value) && e.target.value !== value) onCommit(e.target.value);
+          }}
+          onBlur={(e) => commit(e.currentTarget)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") commit(e.currentTarget);
+          }}
+          className="w-40"
+        />
+      )}
+    </Field>
   );
 }
 

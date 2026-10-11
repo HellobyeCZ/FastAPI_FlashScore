@@ -6,9 +6,9 @@ import { Table } from "@/components/ui";
 import { modelColor, modelLabel } from "@/lib/labels";
 import { usePicksStats, type RowsResult } from "@/lib/performance/api";
 import type { PicksQuery } from "@/lib/performance/filters";
-import { addDays, competitionKey, cumulativeByModel, dayOffset, foldStats } from "@/lib/performance/stats";
+import { addDays, competitionKey, cumulativeByModel, dropFloatNoise, foldStats, pnlLine } from "@/lib/performance/stats";
 import type { PerformanceFilterState } from "@/lib/performance/useFilters";
-import { ChartPanel, Measured, NoBetsEmpty, panelStatus, useRowsNote } from "./shared";
+import { ChartPanel, joinNotes, Measured, MissingDataEmpty, NoBetsEmpty, panelStatus, useRowsNote } from "./shared";
 
 const CHART_HEIGHT = 240;
 
@@ -27,16 +27,19 @@ export function PnlOverTimePanel({
 }) {
   const { t, fmt } = useLocale();
   const stats = usePicksStats(["model", "day"], q, state.ready);
-  const status = panelStatus(state.ready, stats);
+  const status = panelStatus(state, stats);
   const data = useMemo(() => cumulativeByModel(stats.data?.rows ?? []), [stats.data]);
 
-  // Day 0 is the day before the first settlement, so every line starts at 0u.
+  // Day 0 is the day before the first settlement of any model; each line
+  // starts at 0u the day before its own first settlement.
   const origin = data.firstDay ? addDays(data.firstDay, -1) : null;
-  const series: LineSeries[] = data.series.map((s, i) => ({
-    label: modelLabel(s.model, t),
-    color: modelColor(s.model, i),
-    points: [{ x: 0, y: 0 }, ...s.points.map((p) => ({ x: dayOffset(origin!, p.day), y: p.cumulative }))]
-  }));
+  const series: LineSeries[] = origin
+    ? data.series.map((s, i) => ({
+        label: modelLabel(s.model, t),
+        color: modelColor(s.model, i),
+        points: pnlLine(s.points, origin)
+      }))
+    : [];
   const tableRows = data.series.flatMap((s) => s.points.map((p) => ({ model: s.model, ...p })));
   const originText = origin ? fmt.date(dayIso(origin)) : "";
   const summary = data.series
@@ -102,8 +105,13 @@ export function CompetitionPanel({
 }) {
   const { t, tp, fmt } = useLocale();
   const stats = usePicksStats(["competition"], q, state.ready);
-  const status = panelStatus(state.ready, stats);
-  const folded = useMemo(() => foldStats(stats.data?.rows ?? [], competitionKey), [stats.data]);
+  const status = panelStatus(state, stats);
+  const { folded, total, unknown } = useMemo(() => {
+    const rows = stats.data?.rows ?? [];
+    const folded = foldStats(rows, competitionKey);
+    const total = rows.reduce((a, r) => a + r.n, 0);
+    return { folded, total, unknown: total - folded.reduce((a, f) => a + f.n, 0) };
+  }, [stats.data]);
   const bars = folded
     .map((f) => {
       const value = metric === "roi" ? f.roi : f.n > 0 ? f.pnl : null;
@@ -126,8 +134,27 @@ export function CompetitionPanel({
       className={className}
       status={status}
       isEmpty={bars.length === 0}
-      empty={<NoBetsEmpty state={state} compact />}
-      footer={unstaked > 0 ? tp("performance.chart.competition.unstaked", unstaked) : undefined}
+      empty={
+        total === 0 ? (
+          <NoBetsEmpty state={state} compact />
+        ) : folded.length === 0 ? (
+          <MissingDataEmpty
+            state={state}
+            title={tp("performance.chart.noCompetition", total, { count: fmt.int(total) })}
+            body={t("performance.chart.noCompetitionBody")}
+          />
+        ) : (
+          <MissingDataEmpty
+            state={state}
+            title={tp("performance.chart.noStake", total, { count: fmt.int(total) })}
+            body={t("performance.chart.noStakeBody")}
+          />
+        )
+      }
+      footer={joinNotes(
+        unstaked > 0 && tp("performance.chart.competition.unstaked", unstaked, { count: fmt.int(unstaked) }),
+        unknown > 0 && tp("performance.chart.unknownCompetition", unknown, { count: fmt.int(unknown) })
+      )}
       table={
         <Table
           caption={title}
@@ -163,19 +190,22 @@ export function ClvDistributionPanel({
   settled: RowsResult;
   className?: string;
 }) {
-  const { t, fmt } = useLocale();
+  const { t, tp, fmt } = useLocale();
   const note = useRowsNote(settled);
-  const status = panelStatus(state.ready, settled);
+  const status = panelStatus(state, settled);
   const perModel = useMemo(() => {
     const map = new Map<string, number[]>();
     for (const r of settled.rows) {
       if (r.clv === null) continue;
       const list = map.get(r.model) ?? [];
-      list.push(r.clv);
+      // An unchanged price is 0, not a sliver above the close.
+      list.push(dropFloatNoise(r.clv));
       map.set(r.model, list);
     }
     return [...map.entries()].sort((a, b) => b[1].length - a[1].length);
   }, [settled.rows]);
+  const total = settled.rows.length;
+  const withoutClv = total - perModel.reduce((a, [, v]) => a + v.length, 0);
   const series: ViolinSeries[] = perModel.map(([model, values], i) => ({
     label: modelLabel(model, t),
     color: modelColor(model, i),
@@ -190,8 +220,21 @@ export function ClvDistributionPanel({
       className={className}
       status={status}
       isEmpty={series.length === 0}
-      empty={<NoBetsEmpty state={state} compact />}
-      footer={note}
+      empty={
+        total === 0 ? (
+          <NoBetsEmpty state={state} compact />
+        ) : (
+          <MissingDataEmpty
+            state={state}
+            title={tp("performance.chart.noClv", total, { count: fmt.int(total) })}
+            body={t("performance.chart.noClvBody")}
+          />
+        )
+      }
+      footer={joinNotes(
+        withoutClv > 0 && tp("performance.chart.withoutClv", withoutClv, { count: fmt.int(withoutClv) }),
+        note
+      )}
       table={
         <Table
           caption={title}

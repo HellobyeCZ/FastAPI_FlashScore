@@ -1,21 +1,30 @@
 "use client";
 import { useMemo } from "react";
+import { clsx } from "clsx";
 import { useLocale } from "@/contexts/LocaleContext";
 import { routes } from "@/lib/routes";
 import { modelLabel } from "@/lib/labels";
 import { MIN_N } from "@/lib/performance/filters";
-import { reconciledRoiInterval, wilson } from "@/lib/performance/stats";
+import { dropFloatNoise, reconciledRoiInterval, wilson } from "@/lib/performance/stats";
 import type { HistoryRow, StatsRow } from "@/lib/performance/types";
 import { ModelName, SampleSize, Signed, Table, type Column, type SortState } from "@/components/ui";
 import { BestMark } from "./shared";
 
 type Row = StatsRow & { model: string };
 
+/** Rows as displayed: a mean CLV of float noise is the 0 it stands for. */
+const cleanRow = (r: Row): Row => ({ ...r, mean_clv: dropFloatNoise(r.mean_clv) });
+
 type Metric = "roi" | "hit_rate" | "mean_clv" | "brier";
 
-/** Best value per metric among models with at least MIN_N bets (lowest Brier, highest otherwise). */
+/**
+ * Best value per metric among models with at least MIN_N bets (lowest Brier,
+ * highest otherwise). "Best" needs a comparison: with fewer than two such
+ * models nothing is marked.
+ */
 function bestModels(rows: Row[]): Partial<Record<Metric, string>> {
   const eligible = rows.filter((r) => r.n >= MIN_N);
+  if (eligible.length < 2) return {};
   const pick = (metric: Metric, lowerIsBetter = false) => {
     let best: Row | undefined;
     for (const r of eligible) {
@@ -82,7 +91,10 @@ export function LeaderboardTable({
   loading?: boolean;
 }) {
   const { t, fmt, locale } = useLocale();
-  const rows = useMemo(() => rawRows.filter((r): r is Row => !!r.model), [rawRows]);
+  const rows = useMemo(
+    () => rawRows.filter((r): r is Row => !!r.model).map(cleanRow),
+    [rawRows]
+  );
   const best = useMemo(() => bestModels(rows), [rows]);
   const roiIntervals = useMemo(() => {
     const out = new Map<string, ReturnType<typeof reconciledRoiInterval>>();
@@ -93,6 +105,9 @@ export function LeaderboardTable({
 
   const range = (low: number, high: number, signed: boolean) =>
     t("performance.leaderboard.interval", { low: fmt.pct(low, 0, signed), high: fmt.pct(high, 0, signed) });
+  // Small samples dim their values only; the intervals under them stay readable.
+  const dim = (r: Row) => clsx(r.n < MIN_N && "opacity-70");
+  const hasBest = Object.values(best).some(Boolean);
 
   const columns: Column<Row>[] = [
     {
@@ -125,7 +140,7 @@ export function LeaderboardTable({
         return (
           <span className="flex flex-col items-end">
             <span className="whitespace-nowrap">
-              {fmt.pct(r.hit_rate)}
+              <span className={dim(r)}>{fmt.pct(r.hit_rate)}</span>
               {best.hit_rate === r.model && <BestMark />}
             </span>
             {ci && <span className="whitespace-nowrap text-meta text-text-faint">{range(ci.low, ci.high, false)}</span>}
@@ -144,7 +159,7 @@ export function LeaderboardTable({
         return (
           <span className="flex flex-col items-end">
             <span className="whitespace-nowrap">
-              <Signed value={r.roi} format="pct" />
+              <Signed value={r.roi} format="pct" className={dim(r)} />
               {best.roi === r.model && <BestMark />}
             </span>
             {ci && <span className="whitespace-nowrap text-meta text-text-faint">{range(ci.low, ci.high, true)}</span>}
@@ -158,7 +173,7 @@ export function LeaderboardTable({
       key: "pnl",
       header: t("performance.col.pnl"),
       headerTitle: t("performance.col.pnlTitle"),
-      cell: (r) => <Signed value={r.n > 0 ? r.pnl_total : null} format="units" />,
+      cell: (r) => <Signed value={r.n > 0 ? r.pnl_total : null} format="units" className={dim(r)} />,
       sortValue: SORT_VALUE.pnl,
       align: "right",
       hideBelow: "sm"
@@ -169,7 +184,7 @@ export function LeaderboardTable({
       headerTitle: t("performance.col.clvTitle"),
       cell: (r) => (
         <>
-          <Signed value={r.mean_clv} format="pct" digits={2} />
+          <Signed value={r.mean_clv} format="pct" digits={2} className={dim(r)} />
           {best.mean_clv === r.model && <BestMark />}
         </>
       ),
@@ -183,7 +198,7 @@ export function LeaderboardTable({
       headerTitle: t("performance.col.brierTitle"),
       cell: (r) => (
         <>
-          {fmt.num(r.brier, 3)}
+          <span className={dim(r)}>{fmt.num(r.brier, 3)}</span>
           {best.brier === r.model && <BestMark />}
         </>
       ),
@@ -198,7 +213,9 @@ export function LeaderboardTable({
       headerTitle: t("performance.col.maxDrawdownTitle"),
       cell: (r) =>
         r.n > 0 && r.max_drawdown !== null ? (
-          <span className="text-text-dim">{t("performance.unit.units", { value: fmt.num(r.max_drawdown, 2) })}</span>
+          <span className={clsx("text-text-dim", dim(r))}>
+            {t("performance.unit.units", { value: fmt.num(r.max_drawdown, 2) })}
+          </span>
         ) : (
           fmt.num(null)
         ),
@@ -222,13 +239,18 @@ export function LeaderboardTable({
       rowKey={(r) => r.model}
       rowHref={(r) => routes.model(locale, r.model, linkParams)}
       linkColumn="model"
-      rowClassName={(r) => (r.n < MIN_N ? "opacity-70" : undefined)}
       sort={sort ?? DEFAULT_SORT}
       onSortChange={onSortChange}
       loading={loading}
       skeletonRows={4}
       empty={empty}
-      footer={rows.length > 0 ? t("performance.leaderboard.footer", { min: MIN_N }) : undefined}
+      footer={
+        rows.length > 0
+          ? hasBest
+            ? t("performance.leaderboard.footer", { min: MIN_N })
+            : t("performance.leaderboard.footerNoBest", { min: MIN_N })
+          : undefined
+      }
     />
   );
 }

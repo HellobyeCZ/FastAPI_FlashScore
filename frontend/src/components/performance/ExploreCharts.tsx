@@ -9,9 +9,12 @@ import { usePicksStats, type RowsResult } from "@/lib/performance/api";
 import { MIN_N, type PicksQuery } from "@/lib/performance/filters";
 import { edgeQuantileBins, foldStats, priceBuckets, type Interval } from "@/lib/performance/stats";
 import type { PerformanceFilterState } from "@/lib/performance/useFilters";
-import { ChartPanel, NoBetsEmpty, panelStatus, usePp, useRowsNote } from "./shared";
+import { ChartPanel, joinNotes, MissingDataEmpty, NoBetsEmpty, panelStatus, usePp, useRowsNote } from "./shared";
 
 const CHART_HEIGHT = 260;
+
+/** Heatmap cells with fewer bets are left blank (their n stays in the data table). */
+const HEATMAP_MIN_N = 5;
 
 /** Unique, short bar labels: whole numbers unless two groups would collide. */
 function uniqueLabels(values: number[], format: (v: number, digits: number) => string): string[] {
@@ -26,7 +29,7 @@ function uniqueLabels(values: number[], format: (v: number, digits: number) => s
 export function EdgeDecilePanel({ state, settled }: { state: PerformanceFilterState; settled: RowsResult }) {
   const { t, fmt } = useLocale();
   const pp = usePp();
-  const status = panelStatus(state.ready, settled);
+  const status = panelStatus(state, settled);
   const note = useRowsNote(settled);
   const groups = useMemo(() => edgeQuantileBins(settled.rows), [settled.rows]);
   const labels = uniqueLabels(
@@ -96,7 +99,7 @@ export function EdgeDecilePanel({ state, settled }: { state: PerformanceFilterSt
 /** Hit rate per price bucket, against the hit rate each bucket needs to break even. */
 export function PriceBucketPanel({ state, settled }: { state: PerformanceFilterState; settled: RowsResult }) {
   const { t, fmt } = useLocale();
-  const status = panelStatus(state.ready, settled);
+  const status = panelStatus(state, settled);
   const note = useRowsNote(settled);
   const buckets = useMemo(() => priceBuckets(settled.rows), [settled.rows]);
   const label = (lo: number | null, hi: number | null) =>
@@ -176,11 +179,12 @@ export function ClvHeatmapPanel({
   q: PicksQuery;
   className?: string;
 }) {
-  const { t, fmt } = useLocale();
+  const { t, tp, fmt } = useLocale();
   const stats = usePicksStats(["competition", "selection"], q, state.ready);
-  const status = panelStatus(state.ready, stats);
+  const status = panelStatus(state, stats);
   const data = useMemo(() => {
     const rows = stats.data?.rows ?? [];
+    const total = rows.reduce((a, r) => a + r.n, 0);
     const folded = foldStats(rows, (r) => {
       const comp = competitionRoot(r.competition ?? null);
       return comp && r.selection ? `${comp}\u0000${r.selection}` : null;
@@ -192,7 +196,8 @@ export function ClvHeatmapPanel({
     for (const f of folded) totals.set(f.competition, (totals.get(f.competition) ?? 0) + f.n);
     const competitions = [...totals.entries()].sort((a, b) => b[1] - a[1]).map(([c]) => c);
     const selections = [...new Set(folded.map((f) => f.selection))].sort();
-    return { folded, competitions, selections };
+    const unknown = total - folded.reduce((a, f) => a + f.n, 0);
+    return { folded, competitions, selections, total, unknown };
   }, [stats.data]);
   const colLabel = (s: string) => selectionLabel(s, t);
   const cells: HeatmapCell[] = data.folded.map((f) => ({
@@ -206,11 +211,30 @@ export function ClvHeatmapPanel({
   return (
     <ChartPanel
       title={title}
-      description={t("performance.chart.heatmap.description")}
+      description={t("performance.chart.heatmap.description", { min: HEATMAP_MIN_N })}
       className={className}
       status={status}
-      isEmpty={data.folded.length === 0}
-      empty={<NoBetsEmpty state={state} compact />}
+      isEmpty={!data.folded.some((f) => f.meanClv !== null)}
+      empty={
+        data.total === 0 ? (
+          <NoBetsEmpty state={state} compact />
+        ) : data.folded.length === 0 ? (
+          <MissingDataEmpty
+            state={state}
+            title={tp("performance.chart.noCompetition", data.total, { count: fmt.int(data.total) })}
+            body={t("performance.chart.noCompetitionBody")}
+          />
+        ) : (
+          <MissingDataEmpty
+            state={state}
+            title={tp("performance.chart.noClv", data.total, { count: fmt.int(data.total) })}
+            body={t("performance.chart.noClvBody")}
+          />
+        )
+      }
+      footer={joinNotes(
+        data.unknown > 0 && tp("performance.chart.unknownCompetition", data.unknown, { count: fmt.int(data.unknown) })
+      )}
       table={
         <Table
           caption={title}
@@ -230,7 +254,12 @@ export function ClvHeatmapPanel({
         />
       }
     >
-      <HeatmapChart cells={cells} rows={data.competitions} cols={data.selections.map(colLabel)} />
+      <HeatmapChart
+        cells={cells}
+        rows={data.competitions}
+        cols={data.selections.map(colLabel)}
+        minNToShow={HEATMAP_MIN_N}
+      />
     </ChartPanel>
   );
 }
