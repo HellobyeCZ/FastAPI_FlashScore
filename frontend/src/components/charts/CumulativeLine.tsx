@@ -1,14 +1,31 @@
 "use client";
 
-import { Group } from "@visx/group";
-import { scaleLinear } from "@visx/scale";
-import { LinePath } from "@visx/shape";
-import { useMemo } from "react";
-import { TerminalAxisLeft, TerminalAxisBottom } from "./TerminalAxis";
+import { useMemo, useState } from "react";
+import { scaleLinear, scaleTime } from "@visx/scale";
+import { seriesColor } from "@/lib/labels";
+import {
+  ChartFrame,
+  ChartSvg,
+  DASHES,
+  Legend,
+  Marker,
+  SHAPES,
+  TICK_FONT,
+  charWidth,
+  isFiniteNumber,
+  stepDigits,
+  tickCount,
+  tok,
+  type MarkerShape
+} from "./frame";
+import { TerminalAxisBottom, TerminalAxisLeft, type AxisTick } from "./TerminalAxis";
+import { useChartText } from "./text";
 
 export type Series = {
   label: string;
-  color: string;
+  /** CSS color; empty/omitted falls back to the categorical palette by index. */
+  color?: string;
+  /** Points in any order; x is an index/number, or epoch ms when xType="time". */
   points: { x: number; y: number }[];
 };
 
@@ -18,126 +35,331 @@ interface CumulativeLineChartProps {
   height?: number;
   xLabel?: string;
   yLabel?: string;
+  /**
+   * "index" (default) plots x as a plain number. "time" reads x as epoch
+   * milliseconds and labels ticks with locale dates.
+   */
+  xType?: "index" | "time";
+  /** Accessible name; a per-series summary is generated as the description. */
+  ariaLabel?: string;
+  /** Formats y ticks and readout values (default: locale number). */
+  formatY?: (v: number) => string;
+  /** Formats x in the readout and on ticks (default: locale integer / date). */
+  formatX?: (x: number) => string;
+  /** Dashed reference line at y = 0 (default true; the domain then includes 0). */
+  zeroLine?: boolean;
+  emptyLabel?: string;
 }
 
-// Fallback palette uses semantic terminal tokens.
-const SERIES_TOKENS = [
-  "rgb(var(--accent))",
-  "rgb(var(--warn))",
-  "rgb(var(--pos))",
-  "rgb(var(--neg))",
-  "rgb(var(--text-dim))",
-];
+type Styled = Series & { color: string; dash?: string; shape: MarkerShape };
 
-export function CumulativeLineChart({
+const DAY = 86_400_000;
+/** Series with at most this many points get a marker on every observation. */
+const MARKER_LIMIT = 40;
+
+export function CumulativeLineChart(props: CumulativeLineChartProps) {
+  const { noData } = useChartText();
+  const height = props.height ?? 240;
+  const series = useMemo<Styled[]>(
+    () =>
+      props.series.map((s, i) => ({
+        ...s,
+        color: s.color || seriesColor(i),
+        dash: DASHES[i % DASHES.length],
+        shape: SHAPES[i % SHAPES.length],
+        points: s.points.filter((p) => isFiniteNumber(p.x) && isFiniteNumber(p.y)).sort((a, b) => a.x - b.x)
+      })),
+    [props.series]
+  );
+  const empty = series.every((s) => s.points.length === 0);
+  return (
+    <ChartFrame width={props.width} height={height} empty={empty} emptyLabel={props.emptyLabel ?? noData}>
+      {(w) => <LinePlot {...props} series={series} width={w} height={height} />}
+    </ChartFrame>
+  );
+}
+
+function LinePlot({
   series,
-  width = 720,
-  height = 240,
-}: CumulativeLineChartProps) {
-  const padding = { top: 16, right: 16, bottom: 32, left: 48 };
-  const innerW = width - padding.left - padding.right;
-  const innerH = height - padding.top - padding.bottom;
+  width,
+  height,
+  xLabel,
+  yLabel,
+  xType = "index",
+  ariaLabel,
+  formatY,
+  formatX,
+  zeroLine = true
+}: Omit<CumulativeLineChartProps, "series"> & { series: Styled[]; width: number; height: number }) {
+  const { t, tp, locale, fmt } = useChartText();
+  const [hover, setHover] = useState<number | null>(null);
+  const isTime = xType === "time";
 
-  const allPoints = useMemo(() => series.flatMap((s) => s.points), [series]);
+  const xs = useMemo(() => {
+    const set = new Set<number>();
+    series.forEach((s) => s.points.forEach((p) => set.add(p.x)));
+    return Array.from(set).sort((a, b) => a - b);
+  }, [series]);
 
-  const xExtent = useMemo<[number, number]>(() => {
-    if (allPoints.length === 0) return [0, 1];
-    const xs = allPoints.map((p) => p.x);
-    return [Math.min(...xs), Math.max(...xs)];
-  }, [allPoints]);
-  const yExtent = useMemo<[number, number]>(() => {
-    if (allPoints.length === 0) return [0, 1];
-    const ys = allPoints.map((p) => p.y);
-    return [Math.min(0, ...ys), Math.max(0, ...ys)];
-  }, [allPoints]);
-
-  const xScale = scaleLinear<number>({ domain: xExtent, range: [0, innerW] });
-  const yScale = scaleLinear<number>({ domain: yExtent, range: [innerH, 0] });
-
-  if (allPoints.length === 0) {
-    return (
-      <svg width={width} height={height} role="img">
-        <rect width={width} height={height} fill="rgb(var(--bg))" />
-        <text
-          x={width / 2}
-          y={height / 2}
-          textAnchor="middle"
-          fontSize={11}
-          fontFamily="var(--font-mono)"
-          fill="rgb(var(--text-dim))"
-        >
-          no data
-        </text>
-      </svg>
-    );
+  const ys = series.flatMap((s) => s.points.map((p) => p.y));
+  let yLo = Math.min(...ys, ...(zeroLine ? [0] : []));
+  let yHi = Math.max(...ys, ...(zeroLine ? [0] : []));
+  if (yLo === yHi) {
+    const pad = Math.abs(yLo) * 0.1 || 1;
+    yLo -= pad;
+    yHi += pad;
   }
 
+  const margin = { top: 10, right: 14, bottom: 24 + (xLabel ? 20 : 0), left: 0 };
+  const innerH = Math.max(40, height - margin.top - margin.bottom);
+  const yScale = scaleLinear<number>({ domain: [yLo, yHi], range: [innerH, 0], nice: true });
+  const yTickValues = yScale.ticks(tickCount(innerH, 36, 8));
+  const yDigits = stepDigits(yTickValues.length > 1 ? yTickValues[1] - yTickValues[0] : 1);
+  const fmtYTick = formatY ?? ((v: number) => fmt.num(v, yDigits));
+  const fmtYValue = formatY ?? ((v: number) => fmt.num(v, Math.max(2, yDigits)));
+  const yTicks: AxisTick[] = yTickValues.map((v) => ({ value: v, pos: yScale(v), label: fmtYTick(v) }));
+  const widestY = Math.max(...yTicks.map((tk) => tk.label.length)) * charWidth(TICK_FONT);
+  margin.left = Math.ceil(widestY + 12 + (yLabel ? 20 : 0));
+  const innerW = Math.max(40, width - margin.left - margin.right);
+
+  let xLo = xs[0];
+  let xHi = xs[xs.length - 1];
+  if (xLo === xHi) {
+    const pad = isTime ? DAY : 1;
+    xLo -= pad;
+    xHi += pad;
+  }
+  const span = xHi - xLo;
+  const tickFmt = isTime ? dateFormat(locale, span, "tick") : null;
+  const readoutFmt = isTime ? dateFormat(locale, span, "readout") : null;
+  const integerX = xs.every((x) => Number.isInteger(x));
+  const plainX = (x: number) => (integerX ? fmt.int(x) : fmt.num(x, stepDigits(span / 10)));
+  const fmtXTick = formatX ?? ((x: number) => (tickFmt ? tickFmt.format(x) : plainX(x)));
+  const fmtXValue = formatX ?? ((x: number) => (readoutFmt ? readoutFmt.format(x) : plainX(x)));
+
+  const timeScale = scaleTime<number>({ domain: [new Date(xLo), new Date(xHi)], range: [0, innerW] });
+  const linScale = scaleLinear<number>({ domain: [xLo, xHi], range: [0, innerW] });
+  const xPos = (x: number) => (isTime ? timeScale(new Date(x)) : linScale(x));
+  const xInvert = (px: number) => (isTime ? timeScale.invert(px).getTime() : linScale.invert(px));
+
+  const nX = tickCount(innerW, 84, 8);
+  const xTicks: AxisTick[] = (
+    isTime ? timeScale.ticks(nX).map((d) => d.getTime()) : linScale.ticks(nX).filter((v) => !integerX || Number.isInteger(v))
+  ).map((v) => ({ value: v, pos: xPos(v), label: fmtXTick(v) }));
+
+  const paths = series.map((s) =>
+    s.points.map((p, i) => `${i === 0 ? "M" : "L"}${xPos(p.x).toFixed(1)},${yScale(p.y).toFixed(1)}`).join("")
+  );
+
+  /** Last observation at or before x (cumulative series hold their value). */
+  const valueAt = (s: Styled, x: number) => {
+    let found: { x: number; y: number } | null = null;
+    for (const p of s.points) {
+      if (p.x > x) break;
+      found = p;
+    }
+    return found;
+  };
+
+  const nearestIndex = (x: number) => {
+    let lo = 0;
+    let hi = xs.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (xs[mid] < x) lo = mid + 1;
+      else hi = mid;
+    }
+    if (lo > 0 && Math.abs(xs[lo - 1] - x) < Math.abs(xs[lo] - x)) return lo - 1;
+    return lo;
+  };
+
+  const onPointer = (e: React.PointerEvent<SVGRectElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    if (rect.width <= 0) return;
+    const px = ((e.clientX - rect.left) / rect.width) * innerW;
+    setHover(nearestIndex(xInvert(Math.max(0, Math.min(innerW, px)))));
+  };
+
+  const onKey = (e: React.KeyboardEvent<SVGSVGElement>) => {
+    if (xs.length === 0) return;
+    const last = xs.length - 1;
+    const step = e.shiftKey ? 10 : 1;
+    const keys: Record<string, () => number | null> = {
+      ArrowRight: () => Math.min(last, (hover ?? -1) + step),
+      ArrowLeft: () => Math.max(0, (hover ?? last + 1) - step),
+      Home: () => 0,
+      End: () => last,
+      Escape: () => null
+    };
+    const next = keys[e.key];
+    if (!next) return;
+    e.preventDefault();
+    setHover(next());
+  };
+
+  const hoverX = hover === null ? null : xs[hover];
+  const desc = [
+    xs.length > 0 ? t("line.range", { from: fmtXValue(xs[0]), to: fmtXValue(xs[xs.length - 1]) }) : "",
+    ...series.map((s) => {
+      const last = s.points[s.points.length - 1];
+      return t("line.desc", {
+        label: s.label,
+        points: tp("points", s.points.length),
+        value: last ? fmtYValue(last.y) : "—"
+      });
+    })
+  ]
+    .filter(Boolean)
+    .join("; ");
+
+  const showZero = zeroLine && yScale.domain()[0] <= 0 && yScale.domain()[1] >= 0;
+  const readoutLeft = hoverX !== null && xPos(hoverX) > innerW / 2;
+
   return (
-    <svg width={width} height={height} role="img" aria-label="cumulative line chart">
-      <rect width={width} height={height} fill="rgb(var(--bg))" />
-      <Group left={padding.left} top={padding.top}>
-        <TerminalAxisBottom top={innerH} scale={xScale} numTicks={6} />
-        <TerminalAxisLeft scale={yScale} numTicks={5} />
-        <line
-          x1={0}
-          x2={innerW}
-          y1={yScale(0)}
-          y2={yScale(0)}
-          stroke="rgb(var(--text-faint))"
-          strokeDasharray="2 2"
-        />
-        {series.map((s, idx) => {
-          const stroke = s.color || SERIES_TOKENS[idx % SERIES_TOKENS.length];
-          // Always render data-point dots so single-point series stay visible
-          // and a reader can see actual observations vs. interpolated runs.
-          return (
-            <Group key={s.label}>
+    <>
+      <ChartSvg
+        width={width}
+        height={height}
+        label={ariaLabel ?? t("line.aria")}
+        desc={desc}
+        tabIndex={0}
+        onKeyDown={onKey}
+        onBlur={() => setHover(null)}
+        className="touch-pan-y outline-offset-2"
+      >
+        <g transform={`translate(${margin.left} ${margin.top})`}>
+          <TerminalAxisLeft
+            ticks={yTicks}
+            height={innerH}
+            gridWidth={innerW}
+            title={yLabel}
+            titleX={-margin.left + 2}
+          />
+          <TerminalAxisBottom
+            ticks={xTicks}
+            width={innerW}
+            top={innerH}
+            title={xLabel}
+            titleY={innerH + 26}
+            bounds={[-margin.left + 4, innerW + margin.right - 2]}
+          />
+          {showZero && (
+            <line
+              x1={0}
+              x2={innerW}
+              y1={yScale(0)}
+              y2={yScale(0)}
+              stroke={tok("text-faint")}
+              strokeDasharray="3 3"
+            />
+          )}
+          {series.map((s, i) => (
+            <g key={i}>
               {s.points.length > 1 && (
-                <LinePath
-                  data={s.points}
-                  x={(d) => xScale(d.x)}
-                  y={(d) => yScale(d.y)}
-                  stroke={stroke}
-                  strokeWidth={1.5}
-                  shapeRendering="crispEdges"
+                <path
+                  d={paths[i]}
+                  fill="none"
+                  stroke={s.color}
+                  strokeWidth={2}
+                  strokeDasharray={s.dash}
+                  strokeLinejoin="round"
                 />
               )}
-              {s.points.map((p, i) => (
-                <rect
-                  key={i}
-                  x={xScale(p.x) - 2}
-                  y={yScale(p.y) - 2}
-                  width={4}
-                  height={4}
-                  fill={stroke}
-                  shapeRendering="crispEdges"
-                />
-              ))}
-            </Group>
-          );
-        })}
-        {series.length > 1 && (
-          <Group left={innerW - 110} top={4}>
-            {series.map((s, i) => {
-              const stroke = s.color || SERIES_TOKENS[i % SERIES_TOKENS.length];
-              return (
-                <Group key={s.label} top={i * 14}>
-                  <line x1={0} x2={14} y1={5} y2={5} stroke={stroke} strokeWidth={1} />
-                  <text
-                    x={18}
-                    y={9}
-                    fontSize={10}
-                    fontFamily="var(--font-mono)"
-                    fill="rgb(var(--text-dim))"
-                  >
-                    {s.label}
-                  </text>
-                </Group>
-              );
-            })}
-          </Group>
-        )}
-      </Group>
-    </svg>
+              {(s.points.length <= MARKER_LIMIT || s.points.length === 1) &&
+                s.points.map((p, j) => (
+                  <Marker
+                    key={j}
+                    shape={s.shape}
+                    x={xPos(p.x)}
+                    y={yScale(p.y)}
+                    size={6}
+                    fill={s.color}
+                  />
+                ))}
+            </g>
+          ))}
+          {hoverX !== null && (
+            <g pointerEvents="none">
+              <line
+                x1={xPos(hoverX)}
+                x2={xPos(hoverX)}
+                y1={0}
+                y2={innerH}
+                stroke={tok("text-dim")}
+                strokeDasharray="2 2"
+              />
+              {series.map((s, i) => {
+                const p = valueAt(s, hoverX);
+                return p ? (
+                  <circle
+                    key={i}
+                    cx={xPos(p.x)}
+                    cy={yScale(p.y)}
+                    r={4}
+                    fill={tok("bg")}
+                    stroke={s.color}
+                    strokeWidth={2}
+                  />
+                ) : null;
+              })}
+            </g>
+          )}
+          <rect
+            width={innerW}
+            height={innerH}
+            fill="transparent"
+            onPointerMove={onPointer}
+            onPointerDown={onPointer}
+            onPointerLeave={() => setHover(null)}
+          />
+        </g>
+      </ChartSvg>
+      {hoverX !== null && (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute z-10 max-w-[70%] border border-border-strong bg-bg/95 px-2 py-1 text-meta"
+          style={readoutLeft ? { left: margin.left + 6, top: margin.top + 4 } : { right: margin.right + 6, top: margin.top + 4 }}
+        >
+          <div className="text-text-dim">{fmtXValue(hoverX)}</div>
+          {series.map((s, i) => {
+            const p = valueAt(s, hoverX);
+            return (
+              <div key={i} className="flex min-w-0 items-center gap-1.5">
+                <span aria-hidden className="inline-block h-0.5 w-3 shrink-0" style={{ background: s.color }} />
+                {series.length > 1 && <span className="truncate text-text-dim">{s.label}</span>}
+                <span className="ml-auto pl-2 font-mono text-text">{p ? fmtYValue(p.y) : "—"}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {series.length > 1 && (
+        <Legend
+          label={t("legend")}
+          items={series.map((s, i) => ({
+            key: String(i),
+            label: s.label,
+            color: s.color,
+            dash: s.dash,
+            shape: s.shape
+          }))}
+        />
+      )}
+    </>
   );
+}
+
+/** Tick labels get coarser as the span grows; the readout always shows the day. */
+function dateFormat(locale: string, span: number, kind: "tick" | "readout"): Intl.DateTimeFormat {
+  if (kind === "readout") {
+    return new Intl.DateTimeFormat(
+      locale,
+      span <= 2 * DAY
+        ? { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }
+        : { day: "numeric", month: "short", year: "numeric" }
+    );
+  }
+  if (span > 300 * DAY) return new Intl.DateTimeFormat(locale, { month: "short", year: "numeric" });
+  if (span > 2 * DAY) return new Intl.DateTimeFormat(locale, { day: "numeric", month: "short" });
+  return new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit" });
 }
