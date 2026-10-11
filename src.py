@@ -317,12 +317,12 @@ def refresh_now_manager_dependency() -> RefreshNowManager:
     return _get_refresh_now_manager()
 
 
-@lru_cache()
 def _get_ml_artifacts():
-    """Load Phase 3 trained models from $APP_ML_MODELS_DIR. Cached so
-    repeated /predict calls don't re-load from disk."""
-    from app.ml.serving import load_models
-    return load_models()
+    """Served model artifacts: registry `@champion` per model, falling back
+    to $APP_ML_MODELS_DIR. Held by app.ml.serving so POST /ml/reload and
+    champion changes can swap them without a restart."""
+    from app.ml.serving import get_served_artifacts
+    return get_served_artifacts()
 
 
 @lru_cache(maxsize=1)
@@ -340,11 +340,17 @@ async def startup_snapshot_store() -> None:
     await _get_bulk_scrape_manager().start()
     await _get_live_odds_scheduler().start()
     await _get_backtest_manager().start()
-    # Pre-warm the model artifacts so the first /predict request doesn't
-    # pay the load latency. Failing to load is non-fatal — the endpoint
-    # returns the available subset.
+    # Pre-warm the model artifacts (and the MLflow experiment id used for
+    # deep links) so the first /predict request doesn't pay the load
+    # latency. Registry downloads are blocking, hence the thread. Failing
+    # to load is non-fatal — the endpoint returns the available subset.
+    from fastapi.concurrency import run_in_threadpool
+
+    from app.ml.tracking import resolve_experiment_id
+
     try:
-        _get_ml_artifacts()
+        await run_in_threadpool(_get_ml_artifacts)
+        await run_in_threadpool(resolve_experiment_id)
     except Exception:
         structlog.get_logger("ml").exception("ml_artifacts_load_failed_at_startup")
 
@@ -755,31 +761,10 @@ async def get_bulk_scrape_job(
 # Backtest routes
 # ---------------------------------------------------------------------------
 
-def _run_row_to_summary(row) -> BacktestRunSummary:
-    return BacktestRunSummary(
-        id=row.id,
-        label=row.label,
-        model=row.model,
-        status=row.status,
-        created_at=row.created_at,
-        train_until=row.train_until,
-        test_until=row.test_until,
-        started_at=row.started_at,
-        finished_at=row.finished_at,
-        error=row.error,
-        test_events=row.test_events,
-        total_bets=row.total_bets,
-        hit_rate=row.hit_rate,
-        roi=row.roi,
-        mean_clv=row.mean_clv,
-        brier=row.brier,
-        log_loss=row.log_loss,
-        max_drawdown=row.max_drawdown,
-        stage=row.stage,
-        market_spec=row.market_spec,
-        sharpe_adjusted=row.sharpe_adjusted,
-        mlflow_run_id=row.mlflow_run_id,
-    )
+def _run_row_to_summary(row, mlflow_experiment_id: Optional[str] = None) -> BacktestRunSummary:
+    # Shared with POST /backtest/runs/{id}/cancel (app/routes/backtests.py,
+    # imported at the bottom of this module).
+    return backtests_routes.run_row_to_summary(row, mlflow_experiment_id=mlflow_experiment_id)
 
 
 @app.get("/backtest/models")
@@ -820,7 +805,8 @@ async def list_backtest_runs(
     mgr: BacktestManager = Depends(backtest_manager_dependency),
 ) -> BacktestRunListResponse:
     rows = await mgr.list_runs(limit=limit)
-    return BacktestRunListResponse(items=[_run_row_to_summary(r) for r in rows])
+    exp_id = await backtests_routes.mlflow_experiment_id_for_links()
+    return BacktestRunListResponse(items=[_run_row_to_summary(r, exp_id) for r in rows])
 
 
 @app.get("/backtest/runs/{run_id}", response_model=BacktestRunDetail)
@@ -831,7 +817,8 @@ async def get_backtest_run(
     row = await mgr.get_run(run_id)
     if row is None:
         raise HTTPException(status_code=404, detail="run not found")
-    summary = _run_row_to_summary(row).model_dump()
+    exp_id = await backtests_routes.mlflow_experiment_id_for_links()
+    summary = _run_row_to_summary(row, exp_id).model_dump()
     reliability = []
     if row.reliability_json:
         reliability = [ReliabilityBucketDTO(**b) for b in json.loads(row.reliability_json)]

@@ -29,7 +29,12 @@ def main() -> int:
     args = parser.parse_args()
 
     print(f"Recording picks  hours_ahead={args.hours_ahead}  min_edge={args.min_edge}")
+    # Same resolution as the API: registry @champion, else $APP_ML_MODELS_DIR.
     artifacts = load_models()
+    for info in artifacts.served.values():
+        if info.loaded:
+            where = f"registry v{info.version}" if info.source == "registry" else "file"
+            print(f"  model {info.name}: {where}")
     upcoming = list_upcoming_events(hours_ahead=args.hours_ahead)
     print(f"  upcoming events: {len(upcoming)}")
 
@@ -57,6 +62,7 @@ def main() -> int:
                 devigged_prob=r.market_devigged,
                 edge=r.edge,
                 kelly_full=r.kelly_full,
+                model_version=r.model_version,
             ))
 
     inserted = record_picks(picks)

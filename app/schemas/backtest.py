@@ -65,6 +65,12 @@ class BacktestRunSummary(BaseModel):
     market_spec: str = "football_1x2_ft"
     sharpe_adjusted: Optional[float] = None
     mlflow_run_id: Optional[str] = None
+    # Events the model was fitted on (0 for analytic baselines); None for
+    # runs that predate the column or haven't finished training.
+    n_train_events: Optional[int] = None
+    # Backend-built MLflow UI deep link; None when the run wasn't logged
+    # or the MLflow UI location is unknown.
+    mlflow_ui_url: Optional[str] = None
 
 
 class ReliabilityBucketDTO(BaseModel):

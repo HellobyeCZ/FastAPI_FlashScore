@@ -1563,20 +1563,23 @@ class SnapshotStore:
         existing_cols = {
             row[1] for row in connection.execute("PRAGMA table_info(backtest_runs)").fetchall()
         }
-        if "stage" not in existing_cols:
-            connection.execute("ALTER TABLE backtest_runs ADD COLUMN stage TEXT")
-        if "market_spec" not in existing_cols:
-            connection.execute(
-                "ALTER TABLE backtest_runs ADD COLUMN market_spec TEXT NOT NULL DEFAULT 'football_1x2_ft'"
-            )
-        if "sharpe_adjusted" not in existing_cols:
-            connection.execute(
-                "ALTER TABLE backtest_runs ADD COLUMN sharpe_adjusted REAL"
-            )
-        if "mlflow_run_id" not in existing_cols:
-            connection.execute(
-                "ALTER TABLE backtest_runs ADD COLUMN mlflow_run_id TEXT"
-            )
+        added_cols = (
+            ("stage", "TEXT"),
+            ("market_spec", "TEXT NOT NULL DEFAULT 'football_1x2_ft'"),
+            ("sharpe_adjusted", "REAL"),
+            ("mlflow_run_id", "TEXT"),
+            ("n_train_events", "INTEGER"),
+        )
+        for name, ddl in added_cols:
+            if name in existing_cols:
+                continue
+            try:
+                connection.execute(f"ALTER TABLE backtest_runs ADD COLUMN {name} {ddl}")
+            except sqlite3.OperationalError as exc:
+                # Another process initializing the same file (API vs a
+                # script) added it between the PRAGMA and the ALTER.
+                if "duplicate column" not in str(exc).lower():
+                    raise
         connection.commit()
 
     @staticmethod
