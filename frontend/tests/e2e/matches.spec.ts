@@ -69,22 +69,89 @@ function item(
 }
 
 const CZ = "CZECH REPUBLIC";
-const SPARTA: ListItem = item(EVENT_ID, ["Sparta Prague", "Hradec Kralove"], "football", CZ, "Chance Liga - Championship Group", "2026-05-24T12:00:00Z", "finished", [2, 1], {
-  odds_snapshots: 2,
-  stats_snapshots: 4,
-  last_fetched_at: "2026-10-11T10:11:50.286017+00:00",
-  live_bets: 1,
-  backtest_bets: 3
-});
+const SPARTA: ListItem = item(
+  EVENT_ID,
+  ["Sparta Prague", "Hradec Kralove"],
+  "football",
+  CZ,
+  "Chance Liga - Championship Group",
+  "2026-05-24T12:00:00Z",
+  "finished",
+  [2, 1],
+  {
+    odds_snapshots: 2,
+    stats_snapshots: 4,
+    last_fetched_at: "2026-10-11T10:11:50.286017+00:00",
+    live_bets: 1,
+    backtest_bets: 3
+  }
+);
 
 const LIST_ITEMS: ListItem[] = [
-  item("Hk5Lb3eq", ["Slavia Prague", "Plzen"], "football", CZ, "Chance Liga - Championship Group", "2026-10-18T14:30:00Z", "scheduled", null, { stats_snapshots: 0, last_fetched_at: "2026-10-11T06:00:00Z" }),
+  item(
+    "Hk5Lb3eq",
+    ["Slavia Prague", "Plzen"],
+    "football",
+    CZ,
+    "Chance Liga - Championship Group",
+    "2026-10-18T14:30:00Z",
+    "scheduled",
+    null,
+    { stats_snapshots: 0, last_fetched_at: "2026-10-11T06:00:00Z" }
+  ),
   SPARTA,
-  item("8An7HGVp", ["Jablonec", "Liberec"], "football", CZ, "Chance Liga - Championship Group", "2026-05-24T12:00:00Z", "unconfirmed", null),
-  item("xfi4Ju8N", ["Manchester City", "Crystal Palace"], "football", "ENGLAND", "Premier League", "2026-05-24T15:00:00Z", "unconfirmed", null, { live_bets: 2 }),
-  item("fmDL2DBG", ["Ostrava", "Teplice"], "football", CZ, "Chance Liga - Relegation Group", "2026-05-17T13:00:00Z", "finished", [3, 0]),
-  item("Ny2Ra9pl", ["Colorado Avalanche", "Dallas Stars"], "hockey", "USA", "NHL - Play Offs", "2026-05-16T01:00:00Z", "finished", null, { backtest_bets: 1 }),
-  item("Bm4Dt7xq", ["Boston Celtics", "New York Knicks"], "basketball", "USA", "NBA - Play Offs", "2026-05-15T23:30:00Z", "finished", null),
+  item(
+    "8An7HGVp",
+    ["Jablonec", "Liberec"],
+    "football",
+    CZ,
+    "Chance Liga - Championship Group",
+    "2026-05-24T12:00:00Z",
+    "unconfirmed",
+    null
+  ),
+  item(
+    "xfi4Ju8N",
+    ["Manchester City", "Crystal Palace"],
+    "football",
+    "ENGLAND",
+    "Premier League",
+    "2026-05-24T15:00:00Z",
+    "unconfirmed",
+    null,
+    { live_bets: 2 }
+  ),
+  item(
+    "fmDL2DBG",
+    ["Ostrava", "Teplice"],
+    "football",
+    CZ,
+    "Chance Liga - Relegation Group",
+    "2026-05-17T13:00:00Z",
+    "finished",
+    [3, 0]
+  ),
+  item(
+    "Ny2Ra9pl",
+    ["Colorado Avalanche", "Dallas Stars"],
+    "hockey",
+    "USA",
+    "NHL - Play Offs",
+    "2026-05-16T01:00:00Z",
+    "finished",
+    null,
+    { backtest_bets: 1 }
+  ),
+  item(
+    "Bm4Dt7xq",
+    ["Boston Celtics", "New York Knicks"],
+    "basketball",
+    "USA",
+    "NBA - Play Offs",
+    "2026-05-15T23:30:00Z",
+    "finished",
+    null
+  ),
   item("04dTK6BL", [null, null], "hockey", CZ, "Extraliga", "2016-10-15T13:30:00Z", "finished", null)
 ];
 
@@ -146,11 +213,7 @@ async function stubList(page: Page, status = 200): Promise<URL[]> {
     }
     const q = url.searchParams.get("q") ?? "";
     const body =
-      q === "zzz"
-        ? listBody([], 0)
-        : q === EVENT_ID
-          ? listBody([SPARTA], 1, SPARTA)
-          : listBody(LIST_ITEMS, 52_373);
+      q === "zzz" ? listBody([], 0) : q === EVENT_ID ? listBody([SPARTA], 1, SPARTA) : listBody(LIST_ITEMS, 52_373);
     return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
   });
   return seen;
@@ -182,6 +245,7 @@ const EVENT = {
   odds_snapshot_count: 2,
   stats_snapshot_count: 4
 };
+// prettier-ignore
 const STORED_BOOKS: [string, string, [string, string, [string, string, number][]][]][] = [
   ["49", "Tipsport.cz", [
     ["HOME_DRAW_AWAY:FIRST_HALF", "1X2 - First Half", [["86rBR4Qi", "86rBR4Qi", 1.59], ["tKtJPre4", "tKtJPre4", 8.83], ["HOME_DRAW_AWAY:FIRST_HALF:2", "Selection", 2.77]]],
@@ -382,7 +446,7 @@ const PICKS = {
       edge: 0.009,
       stake_kelly_fraction: 0.25,
       result: 0,
-      pnl: -0.002,
+      pnl: -0.012,
       clv: null
     }
   ]
@@ -416,7 +480,11 @@ const PREDICT = {
   available_models: { logistic: true, hgb: true, dixon_coles: false }
 };
 
-const NO_MODELS = { event_id: EVENT_ID, predictions: [], available_models: { logistic: false, hgb: false, dixon_coles: false } };
+const NO_MODELS = {
+  event_id: EVENT_ID,
+  predictions: [],
+  available_models: { logistic: false, hgb: false, dixon_coles: false }
+};
 
 const CAPTURES = ["2026-05-13T20:40:01.605297+00:00", "2026-05-12T06:23:16.406180+00:00"];
 
@@ -533,7 +601,12 @@ test.describe("Matches list", () => {
     await expect(page.getByRole("link", { name: /Jablonec – Liberec/ })).toBeVisible();
     await expect(page.getByRole("link", { name: /Unnamed match/ })).toBeVisible();
     await expect(page.getByRole("table").getByText("04dTK6BL")).toHaveCount(0);
-    await expect(page.getByRole("row", { name: /Jablonec – Liberec/ }).getByText("Unconfirmed")).toBeVisible();
+    await expect(
+      page
+        .getByRole("row", { name: /Jablonec – Liberec/ })
+        .getByText("Unconfirmed")
+        .filter({ visible: true })
+    ).toBeVisible();
 
     await page.getByRole("link", { name: /Sparta Prague – Hradec Kralove/ }).click();
     await expect(page).toHaveURL(new RegExp(`/en/matches/${EVENT_ID}$`));
@@ -617,7 +690,12 @@ test.describe("Matches list", () => {
     await expect(page.getByRole("heading", { level: 1, name: "Zápasy" })).toBeVisible();
     await expect(page.getByText(/52\s373 uložených zápasů/)).toBeVisible();
     await expect(page.getByRole("columnheader", { name: /Výkop/ })).toBeVisible();
-    await expect(page.getByRole("row", { name: /Jablonec – Liberec/ }).getByText("Nepotvrzeno")).toBeVisible();
+    await expect(
+      page
+        .getByRole("row", { name: /Jablonec – Liberec/ })
+        .getByText("Nepotvrzeno")
+        .filter({ visible: true })
+    ).toBeVisible();
   });
 
   test("does not overflow a 390px viewport", async ({ page }) => {
@@ -643,7 +721,10 @@ test.describe("Match detail", () => {
     await expect(page.getByRole("heading", { level: 1, name: "Sparta Prague – Hradec Kralove" })).toBeVisible();
     const crumbs = page.getByRole("navigation", { name: "Breadcrumb" });
     await expect(crumbs.getByRole("link", { name: "Matches" })).toHaveAttribute("href", "/en/matches");
-    await expect(crumbs.getByRole("link", { name: "Chance Liga" })).toHaveAttribute("href", "/en/matches?league=Chance+Liga");
+    await expect(crumbs.getByRole("link", { name: "Chance Liga" })).toHaveAttribute(
+      "href",
+      "/en/matches?league=Chance+Liga"
+    );
     await expect(page.getByLabel("Score 2:1")).toBeVisible();
     await expect(page.getByText(/Stored data · newest snapshot/)).toBeVisible();
     await expect(page.getByText("Final result stored — snapshots are frozen")).toBeVisible();
@@ -670,10 +751,16 @@ test.describe("Match detail", () => {
     await expect(odds.getByText(/Stored snapshot · fetched/)).toBeVisible();
     const tipsport = 1; // column index: selection, Tipsport, iFortuna, Betano, Chance
     await expect(odds.getByRole("row").filter({ hasText: "Draw" }).getByRole("cell").nth(tipsport)).toHaveText("6.10");
-    await expect(odds.getByRole("row").filter({ hasText: "Hradec Kralove" }).getByRole("cell").nth(tipsport)).toHaveText("11.20");
+    await expect(
+      odds.getByRole("row").filter({ hasText: "Hradec Kralove" }).getByRole("cell").nth(tipsport)
+    ).toHaveText("11.20");
     // Betano's 6.60 draw is strictly best; a margin row closes the table.
-    await expect(odds.getByRole("row").filter({ hasText: "Draw" }).getByRole("cell").nth(3)).toContainText("best price");
-    await expect(odds.getByRole("row").filter({ hasText: "Margin" }).getByRole("cell").nth(tipsport)).toHaveText("6.6%");
+    await expect(odds.getByRole("row").filter({ hasText: "Draw" }).getByRole("cell").nth(3)).toContainText(
+      "best price"
+    );
+    await expect(odds.getByRole("row").filter({ hasText: "Margin" }).getByRole("cell").nth(tipsport)).toHaveText(
+      "6.6%"
+    );
 
     // Double chance: the participant-less outcome is 12, the home id is 1X.
     await odds.getByRole("tab", { name: "Double chance" }).click();
@@ -687,7 +774,9 @@ test.describe("Match detail", () => {
     await expect(page).toHaveURL(/period=FIRST_HALF/);
     const firstRow = odds.getByRole("row").nth(1);
     await expect(firstRow.getByRole("cell").first()).toHaveText("0:0");
-    await expect(odds.getByRole("row").filter({ hasText: "2:3" }).getByRole("cell").nth(tipsport)).toHaveText("—suspended");
+    await expect(odds.getByRole("row").filter({ hasText: "2:3" }).getByRole("cell").nth(tipsport)).toHaveText(
+      "—suspended"
+    );
 
     const stats = page.locator("#stats");
     await expect(stats.getByRole("row", { name: /Ball possession/ })).toContainText("77%");
@@ -714,7 +803,13 @@ test.describe("Match detail", () => {
   test("fetching from FlashScore needs confirmation and only exists before the result", async ({ page }) => {
     const requests = await setup(page);
     await stubDetail(page, {
-      event: { is_terminal: false, outcome: null, score: null, status: "scheduled", start_time_utc: "2026-10-18T14:30:00Z" }
+      event: {
+        is_terminal: false,
+        outcome: null,
+        score: null,
+        status: "scheduled",
+        start_time_utc: "2026-10-18T14:30:00Z"
+      }
     });
     await stubJson(page, `**/api/odds/${EVENT_ID}`, storedOdds());
     await stubJson(page, `**/api/match-stats/${EVENT_ID}`, STATS);
@@ -753,7 +848,10 @@ test.describe("Match detail", () => {
     await page.goto("/en/matches/nope1234");
     await expect(page.getByRole("heading", { level: 1, name: "Match not found" })).toBeVisible();
     await expect(page.getByText("No stored match has the id “nope1234”")).toBeVisible();
-    await expect(page.getByRole("link", { name: "Search stored matches" })).toHaveAttribute("href", "/en/matches?q=nope1234");
+    await expect(page.getByRole("link", { name: "Search stored matches" })).toHaveAttribute(
+      "href",
+      "/en/matches?q=nope1234"
+    );
     expect(requests.filter((p) => UPSTREAM.test(p))).toEqual([]);
   });
 

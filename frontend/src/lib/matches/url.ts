@@ -28,7 +28,14 @@ type Readable = { get(name: string): string | null };
 function list(params: Readable, key: string): string[] {
   const raw = params.get(key);
   if (!raw) return [];
-  return Array.from(new Set(raw.split(",").map((v) => v.trim()).filter(Boolean)));
+  return Array.from(
+    new Set(
+      raw
+        .split(",")
+        .map((v) => v.trim())
+        .filter(Boolean)
+    )
+  );
 }
 
 function oneOf<V extends string>(values: string[], allowed: readonly V[]): V[] {

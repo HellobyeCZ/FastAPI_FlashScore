@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useState } from "react";
 import { Button, Dialog } from "@/components/ui";
 import { useLocale } from "@/contexts/LocaleContext";
 import type { MessageKey } from "@/lib/i18n";
@@ -39,25 +39,21 @@ export function useFacetValueLabel() {
  */
 function useFacetOptions(state: MatchesUrlState, facets: MatchFacets | undefined): Record<FacetKey, FacetOption[]> {
   const label = useFacetValueLabel();
-  return useMemo(() => {
-    const out = {} as Record<FacetKey, FacetOption[]>;
-    for (const key of FACET_KEYS) {
-      const counts = new Map((facets?.[key] ?? []).map((f) => [f.value, f.count]));
-      const fixed: readonly string[] | null =
-        key === "status" ? MATCH_STATUS_KINDS : key === "bets" ? MATCH_BETS_KINDS : null;
-      const values = fixed
-        ? [...fixed]
-        : Array.from(new Set([...(facets?.[key] ?? []).map((f) => f.value), ...state[key]]));
-      out[key] = values.map((value) => ({
-        value,
-        label: label(key, value),
-        count: facets ? (counts.get(value) ?? 0) : null
-      }));
-    }
-    return out;
-    // Selected lists are joined so the deps stay primitive (sanctioned pattern, see CLAUDE.md).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [facets, label, state.sport.join(","), state.country.join(","), state.league.join(","), state.status.join(","), state.bets.join(",")]);
+  const out = {} as Record<FacetKey, FacetOption[]>;
+  for (const key of FACET_KEYS) {
+    const counts = new Map((facets?.[key] ?? []).map((f) => [f.value, f.count]));
+    const fixed: readonly string[] | null =
+      key === "status" ? MATCH_STATUS_KINDS : key === "bets" ? MATCH_BETS_KINDS : null;
+    const values = fixed
+      ? [...fixed]
+      : Array.from(new Set([...(facets?.[key] ?? []).map((f) => f.value), ...state[key]]));
+    out[key] = values.map((value) => ({
+      value,
+      label: label(key, value),
+      count: facets ? (counts.get(value) ?? 0) : null
+    }));
+  }
+  return out;
 }
 
 const FACET_LABEL: Record<FacetKey, MessageKey> = {

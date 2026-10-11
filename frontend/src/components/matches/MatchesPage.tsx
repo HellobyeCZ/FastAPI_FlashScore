@@ -111,8 +111,9 @@ export function MatchesPage() {
       cell: (m) => (
         <span className="flex min-w-0 flex-col gap-0.5">
           <span className="font-sans text-body text-text">{matchTitle(m, t)}</span>
-          {/* League is its own column from sm up; phones read it under the teams. */}
+          {/* League and status are their own columns from sm up; phones read them under the teams. */}
           <span className="truncate text-meta text-text-dim sm:hidden">{competitionRoot(m.competition)}</span>
+          <MatchResult status={m.status} score={m.score} outcome={m.outcome} className="sm:hidden" />
           {(m.live_bets > 0 || m.backtest_bets > 0) && (
             <span className="flex flex-wrap gap-1">
               {m.live_bets > 0 && <Badge tone="accent">{tp("matches.badge.live", m.live_bets)}</Badge>}
@@ -125,6 +126,7 @@ export function MatchesPage() {
     {
       key: "result",
       header: t("matches.col.result"),
+      hideBelow: "sm",
       cell: (m) => <MatchResult status={m.status} score={m.score} outcome={m.outcome} />
     },
     {
@@ -149,7 +151,7 @@ export function MatchesPage() {
   const hasMore = Boolean(query.hasNextPage);
 
   return (
-    <div className="flex flex-col gap-4">
+    <>
       <PageHeader
         title={t("matches.title")}
         description={t("matches.description")}
@@ -160,143 +162,143 @@ export function MatchesPage() {
               : tp("matches.meta.all", total, { count: fmt.int(total) })
             : undefined
         }
-        className="mb-2"
       />
 
-      <div className="flex flex-col gap-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <SearchInput
-            label={t("matches.search.label")}
-            placeholder={t("matches.search.placeholder")}
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            className="w-full min-w-0 md:w-auto md:flex-1 md:basis-80 md:max-w-xl"
-          />
-          <div className="flex w-full items-center gap-2 md:ml-auto md:w-auto">
-            <MatchFilters state={state} facets={first?.facets} total={total} onChange={update} />
-            <span className="ml-auto flex min-w-0 items-center gap-2 md:ml-0">
-              <Label htmlFor="matches-sort" className="hidden sm:inline">
-                {t("matches.sort.label")}
-              </Label>
-              <Select
-                id="matches-sort"
-                aria-label={t("matches.sort.label")}
-                value={state.sort}
-                onChange={(e) => update({ sort: e.target.value as MatchesSort })}
-                className="min-w-0"
-              >
-                {MATCHES_SORTS.map((s) => (
-                  <option key={s} value={s}>
-                    {t(SORT_LABEL[s])}
-                  </option>
-                ))}
-              </Select>
-            </span>
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <SearchInput
+              label={t("matches.search.label")}
+              placeholder={t("matches.search.placeholder")}
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              className="w-full min-w-0 md:w-auto md:flex-1 md:basis-80 md:max-w-xl"
+            />
+            <div className="flex w-full items-center gap-2 md:ml-auto md:w-auto">
+              <MatchFilters state={state} facets={first?.facets} total={total} onChange={update} />
+              <span className="ml-auto flex min-w-0 items-center gap-2 md:ml-0">
+                <Label htmlFor="matches-sort" className="hidden sm:inline">
+                  {t("matches.sort.label")}
+                </Label>
+                <Select
+                  id="matches-sort"
+                  aria-label={t("matches.sort.label")}
+                  value={state.sort}
+                  onChange={(e) => update({ sort: e.target.value as MatchesSort })}
+                  className="min-w-0"
+                >
+                  {MATCHES_SORTS.map((s) => (
+                    <option key={s} value={s}>
+                      {t(SORT_LABEL[s])}
+                    </option>
+                  ))}
+                </Select>
+              </span>
+            </div>
           </div>
+          <ActiveFilters state={state} onChange={update} />
         </div>
-        <ActiveFilters state={state} onChange={update} />
+
+        {first?.exact && (
+          <Callout
+            tone="info"
+            title={t("matches.exact.title", { id: first.exact.event_id })}
+            action={
+              <ButtonLink href={routes.match(locale, first.exact.event_id)} size="sm" variant="primary">
+                {t("matches.exact.open")}
+              </ButtonLink>
+            }
+          >
+            <TextLink href={routes.match(locale, first.exact.event_id)}>{matchTitle(first.exact, t)}</TextLink>
+            {" · "}
+            {competitionRoot(first.exact.competition)} · {fmt.dateTime(first.exact.start_time_utc)}
+          </Callout>
+        )}
+
+        {query.isError && !query.data ? (
+          <Callout
+            tone="neg"
+            title={t("matches.error")}
+            action={
+              <Button size="sm" onClick={() => query.refetch()} loading={query.isFetching}>
+                {t("common.retry")}
+              </Button>
+            }
+          >
+            {errorMessage(query.error)}
+          </Callout>
+        ) : (
+          <section aria-labelledby="matches-results" className="min-w-0 border border-border bg-surface/60">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-3 py-2">
+              <h2 id="matches-results" className="font-sans text-label uppercase tracking-label text-text">
+                {t("matches.results")}
+              </h2>
+              <span className="flex items-center gap-2 text-meta text-text-dim" aria-live="polite">
+                {refreshing && <Spinner />}
+                {total !== undefined && t("matches.showing", { shown: fmt.int(items.length), total: fmt.int(total) })}
+              </span>
+            </div>
+            <Table<MatchListItem>
+              caption={t("matches.caption")}
+              columns={columns}
+              rows={items}
+              rowKey={(m) => m.event_id}
+              rowHref={(m) => routes.match(locale, m.event_id)}
+              linkColumn="match"
+              loading={query.isLoading}
+              sort={sort}
+              onSortChange={(s) =>
+                update({ sort: s?.key === "kickoff" && s.dir === "asc" ? "kickoff_asc" : "kickoff_desc" })
+              }
+              className={refreshing ? "opacity-60 transition-opacity" : undefined}
+              empty={
+                filtered ? (
+                  <EmptyState
+                    title={t("matches.empty.filtered")}
+                    action={
+                      <Button
+                        onClick={() => {
+                          setText("");
+                          update({ q: "", sport: [], country: [], league: [], status: [], bets: [] });
+                        }}
+                      >
+                        {t("matches.empty.clear")}
+                      </Button>
+                    }
+                  >
+                    <FilterSummary state={state} />
+                  </EmptyState>
+                ) : (
+                  <EmptyState
+                    title={t("matches.empty.none")}
+                    action={<ButtonLink href={routes.ops(locale)}>{t("matches.empty.ops")}</ButtonLink>}
+                  >
+                    {t("matches.empty.noneBody")}
+                  </EmptyState>
+                )
+              }
+              footer={
+                items.length > 0 && total !== undefined ? (
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span>{t("matches.showing", { shown: fmt.int(items.length), total: fmt.int(total) })}</span>
+                    {hasMore && (
+                      <Button size="sm" onClick={() => query.fetchNextPage()} loading={query.isFetchingNextPage}>
+                        {t("common.loadMore")}
+                      </Button>
+                    )}
+                  </div>
+                ) : undefined
+              }
+            />
+            {query.isError && query.data && (
+              <Callout tone="neg" title={t("matches.error")} className="m-3">
+                {errorMessage(query.error)}
+              </Callout>
+            )}
+          </section>
+        )}
       </div>
-
-      {first?.exact && (
-        <Callout
-          tone="info"
-          title={t("matches.exact.title", { id: first.exact.event_id })}
-          action={
-            <ButtonLink href={routes.match(locale, first.exact.event_id)} size="sm" variant="primary">
-              {t("matches.exact.open")}
-            </ButtonLink>
-          }
-        >
-          <TextLink href={routes.match(locale, first.exact.event_id)}>{matchTitle(first.exact, t)}</TextLink>
-          {" · "}
-          {competitionRoot(first.exact.competition)} · {fmt.dateTime(first.exact.start_time_utc)}
-        </Callout>
-      )}
-
-      {query.isError && !query.data ? (
-        <Callout
-          tone="neg"
-          title={t("matches.error")}
-          action={
-            <Button size="sm" onClick={() => query.refetch()} loading={query.isFetching}>
-              {t("common.retry")}
-            </Button>
-          }
-        >
-          {errorMessage(query.error)}
-        </Callout>
-      ) : (
-        <section aria-labelledby="matches-results" className="min-w-0 border border-border bg-surface/60">
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-3 py-2">
-            <h2 id="matches-results" className="font-sans text-label uppercase tracking-label text-text">
-              {t("matches.results")}
-            </h2>
-            <span className="flex items-center gap-2 text-meta text-text-dim" aria-live="polite">
-              {refreshing && <Spinner />}
-              {total !== undefined &&
-                t("matches.showing", { shown: fmt.int(items.length), total: fmt.int(total) })}
-            </span>
-          </div>
-          <Table<MatchListItem>
-            caption={t("matches.caption")}
-            columns={columns}
-            rows={items}
-            rowKey={(m) => m.event_id}
-            rowHref={(m) => routes.match(locale, m.event_id)}
-            linkColumn="match"
-            loading={query.isLoading}
-            sort={sort}
-            onSortChange={(s) =>
-              update({ sort: s?.key === "kickoff" && s.dir === "asc" ? "kickoff_asc" : "kickoff_desc" })
-            }
-            className={refreshing ? "opacity-60 transition-opacity" : undefined}
-            empty={
-              filtered ? (
-                <EmptyState
-                  title={t("matches.empty.filtered")}
-                  action={
-                    <Button
-                      onClick={() => {
-                        setText("");
-                        update({ q: "", sport: [], country: [], league: [], status: [], bets: [] });
-                      }}
-                    >
-                      {t("matches.empty.clear")}
-                    </Button>
-                  }
-                >
-                  <FilterSummary state={state} />
-                </EmptyState>
-              ) : (
-                <EmptyState
-                  title={t("matches.empty.none")}
-                  action={<ButtonLink href={routes.ops(locale)}>{t("matches.empty.ops")}</ButtonLink>}
-                >
-                  {t("matches.empty.noneBody")}
-                </EmptyState>
-              )
-            }
-            footer={
-              items.length > 0 && total !== undefined ? (
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span>{t("matches.showing", { shown: fmt.int(items.length), total: fmt.int(total) })}</span>
-                  {hasMore && (
-                    <Button size="sm" onClick={() => query.fetchNextPage()} loading={query.isFetchingNextPage}>
-                      {t("common.loadMore")}
-                    </Button>
-                  )}
-                </div>
-              ) : undefined
-            }
-          />
-          {query.isError && query.data && (
-            <Callout tone="neg" title={t("matches.error")} className="m-3">
-              {errorMessage(query.error)}
-            </Callout>
-          )}
-        </section>
-      )}
-    </div>
+    </>
   );
 }
 

@@ -24,7 +24,12 @@ const SECTIONS: { id: string; label: MessageKey }[] = [
 ];
 
 function newest(...stamps: (string | null | undefined)[]): string | null {
-  return stamps.filter((s): s is string => Boolean(s)).sort().pop() ?? null;
+  return (
+    stamps
+      .filter((s): s is string => Boolean(s))
+      .sort()
+      .pop() ?? null
+  );
 }
 
 /**
@@ -39,7 +44,7 @@ export function MatchDetailPage({ eventId }: { eventId: string }) {
 
   if (event.isError && isNotFound(event.error)) {
     return (
-      <div className="flex flex-col gap-4">
+      <>
         <PageHeader
           title={t("matches.detail.notFound")}
           crumbs={[{ label: t("matches.title"), href: routes.matches(locale) }]}
@@ -55,7 +60,7 @@ export function MatchDetailPage({ eventId }: { eventId: string }) {
         >
           {t("matches.detail.notFoundHint")}
         </EmptyState>
-      </div>
+      </>
     );
   }
 
@@ -66,75 +71,85 @@ export function MatchDetailPage({ eventId }: { eventId: string }) {
   if (league) crumbs.push({ label: league, href: routes.matches(locale, { league: [league] }) });
 
   return (
-    <div className="flex flex-col gap-4">
+    <>
       <PageHeader
         crumbs={crumbs}
-        title={e ? matchTitle(e, t) : event.isLoading ? <Skeleton className="inline-block h-6 w-64 max-w-full" /> : t("matches.detail.fallbackTitle")}
+        title={
+          e ? (
+            matchTitle(e, t)
+          ) : event.isLoading ? (
+            <Skeleton className="inline-block h-6 w-64 max-w-full" />
+          ) : (
+            t("matches.detail.fallbackTitle")
+          )
+        }
         description={e && <HeaderFacts event={e} />}
         meta={e && <Provenance event={e} />}
         actions={
           e && !e.is_terminal ? (
-            <FetchLatest eventId={eventId} lastFetchedAt={newest(e.latest_odds_fetched_at, e.latest_stats_fetched_at)} />
+            <FetchLatest
+              eventId={eventId}
+              lastFetchedAt={newest(e.latest_odds_fetched_at, e.latest_stats_fetched_at)}
+            />
           ) : undefined
         }
-        className="mb-2"
       />
 
-      {event.isError && (
-        <Callout
-          tone="neg"
-          title={t("matches.detail.error")}
-          action={
-            <Button size="sm" onClick={() => event.refetch()} loading={event.isFetching}>
-              {t("common.retry")}
-            </Button>
-          }
-        >
-          {errorMessage(event.error)}
-        </Callout>
-      )}
+      <div className="flex flex-col gap-4">
+        {event.isError && (
+          <Callout
+            tone="neg"
+            title={t("matches.detail.error")}
+            action={
+              <Button size="sm" onClick={() => event.refetch()} loading={event.isFetching}>
+                {t("common.retry")}
+              </Button>
+            }
+          >
+            {errorMessage(event.error)}
+          </Callout>
+        )}
 
-      <nav aria-label={t("matches.detail.sections")} className="-mt-1 overflow-x-auto">
-        <ul className="flex min-w-max items-center gap-4 text-meta">
-          {SECTIONS.map((s) => (
-            <li key={s.id}>
-              <a href={`#${s.id}`} className="text-text-dim underline-offset-2 hover:text-text hover:underline">
-                {t(s.label)}
-              </a>
-            </li>
-          ))}
-        </ul>
-      </nav>
+        <nav aria-label={t("matches.detail.sections")} className="-mt-2 overflow-x-auto">
+          <ul className="flex min-w-max items-center gap-4 text-meta">
+            {SECTIONS.map((s) => (
+              <li key={s.id}>
+                <a href={`#${s.id}`} className="text-text-dim underline-offset-2 hover:text-text hover:underline">
+                  {t(s.label)}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </nav>
 
-      <ModelViewPanel eventId={eventId} teams={teams} finished={status === "finished"} />
-      <BetsPanel eventId={eventId} />
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(20rem,26rem)] xl:items-start">
-        <OddsPanel eventId={eventId} teams={teams} terminal={e?.is_terminal} />
-        <StatsPanel eventId={eventId} teams={teams} terminal={e?.is_terminal} />
+        <ModelViewPanel eventId={eventId} teams={teams} finished={status === "finished"} />
+        <BetsPanel eventId={eventId} />
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(20rem,26rem)] xl:items-start">
+          <OddsPanel eventId={eventId} teams={teams} terminal={e?.is_terminal} />
+          <StatsPanel eventId={eventId} teams={teams} terminal={e?.is_terminal} />
+        </div>
       </div>
-    </div>
+    </>
   );
 }
 
-/** "24 May 2026, 14:00 · Finished 2:1 · Chance Liga - Championship Group · Czech Republic · Football" */
+/**
+ * Line 1: "24 May 2026, 14:00 · Finished 2:1".
+ * Line 2: "Chance Liga - Championship Group · Czech Republic · Football".
+ */
 function HeaderFacts({ event }: { event: EventDetail }) {
   const { t, fmt } = useLocale();
   const facts = [event.competition, countryLabel(event.country), sportLabel(event.sport, t)].filter(Boolean);
   return (
-    <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-      <span className="text-text">{fmt.dateTime(event.start_time_utc)}</span>
-      <span aria-hidden className="text-text-faint">
-        ·
-      </span>
-      <MatchResult status={eventStatus(event)} score={event.score} outcome={event.outcome} />
-      {facts.map((f) => (
-        <span key={f} className="flex items-center gap-2">
-          <span aria-hidden className="text-text-faint">
-            ·
-          </span>
-          {f}
+    <span className="flex flex-col gap-1">
+      <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span className="text-text">{fmt.dateTime(event.start_time_utc)}</span>
+        <span aria-hidden className="text-text-faint">
+          ·
         </span>
-      ))}
+        <MatchResult status={eventStatus(event)} score={event.score} outcome={event.outcome} />
+      </span>
+      {facts.length > 0 && <span>{facts.join(" · ")}</span>}
     </span>
   );
 }

@@ -3,7 +3,8 @@ import type { matches as en } from "../en/matches";
 // Czech plurals: one = 1, few = 2–4, many = fractions, other = 0 and 5+.
 export const matches: Record<keyof typeof en, string> = {
   "matches.title": "Zápasy",
-  "matches.description": "Všechny zápasy uložené v archivu snímků. Otevření zápasu čte jen uložená data — z FlashScore se nic nestahuje.",
+  "matches.description":
+    "Všechny zápasy uložené v archivu snímků. Otevření zápasu čte jen uložená data — z FlashScore se nic nestahuje.",
   "matches.meta.all.one": "{count} uložený zápas",
   "matches.meta.all.few": "{count} uložené zápasy",
   "matches.meta.all.many": "{count} uloženého zápasu",
@@ -45,7 +46,8 @@ export const matches: Record<keyof typeof en, string> = {
   "matches.status.live": "Živě",
   "matches.status.scheduled": "Naplánováno",
   "matches.status.unconfirmed": "Nepotvrzeno",
-  "matches.status.unconfirmed.title": "Výkop už proběhl, ale výsledek nebyl zachycen — uložená data jsou z doby před zápasem",
+  "matches.status.unconfirmed.title":
+    "Výkop už proběhl, ale výsledek nebyl zachycen — uložená data jsou z doby před zápasem",
   "matches.betsFilter.live": "Se živými papírovými sázkami",
   "matches.betsFilter.backtest": "Se sázkami z backtestu",
   "matches.sport.football": "Fotbal",
@@ -90,14 +92,16 @@ export const matches: Record<keyof typeof en, string> = {
   "matches.empty.facets.other": "{count} aktivních filtrů",
   "matches.empty.clear": "Zrušit hledání a filtry",
   "matches.empty.none": "Zatím nejsou uloženy žádné zápasy",
-  "matches.empty.noneBody": "Zápasy se zde objeví, jakmile se stáhnou jejich kurzy nebo statistiky. Hromadné stahování spustíte v Datových operacích.",
+  "matches.empty.noneBody":
+    "Zápasy se zde objeví, jakmile se stáhnou jejich kurzy nebo statistiky. Hromadné stahování spustíte v Datových operacích.",
   "matches.empty.ops": "Otevřít Datové operace",
 
   "matches.detail.fallbackTitle": "Zápas",
   "matches.detail.error": "Zápas se nepodařilo načíst",
   "matches.detail.notFound": "Zápas nenalezen",
   "matches.detail.notFoundBody": "Žádný uložený zápas nemá ID „{id}“",
-  "matches.detail.notFoundHint": "Prohledejte uložené zápasy, nebo tuto událost stáhněte z FlashScore a přidejte ji do archivu.",
+  "matches.detail.notFoundHint":
+    "Prohledejte uložené zápasy, nebo tuto událost stáhněte z FlashScore a přidejte ji do archivu.",
   "matches.detail.searchStored": "Hledat v uložených zápasech",
   "matches.detail.provenance": "Uložená data · nejnovější snímek {time} ({age})",
   "matches.detail.provenanceNone": "Zatím nejsou uloženy žádné snímky",
@@ -106,7 +110,8 @@ export const matches: Record<keyof typeof en, string> = {
 
   "matches.fetch.button": "Stáhnout aktuální z FlashScore",
   "matches.fetch.confirmTitle": "Stáhnout aktuální data z FlashScore?",
-  "matches.fetch.confirmBody": "Odešle živé požadavky na FlashScore pro kurzy a statistiky tohoto zápasu a uloží do archivu nové snímky. Požadavky se započítávají do limitu FlashScore — použijte to jen tehdy, když jsou uložená data příliš stará.",
+  "matches.fetch.confirmBody":
+    "Odešle živé požadavky na FlashScore pro kurzy a statistiky tohoto zápasu a uloží do archivu nové snímky. Požadavky se započítávají do limitu FlashScore — použijte to jen tehdy, když jsou uložená data příliš stará.",
   "matches.fetch.confirmAge": "Nejnovější uložený snímek: {time} ({age}).",
   "matches.fetch.confirmNone": "Pro tento zápas zatím není nic uloženo.",
   "matches.fetch.confirm": "Stáhnout z FlashScore",
@@ -118,11 +123,13 @@ export const matches: Record<keyof typeof en, string> = {
 
   "matches.model.title": "Pohled modelů",
   "matches.model.description": "Pravděpodobnost každého nasazeného modelu proti trhu bez marže, pro každý výběr",
-  "matches.model.caption": "Predikce modelů pro tento zápas s pravděpodobností trhu, výhodou, férovým kurzem a nejlepší dostupnou cenou",
+  "matches.model.caption":
+    "Predikce modelů pro tento zápas s pravděpodobností trhu, výhodou, férovým kurzem a nejlepší dostupnou cenou",
   "matches.model.col.modelProb": "Model p",
   "matches.model.col.marketProb": "Trh p",
   "matches.model.col.marketProbTitle": "Pravděpodobnost trhu bez marže z posledního živého záznamu kurzů",
-  "matches.model.col.edgeTitle": "Výhoda = pravděpodobnost modelu minus pravděpodobnost trhu bez marže (procentní body), nikoli očekávaná hodnota",
+  "matches.model.col.edgeTitle":
+    "Výhoda = pravděpodobnost modelu minus pravděpodobnost trhu bez marže (procentní body), nikoli očekávaná hodnota",
   "matches.model.col.fair": "Férový kurz",
   "matches.model.col.fairTitle": "1 / pravděpodobnost modelu",
   "matches.model.col.best": "Nejlepší kurz",
@@ -134,11 +141,14 @@ export const matches: Record<keyof typeof en, string> = {
   "matches.model.bestFromLive": "nejlepší kurzy ze živého záznamu z {time}",
   "matches.model.error": "Predikce modelů se nepodařilo načíst",
   "matches.model.noModels": "Není nasazen žádný natrénovaný model",
-  "matches.model.noModelsBody": "Predikce se zde objeví, jakmile bude model v registru povýšen na šampiona (nebo načten ze složky modelů).",
+  "matches.model.noModelsBody":
+    "Predikce se zde objeví, jakmile bude model v registru povýšen na šampiona (nebo načten ze složky modelů).",
   "matches.model.openRegistry": "Otevřít registr modelů",
   "matches.model.empty": "Pro tento zápas nejsou žádné predikce",
-  "matches.model.emptyBody": "Nasazené modely ({models}) potřebují pro tento zápas živý záznam kurzů podporovaného trhu.",
-  "matches.model.finishedNote": "Predikce vznikají před výkopem ze živých kurzů. Tento zápas je odehraný, takže pro něj modely nic nevracejí — co tehdy předpověděly, ukazují sázky níže.",
+  "matches.model.emptyBody":
+    "Nasazené modely ({models}) potřebují pro tento zápas živý záznam kurzů podporovaného trhu.",
+  "matches.model.finishedNote":
+    "Predikce vznikají před výkopem ze živých kurzů. Tento zápas je odehraný, takže pro něj modely nic nevracejí — co tehdy předpověděly, ukazují sázky níže.",
 
   "matches.bets.title": "Tipy a sázky",
   "matches.bets.description": "Živé papírové sázky a sázky z backtestů na tento zápas",
@@ -161,7 +171,8 @@ export const matches: Record<keyof typeof en, string> = {
   "matches.bets.col.clvTitle": "Hodnota proti závěrečnému kurzu: logaritmus podílu vzatého a závěrečného kurzu",
   "matches.bets.col.betAt": "Vsazeno",
   "matches.bets.col.modelProb": "Model p",
-  "matches.bets.clvNote": "CLV se u backtestů nezobrazuje: jejich sázky jsou oceněny závěrečným kurzem, takže není definována.",
+  "matches.bets.clvNote":
+    "CLV se u backtestů nezobrazuje: jejich sázky jsou oceněny závěrečným kurzem, takže není definována.",
 
   "matches.odds.title": "Kurzy",
   "matches.odds.description": "Kurzy sázkových kanceláří podle trhu",
@@ -186,7 +197,11 @@ export const matches: Record<keyof typeof en, string> = {
   "matches.odds.suspended": "pozastaveno",
   "matches.odds.suspendedTitle": "Pozastaveno — zástupný kurz {price}",
   "matches.odds.bestSr": "(nejlepší kurz)",
-  "matches.odds.legend": "▲ nejlepší kurz: jednoznačně nejvyšší, vypsaný aspoň 2 kancelářemi · — pozastaveno (kurz ≤ {max}) · · nenabízeno",
+  "matches.odds.legend": "Legenda",
+  "matches.odds.legend.best": "nejlepší kurz: jednoznačně nejvyšší, vypsaný aspoň 2 kancelářemi",
+  "matches.odds.legend.suspended": "pozastaveno (zástupný kurz ≤ {max})",
+  "matches.odds.legend.notOffered": "nenabízeno",
+  "matches.odds.scrollHint": "Pro další sázkové kanceláře posuňte tabulku do strany.",
   "matches.odds.omitted": "Nezobrazeno, protože výběry v tomto záznamu nelze spolehlivě určit: {markets}.",
   "matches.odds.allLines": "Zobrazit všech {count} linií ({hidden} skryto)",
   "matches.odds.lessLines": "Zobrazit jen linie kolem {line}",
@@ -215,6 +230,8 @@ export const matches: Record<keyof typeof en, string> = {
   "matches.sel.drawOrAway": "Remíza nebo {away}",
   "matches.sel.over": "Více než {line}",
   "matches.sel.under": "Méně než {line}",
+  "matches.sel.overShort": "V {line}",
+  "matches.sel.underShort": "M {line}",
   "matches.sel.odd": "Lichý",
   "matches.sel.even": "Sudý",
 

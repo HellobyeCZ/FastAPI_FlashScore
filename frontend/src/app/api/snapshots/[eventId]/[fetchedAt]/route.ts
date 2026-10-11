@@ -9,10 +9,7 @@ export const dynamic = "force-dynamic";
  * the client derives home/away from the order upstream lists participants in
  * (lib/matches/odds.ts). 404 when the capture does not exist.
  */
-export async function GET(
-  _req: Request,
-  { params }: { params: { eventId: string; fetchedAt: string } }
-) {
+export async function GET(_req: Request, { params }: { params: { eventId: string; fetchedAt: string } }) {
   try {
     const fetchedAt = decodeURIComponent(params.fetchedAt);
     const rows = await prisma.liveOddsSnapshot.findMany({

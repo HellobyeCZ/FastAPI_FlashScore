@@ -117,10 +117,18 @@ export function useReferenceBoard(eventId: string): {
   const live = useLiveSnapshot(eventId, latest);
   return useMemo(() => {
     if (stored.data) {
-      return { board: boardFromStored(stored.data), source: { kind: "stored", fetchedAt: stored.data.fetched_at }, isLoading: false };
+      return {
+        board: boardFromStored(stored.data),
+        source: { kind: "stored", fetchedAt: stored.data.fetched_at },
+        isLoading: false
+      };
     }
     if (live.data) {
-      return { board: boardFromLive(live.data.rows), source: { kind: "live", fetchedAt: live.data.fetched_at }, isLoading: false };
+      return {
+        board: boardFromLive(live.data.rows),
+        source: { kind: "live", fetchedAt: live.data.fetched_at },
+        isLoading: false
+      };
     }
     return { board: null, source: null, isLoading: stored.isLoading || snapshots.isLoading || live.isLoading };
   }, [stored.data, stored.isLoading, snapshots.isLoading, live.data, live.isLoading]);

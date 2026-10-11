@@ -1,17 +1,5 @@
 "use client";
-import Link from "next/link";
-import {
-  Button,
-  ButtonLink,
-  Callout,
-  EmptyState,
-  ModelName,
-  Panel,
-  Signed,
-  Skeleton,
-  Table,
-  type Column
-} from "@/components/ui";
+import { Button, ButtonLink, Callout, EmptyState, Panel, Signed, Skeleton, Table, type Column } from "@/components/ui";
 import { useLocale } from "@/contexts/LocaleContext";
 import { errorMessage } from "@/lib/api/http";
 import { marketLabel, modelLabel, selectionLabel } from "@/lib/labels";
@@ -20,6 +8,7 @@ import { findRow, marketRef, selectionKind, shortBookName, type OddsBoard } from
 import { usePrediction, useReferenceBoard } from "@/lib/matches/queries";
 import type { Prediction } from "@/lib/matches/types";
 import { routes } from "@/lib/routes";
+import { ModelLink } from "./ModelLink";
 
 const SELECTION_ORDER = ["home", "draw", "away", "over", "under", "yes", "no"];
 
@@ -37,15 +26,7 @@ function bestPrice(board: OddsBoard | null, p: Prediction): Row["best"] {
  * What each served model thinks of this match: model vs de-vigged market
  * probability, edge, fair odds and the best price currently stored.
  */
-export function ModelViewPanel({
-  eventId,
-  teams,
-  finished
-}: {
-  eventId: string;
-  teams: Teams;
-  finished: boolean;
-}) {
+export function ModelViewPanel({ eventId, teams, finished }: { eventId: string; teams: Teams; finished: boolean }) {
   const { t, fmt, locale } = useLocale();
   const prediction = usePrediction(eventId);
   const reference = useReferenceBoard(eventId);
@@ -70,22 +51,21 @@ export function ModelViewPanel({
     {
       key: "model",
       header: t("common.model"),
-      cell: (r) => (
-        <Link href={routes.model(locale, r.model)} className="hover:text-accent focus-visible:text-accent">
-          <ModelName name={r.model} />
-        </Link>
-      )
+      hideBelow: "sm",
+      cell: (r) => <ModelLink model={r.model} />
     },
     {
       key: "pick",
       header: t("common.selection"),
       cell: (r) => (
-        <span className="flex flex-col leading-tight">
+        <span className="flex flex-col gap-0.5 leading-tight">
+          {/* The model column is hidden on phones; name the model here instead. */}
+          <ModelLink model={r.model} className="sm:hidden" />
           <span>
             {selectionLabel(r.selection, t)}
             {team(r.selection) && <span className="text-text-dim"> · {team(r.selection)}</span>}
           </span>
-          <span className="text-meta text-text-dim">{marketLabel(r.market, t)}</span>
+          <span className="whitespace-nowrap text-meta text-text-dim">{marketLabel(r.market, t)}</span>
         </span>
       )
     },
@@ -140,7 +120,9 @@ export function ModelViewPanel({
       headerTitle: t("matches.model.col.evTitle"),
       align: "right",
       hideBelow: "lg",
-      cell: (r) => <Signed value={r.best && r.model_prob !== null ? r.model_prob * r.best.price - 1 : null} format="pct" />
+      cell: (r) => (
+        <Signed value={r.best && r.model_prob !== null ? r.model_prob * r.best.price - 1 : null} format="pct" />
+      )
     }
   ];
 

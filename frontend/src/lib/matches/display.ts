@@ -16,7 +16,10 @@ type Named = Pick<MatchListItem, "home_team" | "away_team"> & { event_name?: str
  */
 export function matchTitle(m: Named, t: T): string {
   if (m.home_team && m.away_team) return `${m.home_team}${TEAM_SEPARATOR}${m.away_team}`;
-  const name = m.event_name?.replace(/\s+LIVE$/i, "").replace(/\s+vs\.?\s+/i, TEAM_SEPARATOR).trim();
+  const name = m.event_name
+    ?.replace(/\s+LIVE$/i, "")
+    .replace(/\s+vs\.?\s+/i, TEAM_SEPARATOR)
+    .trim();
   return name || t("matches.unnamed");
 }
 
@@ -49,7 +52,10 @@ export function scoreText(score: { home: number | string | null; away: number | 
  * upstream in-play status means live; otherwise kick-off decides between
  * scheduled and unconfirmed (kicked off, no result captured).
  */
-export function eventStatus(e: Pick<EventDetail, "outcome" | "status" | "start_time_utc">, now = new Date()): MatchStatusKind {
+export function eventStatus(
+  e: Pick<EventDetail, "outcome" | "status" | "start_time_utc">,
+  now = new Date()
+): MatchStatusKind {
   if (e.outcome) return "finished";
   const raw = (e.status ?? "").toLowerCase();
   if (raw.includes("live") || raw.includes("in_play") || raw.includes("progress")) return "live";

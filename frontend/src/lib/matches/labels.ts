@@ -47,9 +47,11 @@ export function lineText(line: number, fmt: Formatters, signed = false): string 
 }
 
 export type SelectionText = {
-  /** Short code shown in mono: "1", "X", "2", "1X", "O", "U". */
+  /** Short code shown in mono: "1", "X", "2", "1X", "2:1", "1/X". */
   code: string | null;
   label: string;
+  /** Compact label for phones, shown next to the code instead of `label`. */
+  short: string;
 };
 
 /**
@@ -67,42 +69,59 @@ export function selectionText(
 ): SelectionText {
   const home = teams.home || t("selection.home");
   const away = teams.away || t("selection.away");
-  const handicap = (value: number | null) => (value === null ? "" : ` (${lineText(value, fmt, true)})`);
+  const handicapped = family === "ASIAN_HANDICAP" || family === "EUROPEAN_HANDICAP";
+  const hcp = (value: number | null) => (value === null ? "" : lineText(value, fmt, true));
+  const withHcp = (name: string, value: number | null) => (value === null ? name : `${name} (${hcp(value)})`);
+  const plain = (label: string): SelectionText => ({ code: null, label, short: label });
   switch (sel.kind) {
     case "home":
-      if (family === "ASIAN_HANDICAP" || family === "EUROPEAN_HANDICAP") return { code: "1", label: `${home}${handicap(line)}` };
-      return { code: "1", label: home };
-    case "away":
-      if (family === "ASIAN_HANDICAP" || family === "EUROPEAN_HANDICAP")
-        return { code: "2", label: `${away}${handicap(line === null ? null : -line)}` };
-      return { code: "2", label: away };
+      return handicapped
+        ? { code: "1", label: withHcp(home, line), short: hcp(line) }
+        : { code: "1", label: home, short: "" };
+    case "away": {
+      const own = line === null ? null : -line;
+      return handicapped
+        ? { code: "2", label: withHcp(away, own), short: hcp(own) }
+        : { code: "2", label: away, short: "" };
+    }
     case "draw":
-      return { code: "X", label: `${t("selection.draw")}${family === "EUROPEAN_HANDICAP" ? handicap(line) : ""}` };
+      return family === "EUROPEAN_HANDICAP"
+        ? { code: "X", label: withHcp(t("selection.draw"), line), short: hcp(line) }
+        : { code: "X", label: t("selection.draw"), short: "" };
     case "homeOrDraw":
-      return { code: "1X", label: t("matches.sel.homeOrDraw", { home }) };
+      return { code: "1X", label: t("matches.sel.homeOrDraw", { home }), short: "" };
     case "homeOrAway":
-      return { code: "12", label: t("matches.sel.homeOrAway") };
+      return { code: "12", label: t("matches.sel.homeOrAway"), short: "" };
     case "drawOrAway":
-      return { code: "X2", label: t("matches.sel.drawOrAway", { away }) };
+      return { code: "X2", label: t("matches.sel.drawOrAway", { away }), short: "" };
     case "over":
-      return { code: null, label: line === null ? t("selection.over") : t("matches.sel.over", { line: lineText(line, fmt) }) };
+      return line === null
+        ? plain(t("selection.over"))
+        : {
+            code: null,
+            label: t("matches.sel.over", { line: lineText(line, fmt) }),
+            short: t("matches.sel.overShort", { line: lineText(line, fmt) })
+          };
     case "under":
-      return {
-        code: null,
-        label: line === null ? t("selection.under") : t("matches.sel.under", { line: lineText(line, fmt) })
-      };
+      return line === null
+        ? plain(t("selection.under"))
+        : {
+            code: null,
+            label: t("matches.sel.under", { line: lineText(line, fmt) }),
+            short: t("matches.sel.underShort", { line: lineText(line, fmt) })
+          };
     case "yes":
-      return { code: null, label: t("selection.yes") };
+      return plain(t("selection.yes"));
     case "no":
-      return { code: null, label: t("selection.no") };
+      return plain(t("selection.no"));
     case "odd":
-      return { code: null, label: t("matches.sel.odd") };
+      return plain(t("matches.sel.odd"));
     case "even":
-      return { code: null, label: t("matches.sel.even") };
+      return plain(t("matches.sel.even"));
     case "score":
     case "htft":
-      return { code: sel.text ?? null, label: "" };
+      return { code: sel.text ?? null, label: "", short: "" };
     default:
-      return { code: null, label: sel.text ?? "—" };
+      return plain(sel.text ?? "—");
   }
 }

@@ -15,7 +15,15 @@ function leadingNumber(value: string | null): number | null {
 }
 
 /** Match statistics from the latest stored snapshot, one period at a time. */
-export function StatsPanel({ eventId, teams, terminal }: { eventId: string; teams: Teams; terminal: boolean | undefined }) {
+export function StatsPanel({
+  eventId,
+  teams,
+  terminal
+}: {
+  eventId: string;
+  teams: Teams;
+  terminal: boolean | undefined;
+}) {
   const { t, fmt } = useLocale();
   const { get, set } = useDetailParams(eventId);
   const stats = useStoredStats(eventId);
@@ -125,7 +133,12 @@ function StatRow({ stat }: { stat: MatchStat }) {
   const lead = home !== null && away !== null && home !== away ? (home > away ? "home" : "away") : null;
   return (
     <tr className="border-b border-border/60 align-top">
-      <td className={clsx("py-1.5 pr-2 font-mono tabular-nums", lead === "home" ? "font-medium text-text" : "text-text-dim")}>
+      <td
+        className={clsx(
+          "py-1.5 pr-2 font-mono tabular-nums",
+          lead === "home" ? "font-medium text-text" : "text-text-dim"
+        )}
+      >
         {stat.home ?? "—"}
       </td>
       <th scope="row" className="py-1.5 text-center font-sans font-normal text-text-dim">

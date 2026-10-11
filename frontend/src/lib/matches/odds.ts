@@ -207,7 +207,8 @@ function resolveStored(
   participants: Participants
 ): { selection: BoardSelection; line: number | null } | null {
   const positional = id.startsWith(`${key}:`) ? Number(id.slice(key.length + 1)) : null;
-  const side = participants && id === participants.home ? "home" : participants && id === participants.away ? "away" : null;
+  const side =
+    participants && id === participants.home ? "home" : participants && id === participants.away ? "away" : null;
   const handicap = lineFromLabel(label);
   const upper = id.toUpperCase();
   switch (family) {
@@ -240,7 +241,8 @@ function resolveStored(
       if (upper === "NO" || positional === 1) return { selection: { kind: "no" }, line: null };
       return null;
     case "ODD_OR_EVEN":
-      if (upper === "ODD" || upper === "EVEN") return { selection: { kind: upper === "ODD" ? "odd" : "even" }, line: null };
+      if (upper === "ODD" || upper === "EVEN")
+        return { selection: { kind: upper === "ODD" ? "odd" : "even" }, line: null };
       return null;
     case "CORRECT_SCORE": {
       const m = label?.match(/^(\d+)\s*:\s*(\d+)$/);
@@ -250,7 +252,8 @@ function resolveStored(
       return label && /^[12X]\/[12X]$/.test(label) ? { selection: { kind: "htft", text: label }, line: null } : null;
     default:
       // Unknown family: only trust a human label, never an opaque id.
-      if (label && label !== id && label !== "Selection") return { selection: { kind: "other", text: label }, line: handicap };
+      if (label && label !== id && label !== "Selection")
+        return { selection: { kind: "other", text: label }, line: handicap };
       return null;
   }
 }
@@ -272,7 +275,13 @@ export function boardFromStored(resp: OddsResponse): OddsBoard {
           unresolved.add(key);
           continue;
         }
-        quotes.push({ book: bookName, key, line: resolved.line, selection: resolved.selection, price: outcome.odds_decimal });
+        quotes.push({
+          book: bookName,
+          key,
+          line: resolved.line,
+          selection: resolved.selection,
+          price: outcome.odds_decimal
+        });
       }
     }
   }
@@ -312,11 +321,25 @@ export function boardFromLive(rows: LiveOddsRow[]): OddsBoard {
     const [base, rawLine] = r.selection_key.split("@");
     const upper = base.toUpperCase();
     const handicap = parseLine(rawLine);
-    const side = participants && base === participants.home ? "home" : participants && base === participants.away ? "away" : upper === "HOME" ? "home" : upper === "AWAY" ? "away" : null;
+    const side =
+      participants && base === participants.home
+        ? "home"
+        : participants && base === participants.away
+          ? "away"
+          : upper === "HOME"
+            ? "home"
+            : upper === "AWAY"
+              ? "away"
+              : null;
     let resolved: { selection: BoardSelection; line: number | null } | null = null;
     switch (family) {
       case "HOME_DRAW_AWAY":
-        resolved = upper === "DRAW" ? { selection: { kind: "draw" }, line: null } : side ? { selection: { kind: side }, line: null } : null;
+        resolved =
+          upper === "DRAW"
+            ? { selection: { kind: "draw" }, line: null }
+            : side
+              ? { selection: { kind: side }, line: null }
+              : null;
         break;
       case "HOME_AWAY":
       case "DRAW_NO_BET":
@@ -340,7 +363,10 @@ export function boardFromLive(rows: LiveOddsRow[]): OddsBoard {
             : null;
         break;
       case "ASIAN_HANDICAP":
-        resolved = side && handicap !== null ? { selection: { kind: side }, line: side === "home" ? handicap : -handicap } : null;
+        resolved =
+          side && handicap !== null
+            ? { selection: { kind: side }, line: side === "home" ? handicap : -handicap }
+            : null;
         break;
       case "EUROPEAN_HANDICAP":
         if (handicap !== null) {
@@ -355,12 +381,20 @@ export function boardFromLive(rows: LiveOddsRow[]): OddsBoard {
           const posKey = `${r.bookmaker}|${r.market}`;
           const pos = positions.get(posKey) ?? 0;
           positions.set(posKey, pos + 1);
-          resolved = pos === 0 ? { selection: { kind: "yes" }, line: null } : pos === 1 ? { selection: { kind: "no" }, line: null } : null;
+          resolved =
+            pos === 0
+              ? { selection: { kind: "yes" }, line: null }
+              : pos === 1
+                ? { selection: { kind: "no" }, line: null }
+                : null;
         }
         break;
       }
       case "ODD_OR_EVEN":
-        resolved = upper === "ODD" || upper === "EVEN" ? { selection: { kind: upper === "ODD" ? "odd" : "even" }, line: null } : null;
+        resolved =
+          upper === "ODD" || upper === "EVEN"
+            ? { selection: { kind: upper === "ODD" ? "odd" : "even" }, line: null }
+            : null;
         break;
       default:
         resolved = null;
@@ -369,7 +403,13 @@ export function boardFromLive(rows: LiveOddsRow[]): OddsBoard {
       unresolved.add(r.market);
       continue;
     }
-    quotes.push({ book: r.bookmaker ?? "?", key: r.market, line: resolved.line, selection: resolved.selection, price: r.price });
+    quotes.push({
+      book: r.bookmaker ?? "?",
+      key: r.market,
+      line: resolved.line,
+      selection: resolved.selection,
+      price: r.price
+    });
   }
   return buildBoard(quotes, unresolved);
 }
@@ -484,7 +524,9 @@ function buildBoard(quotes: Quote[], unresolved: Set<string>): OddsBoard {
   return {
     books,
     markets: out,
-    omitted: Array.from(unresolved).filter((k) => !shown.has(k)).sort()
+    omitted: Array.from(unresolved)
+      .filter((k) => !shown.has(k))
+      .sort()
   };
 }
 

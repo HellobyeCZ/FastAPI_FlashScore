@@ -39,9 +39,7 @@ export function FacetOptions({
   return (
     <fieldset className={clsx("min-w-0", className)}>
       <legend
-        className={clsx(
-          legendVisible ? "mb-2 font-sans text-label uppercase tracking-label text-text-dim" : "sr-only"
-        )}
+        className={clsx(legendVisible ? "mb-2 font-sans text-label uppercase tracking-label text-text-dim" : "sr-only")}
       >
         {legend}
       </legend>

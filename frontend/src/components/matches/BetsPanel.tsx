@@ -1,11 +1,9 @@
 "use client";
-import Link from "next/link";
 import {
   Button,
   ButtonLink,
   Callout,
   EmptyState,
-  ModelName,
   Panel,
   Signed,
   Skeleton,
@@ -21,6 +19,7 @@ import { marketLabel, selectionLabel } from "@/lib/labels";
 import { useEventPicks } from "@/lib/matches/queries";
 import type { BacktestBetRow, PaperBetRow } from "@/lib/matches/types";
 import { routes } from "@/lib/routes";
+import { ModelLink } from "./ModelLink";
 
 type T = ReturnType<typeof useLocale>["t"];
 
@@ -102,26 +101,19 @@ export function BetsPanel({ eventId }: { eventId: string }) {
   );
 }
 
-function ModelLink({ model }: { model: string }) {
-  const { locale } = useLocale();
-  return (
-    <Link href={routes.model(locale, model)} className="hover:text-accent focus-visible:text-accent">
-      <ModelName name={model} />
-    </Link>
-  );
-}
-
 function LiveBetsTable({ rows }: { rows: PaperBetRow[] }) {
   const { t, fmt } = useLocale();
   const columns: Column<PaperBetRow>[] = [
-    { key: "model", header: t("common.model"), cell: (b) => <ModelLink model={b.model} /> },
+    { key: "model", header: t("common.model"), hideBelow: "sm", cell: (b) => <ModelLink model={b.model} /> },
     {
       key: "pick",
       header: t("common.selection"),
       cell: (b) => (
-        <span className="flex flex-col leading-tight">
+        <span className="flex flex-col gap-0.5 leading-tight">
+          {/* The model column is hidden on phones; name the model here instead. */}
+          <ModelLink model={b.model} className="sm:hidden" />
           <span>{selectionLabel(b.selection, t)}</span>
-          <span className="text-meta text-text-dim">{marketLabel(b.market, t)}</span>
+          <span className="whitespace-nowrap text-meta text-text-dim">{marketLabel(b.market, t)}</span>
         </span>
       )
     },
@@ -155,12 +147,7 @@ function LiveBetsTable({ rows }: { rows: PaperBetRow[] }) {
     }
   ];
   return (
-    <Table<PaperBetRow>
-      caption={t("matches.bets.live")}
-      columns={columns}
-      rows={rows}
-      rowKey={(b) => String(b.id)}
-    />
+    <Table<PaperBetRow> caption={t("matches.bets.live")} columns={columns} rows={rows} rowKey={(b) => String(b.id)} />
   );
 }
 
@@ -176,7 +163,7 @@ function BacktestBets({ rows }: { rows: BacktestBetRow[] }) {
       cell: (b) => (
         <span className="flex flex-col leading-tight">
           <span>{selectionLabel(b.selection, t)}</span>
-          <span className="text-meta text-text-dim">{marketLabel(b.market, t)}</span>
+          <span className="whitespace-nowrap text-meta text-text-dim">{marketLabel(b.market, t)}</span>
         </span>
       )
     },

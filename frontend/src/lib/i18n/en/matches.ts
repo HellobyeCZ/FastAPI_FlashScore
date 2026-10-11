@@ -3,7 +3,8 @@
 // this one) can use all four forms; English only ever selects one/other.
 export const matches = {
   "matches.title": "Matches",
-  "matches.description": "Every match stored in the snapshot archive. Opening one reads stored data only — nothing is fetched from FlashScore.",
+  "matches.description":
+    "Every match stored in the snapshot archive. Opening one reads stored data only — nothing is fetched from FlashScore.",
   "matches.meta.all.one": "{count} stored match",
   "matches.meta.all.few": "{count} stored matches",
   "matches.meta.all.many": "{count} stored matches",
@@ -45,7 +46,8 @@ export const matches = {
   "matches.status.live": "Live",
   "matches.status.scheduled": "Scheduled",
   "matches.status.unconfirmed": "Unconfirmed",
-  "matches.status.unconfirmed.title": "Kick-off has passed but no result was captured — the stored data is from before the match",
+  "matches.status.unconfirmed.title":
+    "Kick-off has passed but no result was captured — the stored data is from before the match",
   "matches.betsFilter.live": "With live paper bets",
   "matches.betsFilter.backtest": "With backtest bets",
   "matches.sport.football": "Football",
@@ -90,14 +92,16 @@ export const matches = {
   "matches.empty.facets.other": "{count} filters active",
   "matches.empty.clear": "Clear search and filters",
   "matches.empty.none": "No matches stored yet",
-  "matches.empty.noneBody": "Matches appear here once their odds or statistics are scraped. Start a bulk scrape from Data ops.",
+  "matches.empty.noneBody":
+    "Matches appear here once their odds or statistics are scraped. Start a bulk scrape from Data ops.",
   "matches.empty.ops": "Open Data ops",
 
   "matches.detail.fallbackTitle": "Match",
   "matches.detail.error": "Couldn't load this match",
   "matches.detail.notFound": "Match not found",
   "matches.detail.notFoundBody": "No stored match has the id “{id}”",
-  "matches.detail.notFoundHint": "Search the stored matches, or fetch this event from FlashScore to add it to the archive.",
+  "matches.detail.notFoundHint":
+    "Search the stored matches, or fetch this event from FlashScore to add it to the archive.",
   "matches.detail.searchStored": "Search stored matches",
   "matches.detail.provenance": "Stored data · newest snapshot {time} ({age})",
   "matches.detail.provenanceNone": "No snapshots stored yet",
@@ -106,7 +110,8 @@ export const matches = {
 
   "matches.fetch.button": "Fetch latest from FlashScore",
   "matches.fetch.confirmTitle": "Fetch latest from FlashScore?",
-  "matches.fetch.confirmBody": "This sends live requests to FlashScore for this match's odds and statistics and stores new snapshots in the archive. Upstream requests count against FlashScore's rate limit — use this only when the stored data is too old.",
+  "matches.fetch.confirmBody":
+    "This sends live requests to FlashScore for this match's odds and statistics and stores new snapshots in the archive. Upstream requests count against FlashScore's rate limit — use this only when the stored data is too old.",
   "matches.fetch.confirmAge": "Newest stored snapshot: {time} ({age}).",
   "matches.fetch.confirmNone": "Nothing is stored for this match yet.",
   "matches.fetch.confirm": "Fetch from FlashScore",
@@ -118,11 +123,13 @@ export const matches = {
 
   "matches.model.title": "Model view",
   "matches.model.description": "Each served model's probability against the de-vigged market, per selection",
-  "matches.model.caption": "Model predictions for this match with market probability, edge, fair odds and best available price",
+  "matches.model.caption":
+    "Model predictions for this match with market probability, edge, fair odds and best available price",
   "matches.model.col.modelProb": "Model p",
   "matches.model.col.marketProb": "Market p",
   "matches.model.col.marketProbTitle": "De-vigged market probability from the latest live odds capture",
-  "matches.model.col.edgeTitle": "Edge = model probability minus de-vigged market probability (percentage points), not expected value",
+  "matches.model.col.edgeTitle":
+    "Edge = model probability minus de-vigged market probability (percentage points), not expected value",
   "matches.model.col.fair": "Fair odds",
   "matches.model.col.fairTitle": "1 / model probability",
   "matches.model.col.best": "Best price",
@@ -134,11 +141,14 @@ export const matches = {
   "matches.model.bestFromLive": "best prices from the live capture of {time}",
   "matches.model.error": "Couldn't load model predictions",
   "matches.model.noModels": "No trained model is being served",
-  "matches.model.noModelsBody": "Predictions appear here once a model is promoted to champion in the registry (or loaded from the models folder).",
+  "matches.model.noModelsBody":
+    "Predictions appear here once a model is promoted to champion in the registry (or loaded from the models folder).",
   "matches.model.openRegistry": "Open model registry",
   "matches.model.empty": "No predictions for this match",
-  "matches.model.emptyBody": "The served models ({models}) need a live odds capture of a supported market for this match.",
-  "matches.model.finishedNote": "Predictions are made before kick-off from live odds. This match is finished, so the models return nothing for it — see the bets below for what was predicted at the time.",
+  "matches.model.emptyBody":
+    "The served models ({models}) need a live odds capture of a supported market for this match.",
+  "matches.model.finishedNote":
+    "Predictions are made before kick-off from live odds. This match is finished, so the models return nothing for it — see the bets below for what was predicted at the time.",
 
   "matches.bets.title": "Picks & bets",
   "matches.bets.description": "Live paper bets and backtest bets placed on this match",
@@ -186,7 +196,11 @@ export const matches = {
   "matches.odds.suspended": "suspended",
   "matches.odds.suspendedTitle": "Suspended — placeholder price {price}",
   "matches.odds.bestSr": "(best price)",
-  "matches.odds.legend": "▲ best price: strictly highest, quoted by at least 2 books · — suspended (price ≤ {max}) · · not offered",
+  "matches.odds.legend": "Legend",
+  "matches.odds.legend.best": "best price: strictly highest, quoted by at least 2 books",
+  "matches.odds.legend.suspended": "suspended (placeholder price ≤ {max})",
+  "matches.odds.legend.notOffered": "not offered",
+  "matches.odds.scrollHint": "Swipe the table sideways for more bookmakers.",
   "matches.odds.omitted": "Not shown because their selections can't be identified in this capture: {markets}.",
   "matches.odds.allLines": "Show all {count} lines ({hidden} hidden)",
   "matches.odds.lessLines": "Show lines around {line} only",
@@ -215,6 +229,8 @@ export const matches = {
   "matches.sel.drawOrAway": "Draw or {away}",
   "matches.sel.over": "Over {line}",
   "matches.sel.under": "Under {line}",
+  "matches.sel.overShort": "O {line}",
+  "matches.sel.underShort": "U {line}",
   "matches.sel.odd": "Odd",
   "matches.sel.even": "Even",
 

@@ -46,7 +46,9 @@ export function FetchLatest({
         {result && result.failed.length > 0 && (
           <span className="text-warn">
             {t("matches.fetch.partial", {
-              feeds: result.failed.map((f) => t(f.feed === "odds" ? "matches.fetch.feed.odds" : "matches.fetch.feed.stats")).join(", "),
+              feeds: result.failed
+                .map((f) => t(f.feed === "odds" ? "matches.fetch.feed.odds" : "matches.fetch.feed.stats"))
+                .join(", "),
               message: result.failed[0].message
             })}
           </span>
@@ -58,7 +60,9 @@ export function FetchLatest({
         title={t("matches.fetch.confirmTitle")}
         confirmLabel={t("matches.fetch.confirm")}
         busy={fetchLatest.isPending}
-        error={fetchLatest.isError ? t("matches.fetch.failed", { message: errorMessage(fetchLatest.error) }) : undefined}
+        error={
+          fetchLatest.isError ? t("matches.fetch.failed", { message: errorMessage(fetchLatest.error) }) : undefined
+        }
         onConfirm={() => fetchLatest.mutate(undefined, { onSuccess: () => setOpen(false) })}
       >
         <p>{t("matches.fetch.confirmBody")}</p>
