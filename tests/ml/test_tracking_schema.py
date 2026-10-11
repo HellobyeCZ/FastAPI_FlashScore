@@ -1,29 +1,86 @@
-"""Schema discipline + disable-gate semantics for app.ml.tracking."""
+"""Schema discipline + enable-gate semantics for app.ml.tracking."""
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
+import textwrap
 from pathlib import Path
-from typing import Iterator
 
-import mlflow
 import pytest
 
+from app.ml.backtest import BacktestReport, BetRecord, ReliabilityBucket
+from app.ml.market_spec import FOOTBALL_1X2_FT
 
-@pytest.fixture
-def isolated_tracking(tmp_path: Path, monkeypatch) -> Iterator[Path]:
-    monkeypatch.delenv("APP_MLFLOW_DISABLED", raising=False)
-    uri = f"sqlite:///{tmp_path / 'mlflow.db'}"
-    monkeypatch.setenv("MLFLOW_TRACKING_URI", uri)
-    # Force a fresh module so _DISABLED is reset.
-    import importlib, app.ml.tracking
-    importlib.reload(app.ml.tracking)
-    yield tmp_path
-    importlib.reload(app.ml.tracking)  # leave the module in a clean state
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_log_training_run_writes_canonical_schema(isolated_tracking):
+def _bet(*, result: float, price: float = 2.0, closing: float | None = None) -> BetRecord:
+    return BetRecord(
+        event_id="E1", bet_ts="2024-08-10T14:55:00Z",
+        market="HOME_DRAW_AWAY:FULL_TIME", selection="home",
+        price_taken=price, closing_price=price if closing is None else closing,
+        model_prob=0.55, implied_prob=0.5, devigged_prob=0.48, edge=0.07,
+        stake_kelly_fraction=0.05, result=result,
+        pnl=0.05 * (price - 1.0) if result == 1.0 else -0.05, clv=0.0,
+    )
+
+
+def _report(bets: list[BetRecord], **overrides) -> BacktestReport:
+    fields = dict(
+        model="logistic", scope_size=10, test_events=10, bets=bets,
+        total_bets=len(bets), hit_rate=0.5, roi=0.04, mean_clv=0.0,
+        brier=0.2, log_loss=0.7, max_drawdown=0.1,
+        reliability_buckets=[ReliabilityBucket(0.4, 0.6, len(bets), 0.55, 0.5)],
+        config={"min_edge": 0.02, "kelly_fraction": 0.25, "force_bets": False,
+                "train_until": "2024-08-01T00:00:00Z",
+                "test_until": "2024-12-31T00:00:00Z"},
+        n_train_events=0,
+        return_per_bet=1.05, rmse_per_bet=0.5, sharpe_adjusted=0.10,
+    )
+    fields.update(overrides)
+    return BacktestReport(**fields)
+
+
+def _log_backtest(report: BacktestReport, **kwargs):
     from app.ml import tracking
-    from app.ml.market_spec import FOOTBALL_1X2_FT
+
+    return tracking.log_backtest_run(
+        report=report, model_name=kwargs.pop("model_name", "logistic"),
+        train_until="2024-08-01T00:00:00Z", test_until="2024-12-31T00:00:00Z",
+        market_spec=FOOTBALL_1X2_FT, feature_columns=("home_elo",),
+        backtest_run_id="bt_42", git_sha="deadbeef", **kwargs,
+    )
+
+
+def _small_logistic():
+    import numpy as np
+
+    from app.ml.training import BASE_FEATURE_COLUMNS, FeatureMatrix, train_logistic
+
+    rng = np.random.default_rng(0)
+    n = 60
+    fm = FeatureMatrix(
+        X=rng.normal(size=(n, len(BASE_FEATURE_COLUMNS))),
+        y=rng.integers(0, 3, size=n),
+        event_ids=[f"E{i}" for i in range(n)],
+        kickoffs=[f"2024-01-{(i % 28) + 1:02d}T00:00:00Z" for i in range(n)],
+    )
+    return train_logistic(fm)
+
+
+def _client(uri: str):
+    import mlflow
+
+    return mlflow.MlflowClient(tracking_uri=uri)
+
+
+# ---------------------------------------------------------------------------
+# Training runs
+# ---------------------------------------------------------------------------
+
+def test_log_training_run_writes_canonical_schema(mlflow_store):
+    from app.ml import tracking
 
     mlflow_run_id = tracking.log_training_run(
         model_name="logistic", train_until="2024-08-01T00:00:00Z",
@@ -32,105 +89,253 @@ def test_log_training_run_writes_canonical_schema(isolated_tracking):
         n_train_events=123,
         metrics_uncalibrated={"brier": 0.21, "log_loss": 0.95},
         metrics_calibrated={"brier": 0.20, "log_loss": 0.93},
-        trained_model=None,  # analytic-style: no model file
+        trained_model=None,  # trainable model without a fitted object: no model logged
         git_sha="deadbeef",
     )
     assert mlflow_run_id is not None
-    client = mlflow.MlflowClient()
-    run = client.get_run(mlflow_run_id)
+    run = _client(mlflow_store).get_run(mlflow_run_id)
     assert run.data.tags.get("purpose") == "offline_training"
+    assert run.data.tags.get("has_model") == "false"
     assert run.data.params.get("model_name") == "logistic"
     assert run.data.params.get("train_until") == "2024-08-01T00:00:00Z"
     assert run.data.params.get("market_spec_key") == "football_1x2_ft"
     assert run.data.params.get("sport") == "football"
     assert run.data.params.get("n_train_events") == "123"
     assert run.data.params.get("git_sha") == "deadbeef"
-    assert "uncal_brier" in run.data.metrics
-    assert "cal_brier" in run.data.metrics
+    assert run.data.metrics["uncal_brier"] == pytest.approx(0.21)
+    assert run.data.metrics["cal_brier"] == pytest.approx(0.20)
 
 
-def test_log_backtest_run_writes_canonical_schema(isolated_tracking):
+def test_log_training_run_logs_hyperparams_and_model(mlflow_store):
     from app.ml import tracking
-    from app.ml.backtest import BacktestReport
-    from app.ml.market_spec import FOOTBALL_1X2_FT
 
-    report = BacktestReport(
-        model="logistic", scope_size=10, test_events=10, bets=[],
-        total_bets=0, hit_rate=0.0, roi=0.0, mean_clv=None,
-        brier=0.2, log_loss=0.7, max_drawdown=0.0,
-        reliability_buckets=[],
-        config={"min_edge": 0.02, "kelly_fraction": 0.25,
-                "force_bets": False, "train_until": "2024-08-01T00:00:00Z",
-                "test_until": "2024-12-31T00:00:00Z"},
-        n_train_events=0,
-        return_per_bet=1.05, rmse_per_bet=0.5, sharpe_adjusted=0.10,
+    run_id = tracking.log_training_run(
+        model_name="logistic", train_until="2024-08-01T00:00:00Z",
+        market_spec=FOOTBALL_1X2_FT, feature_columns=("home_elo",),
+        n_train_events=60,
+        metrics_uncalibrated={"brier": 0.21}, metrics_calibrated={"brier": 0.20},
+        trained_model=_small_logistic(),
+        artifact_extras={"reliability_calibrated.svg": "<svg/>"},
+        # model_name clashes with a canonical param: the canonical value wins.
+        extra_params={"C": 0.5, "calib_until": "2025-02-01T00:00:00Z",
+                      "model_name": "ignored"},
     )
-    mlflow_run_id = tracking.log_backtest_run(
-        report=report, model_name="logistic",
-        train_until="2024-08-01T00:00:00Z", test_until="2024-12-31T00:00:00Z",
-        market_spec=FOOTBALL_1X2_FT,
-        feature_columns=("home_elo",),
-        backtest_run_id="bt_42",
-        git_sha="deadbeef",
-    )
-    assert mlflow_run_id is not None
-    client = mlflow.MlflowClient()
-    run = client.get_run(mlflow_run_id)
-    assert run.data.tags.get("purpose") == "walk_forward_backtest"
-    assert run.data.tags.get("backtest_run_id") == "bt_42"
-    assert "sharpe_adjusted" in run.data.metrics
-    assert run.data.metrics["sharpe_adjusted"] == pytest.approx(0.10)
-    assert "return_per_bet" in run.data.metrics
-    assert "rmse_per_bet" in run.data.metrics
+    client = _client(mlflow_store)
+    run = client.get_run(run_id)
+    assert run.data.params["C"] == "0.5"
+    assert run.data.params["calib_until"] == "2025-02-01T00:00:00Z"
+    assert run.data.params["model_name"] == "logistic"
+    assert run.data.tags["has_model"] == "true"
+    assert run.outputs.model_outputs, "picks_model should be a logged model of the run"
+    assert "reliability_calibrated.svg" in {a.path for a in client.list_artifacts(run_id)}
 
 
-def test_disabled_via_env_returns_none(tmp_path, monkeypatch):
+# ---------------------------------------------------------------------------
+# Backtest runs
+# ---------------------------------------------------------------------------
+
+def test_log_backtest_run_writes_canonical_schema(mlflow_store):
+    report = _report([_bet(result=1.0), _bet(result=0.0)])
+    run_id = _log_backtest(report, n_train_events=500, scope_size=12,
+                           trained_model=_small_logistic())
+    assert run_id is not None
+    client = _client(mlflow_store)
+    run = client.get_run(run_id)
+    tags, params, metrics = run.data.tags, run.data.params, run.data.metrics
+    assert tags["purpose"] == "walk_forward_backtest"
+    assert tags["backtest_run_id"] == "bt_42"
+    assert tags["has_model"] == "true"
+    assert params["test_until"] == "2024-12-31T00:00:00Z"
+    assert params["min_edge"] == "0.02"
+    assert params["kelly_fraction"] == "0.25"
+    assert params["force_bets"] == "False"
+    assert params["scope_size"] == "12"
+    assert params["n_train_events"] == "500"
+    assert metrics["n_bets"] == 2
+    assert metrics["n_test_events"] == 10
+    assert metrics["sharpe_adjusted"] == pytest.approx(0.10)
+    assert "return_per_bet" in metrics and "rmse_per_bet" in metrics
+    assert "reliability.svg" in {a.path for a in client.list_artifacts(run_id)}
+
+
+def test_backtest_priced_at_close_does_not_log_clv(mlflow_store):
+    """Archive backtests take the closing price, so CLV is undefined —
+    mean_clv must be absent (not 0.0) and flagged by tag."""
+    run = _client(mlflow_store).get_run(_log_backtest(_report([_bet(result=1.0)])))
+    assert "mean_clv" not in run.data.metrics
+    assert run.data.tags["clv_available"] == "false"
+
+
+def test_backtest_with_pre_close_prices_logs_clv(mlflow_store):
+    report = _report([_bet(result=1.0, price=2.1, closing=2.0)], mean_clv=0.048)
+    run = _client(mlflow_store).get_run(_log_backtest(report))
+    assert run.data.metrics["mean_clv"] == pytest.approx(0.048)
+    assert run.data.tags["clv_available"] == "true"
+
+
+def test_backtest_without_bets_omits_rate_metrics(mlflow_store):
+    report = _report([], hit_rate=0.0, roi=0.0, brier=0.0)
+    run = _client(mlflow_store).get_run(_log_backtest(report))
+    assert run.data.metrics == {"n_bets": 0.0, "n_test_events": 10.0}
+
+
+def test_analytic_backtest_logs_stateless_wrapper(mlflow_store):
+    run_id = _log_backtest(_report([_bet(result=1.0)]), model_name="market_implied")
+    run = _client(mlflow_store).get_run(run_id)
+    assert run.data.tags["has_model"] == "true"
+    assert run.outputs.model_outputs
+
+
+def test_trainable_backtest_without_fitted_object_logs_no_model(mlflow_store):
+    run_id = _log_backtest(_report([_bet(result=1.0)]), model_name="dixon_coles")
+    run = _client(mlflow_store).get_run(run_id)
+    assert run.data.tags["has_model"] == "false"
+    assert not run.outputs.model_outputs
+
+
+# ---------------------------------------------------------------------------
+# Gate semantics
+# ---------------------------------------------------------------------------
+
+def test_disabled_via_env_returns_none(monkeypatch):
+    from app.ml import tracking
+
     monkeypatch.setenv("APP_MLFLOW_DISABLED", "1")
-    import importlib, app.ml.tracking
-    importlib.reload(app.ml.tracking)
-    from app.ml.market_spec import FOOTBALL_1X2_FT
-
-    out = app.ml.tracking.log_training_run(
+    out = tracking.log_training_run(
         model_name="logistic", train_until="2024-08-01T00:00:00Z",
         market_spec=FOOTBALL_1X2_FT, feature_columns=(), n_train_events=0,
         metrics_uncalibrated={}, metrics_calibrated={},
         trained_model=None,
     )
     assert out is None
-    importlib.reload(app.ml.tracking)
+    status = tracking.get_status()
+    assert status["enabled"] is False
+    assert status["reachable"] is False
 
 
-def test_unreachable_server_flips_disabled_and_returns_none(tmp_path, monkeypatch):
-    """A bad MLFLOW_TRACKING_URI must cause the first call to:
-      1. emit a warning,
-      2. flip _DISABLED,
-      3. return None.
-    Subsequent calls in the same process must short-circuit without retry."""
+def test_unreachable_server_skips_and_reprobes_after_ttl(monkeypatch):
+    """An unreachable server costs one probe per TTL: calls inside the TTL
+    are skipped without re-probing; after it expires the next call
+    probes again (no permanent latch)."""
+    from app.ml import tracking
+
+    uri = "http://127.0.0.1:1"  # port 1 is reserved: connection refused
     monkeypatch.delenv("APP_MLFLOW_DISABLED", raising=False)
-    # http://127.0.0.1:1 is guaranteed unreachable (port 1 is reserved).
-    monkeypatch.setenv("MLFLOW_TRACKING_URI", "http://127.0.0.1:1")
-    import importlib, app.ml.tracking
-    importlib.reload(app.ml.tracking)
-
-    from app.ml.market_spec import FOOTBALL_1X2_FT
-
-    # First call: should fail gracefully and flip _DISABLED.
-    out1 = app.ml.tracking.log_training_run(
-        model_name="logistic", train_until="2024-08-01T00:00:00Z",
-        market_spec=FOOTBALL_1X2_FT, feature_columns=(), n_train_events=0,
-        metrics_uncalibrated={"brier": 0.21}, metrics_calibrated={"brier": 0.20},
-        trained_model=None,
+    monkeypatch.setenv("MLFLOW_TRACKING_URI", uri)
+    tracking._reset_state()
+    probes: list[str] = []
+    real_health_check = tracking._health_check
+    monkeypatch.setattr(
+        tracking, "_health_check",
+        lambda u: probes.append(u) or real_health_check(u),
     )
-    assert out1 is None
-    assert app.ml.tracking._DISABLED is True
+    try:
+        report = _report([_bet(result=1.0)])
+        assert _log_backtest(report) is None
+        assert probes == [uri]
+        assert tracking.get_status()["reachable"] is False
 
-    # Second call: short-circuited at _ensure_tracking, no retry.
-    out2 = app.ml.tracking.log_training_run(
-        model_name="logistic", train_until="2024-08-01T00:00:00Z",
-        market_spec=FOOTBALL_1X2_FT, feature_columns=(), n_train_events=0,
-        metrics_uncalibrated={}, metrics_calibrated={},
-        trained_model=None,
+        assert _log_backtest(report) is None
+        assert probes == [uri], "inside the TTL the cached probe result is reused"
+
+        with tracking._probe_lock:
+            tracking._probes[uri] = tracking._probes[uri].__class__(
+                reachable=False, error="stale", checked_at="", expires_at=0.0,
+            )
+        assert _log_backtest(report) is None
+        assert probes == [uri, uri], "an expired probe is refreshed"
+    finally:
+        tracking._reset_state()
+
+
+def test_data_error_does_not_disable_future_runs(mlflow_store, monkeypatch):
+    import mlflow
+
+    from app.ml import tracking
+
+    real_log_metrics = mlflow.log_metrics
+    calls = {"n": 0}
+
+    def flaky_log_metrics(metrics, *args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise ValueError("bad metric value")
+        return real_log_metrics(metrics, *args, **kwargs)
+
+    monkeypatch.setattr(mlflow, "log_metrics", flaky_log_metrics)
+    report = _report([_bet(result=1.0)])
+    assert _log_backtest(report) is None
+    assert tracking.probe().reachable is True
+    second = _log_backtest(report)
+    assert second is not None
+    assert _client(mlflow_store).get_run(second).info.status == "FINISHED"
+
+
+# ---------------------------------------------------------------------------
+# Status + deep links
+# ---------------------------------------------------------------------------
+
+def test_get_status_reachable_store(mlflow_store):
+    from app.ml import tracking
+
+    status = tracking.get_status()
+    assert set(status) == {
+        "enabled", "reachable", "tracking_uri", "ui_url", "experiment_name",
+        "experiment_id", "error", "checked_at",
+    }
+    assert status["enabled"] is True
+    assert status["reachable"] is True
+    assert status["tracking_uri"] == mlflow_store
+    assert status["ui_url"] is None  # local store, no APP_MLFLOW_UI_URL
+    assert status["experiment_name"] == "picks"
+    assert status["experiment_id"] is not None
+    assert status["error"] is None
+    assert status["checked_at"].endswith("Z")
+
+
+def test_ui_links(monkeypatch):
+    from app.ml import tracking
+
+    monkeypatch.setenv("MLFLOW_TRACKING_URI", "http://127.0.0.1:5050/")
+    monkeypatch.delenv("APP_MLFLOW_UI_URL", raising=False)
+    assert tracking.ui_base_url() == "http://127.0.0.1:5050"
+    assert tracking.run_ui_url("abc", "2") == "http://127.0.0.1:5050/#/experiments/2/runs/abc"
+    assert tracking.run_ui_url(None, "2") is None
+    assert tracking.model_ui_url("picks-hgb", "3") == "http://127.0.0.1:5050/#/models/picks-hgb/versions/3"
+    assert tracking.model_ui_url("picks-hgb") == "http://127.0.0.1:5050/#/models/picks-hgb"
+
+    monkeypatch.setenv("APP_MLFLOW_UI_URL", "https://mlflow.example.test/")
+    assert tracking.experiment_ui_url("2") == "https://mlflow.example.test/#/experiments/2"
+
+
+def test_api_boots_and_logging_degrades_when_mlflow_is_unimportable(tmp_path):
+    """`import mlflow` raising must cost the MLflow features, not the API."""
+    script = textwrap.dedent(
+        f"""
+        import sys
+        sys.modules["mlflow"] = None  # any `import mlflow` now raises ImportError
+
+        import src  # noqa: F401  (API import path: src -> backtest_manager -> tracking)
+        from app.ml import tracking
+        from tests.ml.test_tracking_schema import _bet, _report, _log_backtest
+
+        assert _log_backtest(_report([_bet(result=1.0)])) is None
+        status = tracking.get_status()
+        assert status["reachable"] is False, status
+        assert "import" in status["error"], status
+        print("OK")
+        """
     )
-    assert out2 is None
-
-    importlib.reload(app.ml.tracking)
+    env = {
+        **os.environ,
+        "PYTHONPATH": str(REPO_ROOT),
+        "APP_STORAGE_DB_PATH": str(tmp_path / "snap.sqlite3"),
+        "MLFLOW_TRACKING_URI": f"sqlite:///{tmp_path / 'mlflow.db'}",
+    }
+    env.pop("APP_MLFLOW_DISABLED", None)
+    result = subprocess.run(
+        [sys.executable, "-c", script], cwd=REPO_ROOT, env=env,
+        capture_output=True, text=True, timeout=120,
+    )
+    assert result.returncode == 0, result.stderr[-2000:]
+    assert result.stdout.strip().endswith("OK")
