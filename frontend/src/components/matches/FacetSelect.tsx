@@ -144,11 +144,11 @@ export function FacetSelect({
         aria-expanded={open}
         aria-controls={open ? panelId : undefined}
         onClick={toggleOpen}
-        className={clsx(selected.length > 0 && "border-accent text-accent")}
       >
         {label}
+        {/* The count carries its own colour: the variant's text colour would win over a class on the button. */}
         {selected.length > 0 && (
-          <span className="tabular-nums">
+          <span className="tabular-nums text-accent">
             · {selected.length}
             <span className="sr-only"> {t("matches.facets.selected")}</span>
           </span>

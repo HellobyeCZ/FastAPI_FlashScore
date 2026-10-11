@@ -21,7 +21,8 @@ export function useFacetValueLabel() {
         case "country":
           return countryLabel(value);
         case "status":
-          return t(`matches.status.${value}` as MessageKey);
+          // Same words as the status badges in the table.
+          return t((value === "unconfirmed" ? "matches.status.unconfirmed" : `state.${value}`) as MessageKey);
         case "bets":
           return t(`matches.betsFilter.${value}` as MessageKey);
         default:

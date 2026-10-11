@@ -42,9 +42,6 @@ export const matches = {
   "matches.filters.show.many": "Show {count} matches",
   "matches.filters.show.other": "Show {count} matches",
 
-  "matches.status.finished": "Finished",
-  "matches.status.live": "Live",
-  "matches.status.scheduled": "Scheduled",
   "matches.status.unconfirmed": "Unconfirmed",
   "matches.status.unconfirmed.title":
     "Kick-off has passed but no result was captured — the stored data is from before the match",
@@ -74,7 +71,7 @@ export const matches = {
   "matches.col.result": "Status",
   "matches.col.snapshots": "Snapshots",
   "matches.col.snapshotsTitle": "Stored odds and statistics snapshots, and when the newest was fetched",
-  "matches.snapshots.counts": "{odds} odds · {stats} stats",
+  "matches.snapshots.counts": "odds {odds} · stats {stats}",
   "matches.snapshots.never": "never fetched",
   "matches.badge.live.one": "{count} live bet",
   "matches.badge.live.few": "{count} live bets",

@@ -42,9 +42,6 @@ export const matches: Record<keyof typeof en, string> = {
   "matches.filters.show.many": "Zobrazit {count} zápasu",
   "matches.filters.show.other": "Zobrazit {count} zápasů",
 
-  "matches.status.finished": "Odehráno",
-  "matches.status.live": "Živě",
-  "matches.status.scheduled": "Naplánováno",
   "matches.status.unconfirmed": "Nepotvrzeno",
   "matches.status.unconfirmed.title":
     "Výkop už proběhl, ale výsledek nebyl zachycen — uložená data jsou z doby před zápasem",
@@ -74,7 +71,7 @@ export const matches: Record<keyof typeof en, string> = {
   "matches.col.result": "Stav",
   "matches.col.snapshots": "Snímky",
   "matches.col.snapshotsTitle": "Uložené snímky kurzů a statistik a kdy byl stažen ten nejnovější",
-  "matches.snapshots.counts": "{odds} kurzů · {stats} statistik",
+  "matches.snapshots.counts": "kurzy {odds} · statistiky {stats}",
   "matches.snapshots.never": "nikdy nestaženo",
   "matches.badge.live.one": "{count} živá sázka",
   "matches.badge.live.few": "{count} živé sázky",

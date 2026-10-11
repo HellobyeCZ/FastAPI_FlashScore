@@ -924,4 +924,48 @@ test.describe("Matches screenshots", () => {
       });
     }
   }
+
+  test("states: filters, fetch confirmation, empty panels, not found", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "chromium", "screenshots come from one project");
+    mkdirSync(dir!, { recursive: true });
+    await setup(page);
+    await stubList(page);
+    await stubDetail(page, {
+      event: {
+        is_terminal: false,
+        outcome: null,
+        score: null,
+        status: "scheduled",
+        start_time_utc: "2026-10-18T14:30:00Z"
+      },
+      predict: NO_MODELS,
+      captures: []
+    });
+    await stubJson(page, `**/api/backend/events/${EVENT_ID}/picks`, { live: [], backtest: [] });
+    await stubJson(page, `**/api/backend/events/${EVENT_ID}/odds`, { detail: "No stored odds" }, 404);
+    await stubJson(page, `**/api/backend/events/${EVENT_ID}/stats`, { detail: "No stored stats" }, 404);
+
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto("/en/matches?country=CZECH+REPUBLIC");
+    await page.getByRole("button", { name: /^League/ }).click();
+    await page.screenshot({ path: path.join(dir!, "matches-state-facet-desktop-en.png") });
+    await page.keyboard.press("Escape");
+
+    await page.goto(`/en/matches/${EVENT_ID}`);
+    await expect(page.getByText("No odds stored for this match")).toBeVisible();
+    await page.screenshot({ path: path.join(dir!, "matches-state-detail-empty-desktop-en.png"), fullPage: true });
+    await page.getByRole("button", { name: /Fetch latest from FlashScore/ }).click();
+    await page.screenshot({ path: path.join(dir!, "matches-state-fetch-confirm-desktop-en.png") });
+    await page.keyboard.press("Escape");
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/cs/matches");
+    await page.getByRole("button", { name: /^Filtry/ }).click();
+    await page.screenshot({ path: path.join(dir!, "matches-state-filters-mobile-cs.png") });
+
+    await stubDetail(page, { event: { event_id: "nope1234" }, eventStatus: 404 });
+    await page.goto("/en/matches/nope1234");
+    await expect(page.getByRole("heading", { level: 1, name: "Match not found" })).toBeVisible();
+    await page.screenshot({ path: path.join(dir!, "matches-state-notfound-mobile-en.png"), fullPage: true });
+  });
 });
