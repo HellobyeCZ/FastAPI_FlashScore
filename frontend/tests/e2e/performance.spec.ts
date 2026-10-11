@@ -1,4 +1,4 @@
-import { expect, test, type Page, type Route } from "@playwright/test";
+import { expect, test, type Locator, type Page, type Route } from "@playwright/test";
 import { stubJson, stubShell } from "./fixtures/stub";
 
 /**
@@ -34,7 +34,8 @@ type Bet = {
   kickoff: string;
   home_team: string;
   away_team: string;
-  competition: string;
+  /** null when the match archive has no entry for the event. */
+  competition: string | null;
   country: string;
   home_team_raw: string;
   away_team_raw: string;
@@ -50,21 +51,30 @@ const MATCHES: [string, string, string, string][] = [
   ["Brentford", "Fulham", "Premier League", "ENGLAND"]
 ];
 
+type ModelCounts = [model: string, n: number, wins: number, prices: number[]][];
+
 /**
- * Settled bets per model: [model, n, wins, prices]. logistic is the only model
- * with n ≥ 30; hgb ends up with the highest ROI on 10 bets, so it must be
- * dimmed rather than marked best.
+ * Settled bets per model. logistic is the only model with n ≥ 30, so no value
+ * is marked best (there is nothing to compare it with); hgb ends up with the
+ * highest ROI on 10 bets, so its values are dimmed.
  */
-const MODEL_COUNTS: [string, number, number, number[]][] = [
+const MODEL_COUNTS: ModelCounts = [
   ["logistic", 42, 18, [1.85, 2.1, 2.4, 2.9, 3.4]],
   ["dixon_coles", 12, 3, [1.85, 2.4, 3.3]],
   ["hgb", 10, 3, [3.3, 4.6, 6.2]]
 ];
 
-function buildBets(): Bet[] {
+/** Same fixture with Dixon–Coles above the threshold too: two rankable models. */
+const TWO_RANKABLE: ModelCounts = [
+  ["logistic", 42, 18, [1.85, 2.1, 2.4, 2.9, 3.4]],
+  ["dixon_coles", 36, 14, [1.85, 2.4, 3.3]],
+  ["hgb", 10, 3, [3.3, 4.6, 6.2]]
+];
+
+function buildBets(counts: ModelCounts = MODEL_COUNTS): Bet[] {
   const bets: Bet[] = [];
   let id = 1;
-  for (const [model, n, wins, prices] of MODEL_COUNTS) {
+  for (const [model, n, wins, prices] of counts) {
     for (let i = 0; i < n; i++) {
       const [home, away, competition, country] = MATCHES[(i + id) % MATCHES.length];
       const ou = i % 3 === 0;
@@ -129,6 +139,7 @@ function buildBets(): Bet[] {
 }
 
 const BETS = buildBets();
+const SETTLED = BETS.filter((b) => b.status === "settled");
 
 const FACETS = {
   models: ["dixon_coles", "hgb", "logistic"],
@@ -157,7 +168,7 @@ function summary(lastSettled: string | null) {
 }
 
 /** Bets matching the /picks/stats and /picks/history filter params. */
-function filterBets(url: URL, defaultStatus: string | null): Bet[] {
+function filterBets(bets: Bet[], url: URL, defaultStatus: string | null): Bet[] {
   const status = url.searchParams.get("status") ?? defaultStatus;
   const list = (name: string) => (url.searchParams.get(name) ?? "").split(",").filter(Boolean);
   const num = (name: string) => (url.searchParams.has(name) ? Number(url.searchParams.get(name)) : null);
@@ -165,7 +176,7 @@ function filterBets(url: URL, defaultStatus: string | null): Bet[] {
   const [edgeMin, edgeMax, priceMin, priceMax] = ["edge_min", "edge_max", "price_min", "price_max"].map(num);
   const from = url.searchParams.get("date_from");
   const to = url.searchParams.get("date_to");
-  return BETS.filter((b) => {
+  return bets.filter((b) => {
     const t = b.settled_at ?? b.recommended_at;
     return (
       (!status || status === "all" || b.status === status) &&
@@ -173,7 +184,7 @@ function filterBets(url: URL, defaultStatus: string | null): Bet[] {
       (!to || Date.parse(t) <= Date.parse(to)) &&
       (!models.length || models.includes(b.model)) &&
       (!markets.length || markets.includes(b.market)) &&
-      (!comps.length || comps.includes(b.competition)) &&
+      (!comps.length || (b.competition !== null && comps.includes(b.competition))) &&
       (!selections.length || selections.includes(b.selection)) &&
       (edgeMin === null || b.edge >= edgeMin) &&
       (edgeMax === null || b.edge <= edgeMax) &&
@@ -211,7 +222,7 @@ function metrics(bets: Bet[]) {
   };
 }
 
-const GROUP_KEY: Record<string, (b: Bet) => string> = {
+const GROUP_KEY: Record<string, (b: Bet) => string | null> = {
   model: (b) => b.model,
   market: (b) => b.market,
   competition: (b) => b.competition,
@@ -219,18 +230,18 @@ const GROUP_KEY: Record<string, (b: Bet) => string> = {
   day: (b) => (b.settled_at ?? b.recommended_at).slice(0, 10)
 };
 
-/** /picks/stats body: one overall row without group_by, else one row per group. */
-function statsBody(url: URL) {
+/** /picks/stats body: one overall row without group_by, else one row per group (null keys included). */
+function statsBody(all: Bet[], url: URL) {
   const groupBy = (url.searchParams.get("group_by") ?? "").split(",").filter(Boolean);
-  const bets = filterBets(url, "settled");
+  const bets = filterBets(all, url, "settled");
   if (!groupBy.length) return { group_by: [], filters: {}, rows: [metrics(bets)] };
   const groups = new Map<string, Bet[]>();
   for (const b of bets) {
-    const key = groupBy.map((g) => GROUP_KEY[g](b)).join("\u0000");
+    const key = JSON.stringify(groupBy.map((g) => GROUP_KEY[g](b)));
     groups.set(key, [...(groups.get(key) ?? []), b]);
   }
   const rows = [...groups.entries()].map(([key, list]) => ({
-    ...Object.fromEntries(key.split("\u0000").map((v, i) => [groupBy[i], v])),
+    ...Object.fromEntries((JSON.parse(key) as (string | null)[]).map((v, i) => [groupBy[i], v])),
     ...metrics(list)
   }));
   return { group_by: groupBy, filters: {}, rows };
@@ -362,12 +373,19 @@ type Options = {
   lastSettled?: string | null;
   empty?: boolean;
   failStats?: string;
+  /** /picks/facets answers 500 this many times before it recovers. */
+  failFacets?: number;
   registry?: unknown;
+  counts?: ModelCounts;
+  /** Edits each fixture bet (e.g. drop its CLV or competition). */
+  mutate?: (b: Bet) => Bet;
+  /** /picks/history as before spec §4.3: status + limit only, no joined columns. */
+  legacy?: boolean;
 };
 
 /** History stub with the new contract: filters, offset, count = total, newest first. */
-function historyBody(url: URL) {
-  const rows = filterBets(url, null).sort(
+function historyBody(bets: Bet[], url: URL) {
+  const rows = filterBets(bets, url, null).sort(
     (a, b) => b.recommended_at.localeCompare(a.recommended_at) || b.id - a.id
   );
   const offset = Number(url.searchParams.get("offset") ?? 0);
@@ -375,8 +393,39 @@ function historyBody(url: URL) {
   return { count: rows.length, rows: rows.slice(offset, offset + limit) };
 }
 
+/**
+ * The pre-§4.3 /picks/history: honours status and limit only (no other
+ * filter, no offset), orders by id, has no home_team/away_team/competition
+ * columns and reports count = rows returned.
+ */
+function legacyHistoryBody(bets: Bet[], url: URL) {
+  const status = url.searchParams.get("status");
+  const limit = Number(url.searchParams.get("limit") ?? 200);
+  const rows = bets
+    .filter((b) => !status || b.status === status)
+    .sort((a, b) => b.id - a.id)
+    .slice(0, limit)
+    .map((b) => {
+      const row: Partial<Bet> = { ...b };
+      for (const k of ["home_team", "away_team", "competition", "country"] as const) delete row[k];
+      return row;
+    });
+  return { count: rows.length, rows };
+}
+
 async function stubPerformance(page: Page, opts: Options = {}) {
-  const { lastSettled = "2026-10-09T21:00:00Z", empty = false, failStats, registry = REGISTRY } = opts;
+  const {
+    lastSettled = "2026-10-09T21:00:00Z",
+    empty = false,
+    failStats,
+    failFacets = 0,
+    registry = REGISTRY,
+    counts,
+    mutate = (b: Bet) => b,
+    legacy = false
+  } = opts;
+  const bets = (counts ? buildBets(counts) : BETS).map(mutate);
+  let facetFailures = failFacets;
   const unstubbed: string[] = [];
   const requests: URL[] = [];
 
@@ -386,7 +435,13 @@ async function stubPerformance(page: Page, opts: Options = {}) {
     return route.fulfill({ status: 599, contentType: "application/json", body: '{"detail":"unstubbed"}' });
   });
   await stubShell(page);
-  await stubJson(page, "**/api/backend/picks/facets*", empty ? { ...FACETS, models: [], competitions: [] } : FACETS);
+  await page.route("**/api/backend/picks/facets*", (route) => {
+    if (facetFailures > 0) {
+      facetFailures--;
+      return route.fulfill({ status: 500, json: { detail: "facets query failed" } });
+    }
+    return route.fulfill({ json: empty ? { ...FACETS, models: [], competitions: [] } : FACETS });
+  });
   await stubJson(page, "**/api/backend/picks/summary", empty ? summary(null) : summary(lastSettled));
   await stubJson(page, "**/api/backend/backtest/runs", BACKTEST_RUNS);
   await stubJson(page, "**/api/backend/mlflow/registry", registry);
@@ -406,12 +461,13 @@ async function stubPerformance(page: Page, opts: Options = {}) {
     if (empty) {
       return route.fulfill({ json: { group_by: [], filters: {}, rows: groupBy ? [] : [metrics([])] } });
     }
-    return route.fulfill({ json: statsBody(url) });
+    return route.fulfill({ json: statsBody(bets, url) });
   });
   await page.route("**/api/backend/picks/history*", (route) => {
     const url = new URL(route.request().url());
     requests.push(url);
-    return route.fulfill({ json: empty ? { count: 0, rows: [] } : historyBody(url) });
+    if (empty) return route.fulfill({ json: { count: 0, rows: [] } });
+    return route.fulfill({ json: legacy ? legacyHistoryBody(bets, url) : historyBody(bets, url) });
   });
 
   await page.clock.setFixedTime(NOW);
@@ -426,11 +482,33 @@ async function openFilters(page: Page) {
 const leaderboardRows = (page: Page) =>
   page.getByRole("region", { name: "Leaderboard" }).locator("tbody tr");
 
+/** The cell under the column whose header starts with `header` (hidden columns included). */
+async function cellUnder(table: Locator, row: Locator, header: string): Promise<Locator> {
+  const headers = await table.locator("thead th").allTextContents();
+  const index = headers.findIndex((h) => h.trim().startsWith(header));
+  expect(index, `column ${header}`).toBeGreaterThanOrEqual(0);
+  return row.locator("td").nth(index);
+}
+
+/** Model with the best value among models with ≥ 30 settled bets, computed from the fixture. */
+function expectedBest(bets: Bet[], metric: "roi" | "brier"): string {
+  const byModel = new Map<string, Bet[]>();
+  for (const b of bets) if (b.status === "settled") byModel.set(b.model, [...(byModel.get(b.model) ?? []), b]);
+  const ranked = [...byModel.entries()]
+    .filter(([, list]) => list.length >= 30)
+    .map(([model, list]) => ({ model, value: metrics(list)[metric] as number }))
+    .sort((a, b) => (metric === "brier" ? a.value - b.value : b.value - a.value));
+  return ranked[0].model;
+}
+
 // ---------------------------------------------------------------------------
 // Leaderboard
 
 test.describe("leaderboard", () => {
-  test("ranks models, marks best only with enough bets, sorts via the URL and links to the model page", async ({ page }) => {
+  // Custom windows are local calendar days; pin the zone so their ISO bounds are exact.
+  test.use({ timezoneId: "UTC" });
+
+  test("ranks models, dims small samples, sorts via the URL and links to the model page", async ({ page }) => {
     const { unstubbed, requests } = await stubPerformance(page);
     await page.goto("/en/performance");
 
@@ -446,10 +524,15 @@ test.describe("leaderboard", () => {
     // Default sort: ROI, highest first.
     await expect(rows.nth(0)).toContainText("Gradient boosting");
     await expect(rows.nth(1)).toContainText("Logistic");
-    // hgb has the top ROI but n = 10: dimmed, and the best mark goes to logistic.
-    await expect(rows.nth(0)).toHaveClass(/opacity-70/);
-    await expect(rows.nth(0).getByText("best", { exact: true })).toHaveCount(0);
-    await expect(rows.nth(1).getByText("best", { exact: true }).first()).toBeAttached();
+    // hgb has the top ROI but n = 10: its values are dimmed, its interval is not.
+    const board = page.getByRole("region", { name: "Leaderboard" });
+    const roi = await cellUnder(board.locator("table"), rows.nth(0), "ROI");
+    await expect(roi.locator(".opacity-70")).toBeVisible();
+    await expect(roi.getByText(/ to /)).not.toHaveClass(/opacity/);
+    await expect(rows.nth(1).locator(".opacity-70")).toHaveCount(0);
+    // Only logistic has n ≥ 30, so there is nothing to rank it against: no best mark.
+    await expect(board.getByText("best", { exact: true })).toHaveCount(0);
+    await expect(board.getByText(/marks the best value once at least two models/)).toBeVisible();
 
     // Second click on the active column flips the direction (kept in the URL).
     await page.getByRole("button", { name: /^ROI/ }).click();
@@ -481,6 +564,100 @@ test.describe("leaderboard", () => {
     await expect(leaderboardRows(page)).toHaveCount(3);
     for (const u of requests.filter((r) => r.pathname.endsWith("/picks/stats"))) {
       expect(u.searchParams.get("date_from")).toBeNull();
+    }
+    expect(unstubbed).toEqual([]);
+  });
+
+  test("with two rankable models the best mark lands on the better one", async ({ page }) => {
+    const bets = buildBets(TWO_RANKABLE);
+    const { unstubbed } = await stubPerformance(page, { counts: TWO_RANKABLE });
+    await page.goto("/en/performance?window=all");
+
+    const board = page.getByRole("region", { name: "Leaderboard" });
+    const table = board.locator("table");
+    await expect(leaderboardRows(page)).toHaveCount(3);
+    for (const [header, metric] of [
+      ["ROI", "roi"],
+      ["Brier", "brier"]
+    ] as const) {
+      const best = expectedBest(bets, metric);
+      for (const model of ["logistic", "dixon_coles", "hgb"]) {
+        const row = leaderboardRows(page).filter({ has: page.locator(`a[href="/en/models/${model}?window=all"]`) });
+        const cell = await cellUnder(table, row, header);
+        await expect(cell.getByText("best", { exact: true }), `${header} best mark on ${model}`).toHaveCount(
+          model === best ? 1 : 0
+        );
+      }
+    }
+    await expect(board.getByText(/best among models with at least 30 settled bets/)).toBeVisible();
+    expect(unstubbed).toEqual([]);
+  });
+
+  test("custom window bounds reach every request as local-day ISO bounds", async ({ page }) => {
+    const { unstubbed, requests } = await stubPerformance(page);
+    await page.goto("/en/performance?window=all");
+
+    await page.getByRole("radio", { name: "Custom" }).click();
+    await expect(page).toHaveURL(/window=custom/);
+    const from = page.getByLabel("From", { exact: true });
+    await from.fill("2026-10-03");
+    await expect(page).toHaveURL(/from=2026-10-03/);
+    await page.getByLabel("To", { exact: true }).fill("2026-10-05");
+    await expect(page).toHaveURL(/to=2026-10-05/);
+
+    // The browser runs in UTC here, so local days map to whole UTC days.
+    const settledInRange = SETTLED.filter((b) => b.settled_at! >= "2026-10-03" && b.settled_at! < "2026-10-06").length;
+    await expect(page.getByText("Settled bets", { exact: true }).locator("..")).toContainText(String(settledInRange));
+    await expect
+      .poll(() =>
+        requests.some(
+          (u) =>
+            u.pathname.endsWith("/picks/stats") &&
+            u.searchParams.get("date_from") === "2026-10-03T00:00:00.000Z" &&
+            u.searchParams.get("date_to") === "2026-10-05T23:59:59.999Z"
+        )
+      )
+      .toBe(true);
+
+    // A year still being typed (0002) never reaches the URL; blur restores the applied day.
+    await from.fill("0002-10-03");
+    await from.blur();
+    await expect(page).toHaveURL(/from=2026-10-03/);
+    await expect(from).toHaveValue("2026-10-03");
+    expect(unstubbed).toEqual([]);
+  });
+
+  test("panels say what settled bets lack instead of claiming there are none", async ({ page }) => {
+    const { unstubbed } = await stubPerformance(page, {
+      mutate: (b) => ({ ...b, clv: null, closing_price: null, competition: b.model === "hgb" ? null : b.competition })
+    });
+    await page.goto("/en/performance?window=all");
+
+    const clv = page.getByRole("region", { name: "CLV distribution by model" });
+    await expect(clv.getByText("None of the 64 settled bets has a closing price")).toBeVisible();
+    await expect(clv.getByRole("link", { name: "Open Data ops" })).toBeVisible();
+    // hgb's 10 bets have no competition: drawn competitions add up to 54, and the panel says so.
+    const comps = page.getByRole("region", { name: "ROI by competition" });
+    await expect(comps.getByText("10 bets with no known competition are not shown.")).toBeVisible();
+    expect(unstubbed).toEqual([]);
+  });
+
+  test("a competition filter without its stage variants is a scoped error, then recovers", async ({ page }) => {
+    const { unstubbed, requests } = await stubPerformance(page, { failFacets: 2 });
+    await page.goto("/en/performance?window=all&competition=Chance%20Liga");
+
+    const board = page.getByRole("region", { name: "Leaderboard" });
+    await expect(board.getByText("The competition filter can't be applied")).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1, name: "Performance" })).toBeVisible();
+    // Nothing was queried with the unexpanded root name.
+    expect(requests.filter((u) => u.pathname.endsWith("/picks/stats"))).toEqual([]);
+
+    await board.getByRole("button", { name: "Retry" }).click();
+    await expect(leaderboardRows(page)).toHaveCount(3);
+    const stats = requests.filter((u) => u.pathname.endsWith("/picks/stats"));
+    expect(stats.length).toBeGreaterThan(0);
+    for (const u of stats) {
+      expect(u.searchParams.get("competition")).toBe("Chance Liga - Championship Group,Chance Liga - Relegation Group");
     }
     expect(unstubbed).toEqual([]);
   });
@@ -596,6 +773,29 @@ test.describe("bet explorer", () => {
     await expect(page).toHaveURL(/status=pending/);
     await expect(page).not.toHaveURL(/page=/);
     await expect(bets.locator("tbody tr")).toHaveCount(3);
+    expect(unstubbed).toEqual([]);
+  });
+
+  test("an older history endpoint is filtered and paged in the browser", async ({ page }) => {
+    const { unstubbed } = await stubPerformance(page, { legacy: true });
+    await page.goto("/en/performance/explore?window=all");
+
+    const bets = page.getByRole("region", { name: "Bets", exact: true });
+    await expect(bets.getByText(`1–25 of ${SETTLED.length}`)).toBeVisible();
+    // Raw fixture names stand in for the joined team names.
+    await expect(bets.getByRole("link", { name: / – / }).first()).toHaveAttribute("href", /\/en\/matches\/ev\d+/);
+    await bets.getByRole("button", { name: "Next" }).click();
+    await expect(page).toHaveURL(/page=2/);
+    await expect(bets.getByText(`26–50 of ${SETTLED.length}`)).toBeVisible();
+
+    await openFilters(page);
+    await page.getByLabel("Market").selectOption("OVER_UNDER_2.5_FT");
+    const ou = SETTLED.filter((b) => b.market === "OVER_UNDER_2.5_FT").length;
+    await expect(bets.getByText(`1–${Math.min(25, ou)} of ${ou}`)).toBeVisible();
+    await expect(page.getByText("Settled bets", { exact: true }).locator("..")).toContainText(String(ou));
+
+    await page.getByLabel("Competition", { exact: true }).selectOption("LaLiga");
+    await expect(bets.getByText(/can't filter individual bets by competition yet/)).toBeVisible();
     expect(unstubbed).toEqual([]);
   });
 
