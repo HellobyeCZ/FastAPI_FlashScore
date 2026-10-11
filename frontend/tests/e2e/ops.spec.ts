@@ -83,6 +83,32 @@ const JOBS_SETTLED = [
 
 const JOBS_ACTIVE = [RUNNING_JOB, ...JOBS_SETTLED];
 
+function jobEvent(event_id: string, status: string, last_error: string | null = null): Json {
+  return {
+    event_id,
+    season_path: "/football/czech-republic/chance-liga/",
+    status,
+    attempts: status === "failed" ? 3 : 1,
+    skipped_reason: null,
+    last_error,
+    created_at: "2026-10-10T18:00:02+00:00",
+    started_at: "2026-10-10T18:00:03+00:00",
+    updated_at: "2026-10-10T18:00:09+00:00",
+    finished_at: "2026-10-10T18:00:09+00:00"
+  };
+}
+
+/** GET bulk-scrape/jobs/21: the completed_with_errors job with its three failed events. */
+const JOB_21_DETAIL = {
+  ...JOBS_SETTLED[0],
+  events: [
+    jobEvent("CvsfNo26", "succeeded"),
+    jobEvent("6svnP7Xg", "failed", "Unable to contact upstream match stats service."),
+    jobEvent("tGh2Lk9q", "failed", "Upstream odds service temporarily unavailable."),
+    jobEvent("Wq8xZ1ab", "failed", "Upstream odds service temporarily unavailable.")
+  ]
+};
+
 const DONE_RUN = {
   run_id: "a1b2c3d4e5f6",
   status: "done",
@@ -110,6 +136,42 @@ const DONE_RUN = {
   error: null,
   summary: {}
 };
+
+/** A running refresh the list still names after FastAPI restarted; its detail is a 404. */
+const FORGOTTEN_RUN = {
+  ...DONE_RUN,
+  run_id: "r1",
+  status: "scrape",
+  finished_at: null,
+  stage_progress: { scrape: { state: "running" } }
+};
+
+/**
+ * Answer the run list with `run` as active, and the run's detail with `status`.
+ * With `restarted`, the list forgets the run once its detail has failed, as a
+ * restarted backend's would.
+ */
+async function stubFollowedRun(
+  page: Page,
+  run: Json & { run_id: string },
+  status: number,
+  { restarted = false } = {}
+) {
+  let polls = 0;
+  let lists = 0;
+  await page.route(/\/api\/backend\/refresh-now(\?.*)?$/, (route) => {
+    lists += 1;
+    const forgotten = restarted && polls > 0;
+    return route.fulfill({
+      json: forgotten ? { active_run_id: null, runs: [] } : { active_run_id: run.run_id, runs: [run] }
+    });
+  });
+  await page.route(new RegExp(`/api/backend/refresh-now/${run.run_id}$`), (route) => {
+    polls += 1;
+    return route.fulfill({ status, json: { detail: status === 404 ? "Refresh run not found." : "Internal Server Error" } });
+  });
+  return { polls: () => polls, lists: () => lists };
+}
 
 /** Status with a mix of fresh, stale and overdue stages (generated 12:00Z). */
 const OPS_STATUS_MIXED = {
@@ -347,19 +409,8 @@ test.describe("Data ops", () => {
   test("a followed run the backend no longer knows stops polling and frees the button", async ({ page }) => {
     // FastAPI keeps refresh runs in memory: after a restart the list (stale in
     // the cache, or still listing it) points at a run whose detail is a 404.
-    const running = {
-      ...DONE_RUN,
-      run_id: "r1",
-      status: "scrape",
-      finished_at: null,
-      stage_progress: { scrape: { state: "running" } }
-    };
-    await stubOps(page, { refreshList: { active_run_id: "r1", runs: [running] } });
-    let polls = 0;
-    await page.route(/\/api\/backend\/refresh-now\/r1$/, (route) => {
-      polls += 1;
-      return route.fulfill({ status: 404, json: { detail: "Refresh run not found." } });
-    });
+    await stubOps(page);
+    const run = await stubFollowedRun(page, FORGOTTEN_RUN, 404);
     await page.goto("/en/ops");
     const panel = page.getByRole("region", { name: "Refresh all" });
     await expect(panel.getByText("The backend no longer knows this run")).toBeVisible({ timeout: 10_000 });
@@ -368,38 +419,50 @@ test.describe("Data ops", () => {
     await expect(panel.getByText(/Current run started/)).toHaveCount(0);
     await expect(panel.getByText("Couldn't load the current run")).toHaveCount(0);
 
-    const settled = polls;
+    const settled = run.polls();
     await page.waitForTimeout(4_500);
-    expect(polls).toBe(settled);
+    expect(run.polls()).toBe(settled);
+
+    // The list was reloaded once; it still names the run, which must not loop.
+    expect(run.lists()).toBe(2);
 
     await panel.getByRole("button", { name: "Dismiss" }).click();
     await expect(panel.getByText("The backend no longer knows this run")).toHaveCount(0);
   });
 
+  test("after a backend restart the reloaded list drops the forgotten run", async ({ page }) => {
+    await stubOps(page);
+    await stubFollowedRun(page, FORGOTTEN_RUN, 404, { restarted: true });
+    await page.goto("/en/ops");
+    const panel = page.getByRole("region", { name: "Refresh all" });
+    await expect(panel.getByText("No refresh since the backend started")).toBeVisible({ timeout: 10_000 });
+    await expect(panel.getByText("The backend no longer knows this run")).toBeVisible();
+    await expect(panel.getByRole("button", { name: "Run refresh" })).toBeEnabled();
+  });
+
   test("a failing run fetch is reported as such and stops polling", async ({ page }) => {
-    const running = {
-      ...DONE_RUN,
-      run_id: "r2",
-      status: "settle",
-      finished_at: null,
-      stage_progress: { ...DONE_RUN.stage_progress, settle: { state: "running" }, predict: undefined }
-    };
-    await stubOps(page, { refreshList: { active_run_id: "r2", runs: [running] } });
-    let polls = 0;
-    await page.route(/\/api\/backend\/refresh-now\/r2$/, (route) => {
-      polls += 1;
-      return route.fulfill({ status: 500, json: { detail: "Internal Server Error" } });
-    });
+    await stubOps(page);
+    const run = await stubFollowedRun(
+      page,
+      {
+        ...DONE_RUN,
+        run_id: "r2",
+        status: "settle",
+        finished_at: null,
+        stage_progress: { scrape: DONE_RUN.stage_progress.scrape, settle: { state: "running" } }
+      },
+      500
+    );
     await page.goto("/en/ops");
     const panel = page.getByRole("region", { name: "Refresh all" });
     await expect(panel.getByText("Couldn't load the current run")).toBeVisible({ timeout: 10_000 });
     await expect(panel.getByText("Couldn't load refresh runs")).toHaveCount(0);
     await expect(panel.getByRole("button", { name: "Run refresh" })).toBeEnabled();
-    const settled = polls;
+    const settled = run.polls();
     await page.waitForTimeout(4_500);
-    expect(polls).toBe(settled);
+    expect(run.polls()).toBe(settled);
     await panel.getByRole("button", { name: "Retry" }).click();
-    await expect.poll(() => polls).toBeGreaterThan(settled);
+    await expect.poll(() => run.polls()).toBeGreaterThan(settled);
   });
 
   test("scrape jobs show completed_with_errors, progress counts and error details", async ({ page }) => {
@@ -432,32 +495,10 @@ test.describe("Data ops", () => {
 
   test("per-event failures of a completed_with_errors job load when expanded", async ({ page }) => {
     await stubOps(page);
-    const event = (id: string, status: string, last_error: string | null = null) => ({
-      event_id: id,
-      season_path: "/football/czech-republic/chance-liga/",
-      status,
-      attempts: status === "failed" ? 3 : 1,
-      skipped_reason: null,
-      last_error,
-      created_at: "2026-10-10T18:00:02+00:00",
-      started_at: "2026-10-10T18:00:03+00:00",
-      updated_at: "2026-10-10T18:00:09+00:00",
-      finished_at: "2026-10-10T18:00:09+00:00"
-    });
     const detail: string[] = [];
     await page.route(/\/api\/backend\/bulk-scrape\/jobs\/21(\?.*)?$/, (route) => {
       detail.push(route.request().url());
-      return route.fulfill({
-        json: {
-          ...JOBS_SETTLED[0],
-          events: [
-            event("CvsfNo26", "succeeded"),
-            event("6svnP7Xg", "failed", "Unable to contact upstream match stats service."),
-            event("tGh2Lk9q", "failed", "Upstream odds service temporarily unavailable."),
-            event("Wq8xZ1ab", "failed", "Upstream odds service temporarily unavailable.")
-          ]
-        }
-      });
+      return route.fulfill({ json: JOB_21_DETAIL });
     });
     await page.goto("/en/ops");
     const row = page.getByRole("region", { name: "Bulk scrape" }).getByRole("row").filter({ hasText: "#21" });
@@ -474,7 +515,6 @@ test.describe("Data ops", () => {
     // Every event of the job is requested, so late failures are not missed.
     expect(detail).toHaveLength(1);
     expect(new URL(detail[0]).searchParams.get("event_limit")).toBe("182");
-    // No raw event ids where a reason is what matters.
     await expect(row).not.toContainText("6svnP7Xg");
   });
 
@@ -759,6 +799,7 @@ test.describe("screenshots", () => {
     test.setTimeout(180_000);
     mkdirSync(SHOTS!, { recursive: true });
     await stubOps(page, { ops: OPS_STATUS_MIXED, jobs: JOBS_ACTIVE });
+    await stubJson(page, /\/api\/backend\/bulk-scrape\/jobs\/21(\?.*)?$/, JOB_21_DETAIL);
     for (const [label, size] of [
       ["desktop", { width: 1440, height: 900 }],
       ["mobile", PHONE]
@@ -789,5 +830,26 @@ test.describe("screenshots", () => {
     await page.getByRole("region", { name: "Refresh all" }).getByRole("button", { name: "Run refresh" }).click();
     await expect(page.getByRole("dialog")).toBeVisible();
     await page.screenshot({ path: path.join(SHOTS!, "desktop-en-ops-refresh-confirm.png") });
+    await page.keyboard.press("Escape");
+
+    // Per-event failures expanded, phone width, Czech (the longest copy).
+    await page.setViewportSize(PHONE);
+    await page.goto("/cs/ops");
+    const jobs = page.getByRole("region", { name: "Hromadné stahování" });
+    const partial = jobs.getByRole("row").filter({ hasText: "#21" });
+    await partial.getByText("Podrobnosti").click();
+    await expect(partial.getByRole("listitem")).toHaveCount(2);
+    await noHorizontalOverflow(page);
+    await partial.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: path.join(SHOTS!, "mobile-cs-ops-job-failures.png") });
+
+    // A followed run the backend forgot.
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await stubFollowedRun(page, FORGOTTEN_RUN, 404, { restarted: true });
+    await page.goto("/en/ops");
+    const refresh = page.getByRole("region", { name: "Refresh all" });
+    await expect(refresh.getByText("The backend no longer knows this run")).toBeVisible({ timeout: 10_000 });
+    await expect(refresh.getByText("No refresh since the backend started")).toBeVisible();
+    await refresh.screenshot({ path: path.join(SHOTS!, "desktop-en-ops-refresh-gone.png") });
   });
 });
