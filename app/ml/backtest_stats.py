@@ -202,7 +202,9 @@ def aggregate_backtest(req: BacktestStatsRequest) -> List[Dict[str, Any]]:
             entry["roi"] = (pnl / stake) if stake > 0 else None
             entry["mean_clv"] = None
             if n == 0:
+                # Undefined rates, not measured zeros; sums over nothing are 0.
                 entry.update(hit_rate=None, roi=None, brier=None)
+                entry.update(wins=0, stake_total=0.0, pnl_total=0.0)
             out.append(entry)
 
         # Second pass: compute max_drawdown per group from ordered bets.

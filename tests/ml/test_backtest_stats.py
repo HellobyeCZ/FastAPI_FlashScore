@@ -113,6 +113,7 @@ def test_empty_population_has_null_metrics(db):
     assert rows[0]["n"] == 0
     for key in ("hit_rate", "roi", "brier", "mean_clv"):
         assert rows[0][key] is None, key
+    assert (rows[0]["wins"], rows[0]["stake_total"], rows[0]["pnl_total"]) == (0, 0.0, 0.0)
 
 
 def test_group_by_run_id_exposes_label(db):

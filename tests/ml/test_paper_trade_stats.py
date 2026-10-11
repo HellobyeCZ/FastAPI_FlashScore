@@ -285,6 +285,7 @@ def test_empty_population_reports_undefined_metrics(fixture_db):
     assert rows[0]["n"] == 0
     for key in ("hit_rate", "roi", "brier", "mean_clv"):
         assert rows[0][key] is None, key
+    assert (rows[0]["wins"], rows[0]["stake_total"], rows[0]["pnl_total"]) == (0, 0.0, 0.0)
 
 
 def test_pipeline_freshness_flags_overdue_pending_bets(fixture_db):

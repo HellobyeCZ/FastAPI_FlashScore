@@ -235,8 +235,9 @@ def aggregate(request: StatsRequest) -> List[Dict[str, Any]]:
             entry["roi"] = (pnl / stake) if stake > 0 else None
             if n == 0:
                 # An empty population has no hit rate, ROI, Brier or CLV —
-                # report "undefined", never a measured zero.
+                # report "undefined", never a measured zero. Its sums are 0.
                 entry.update(hit_rate=None, roi=None, brier=None, mean_clv=None)
+                entry.update(wins=0, stake_total=0.0, pnl_total=0.0)
             out.append(entry)
 
         # Second pass: compute max_drawdown per group from individual bets.
