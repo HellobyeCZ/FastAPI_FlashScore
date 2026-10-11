@@ -37,9 +37,9 @@ export function ServedModels({ className }: { className?: string }) {
         loading={<Skeleton lines={3} className="py-1" />}
       >
         {(d) => (
-          <ul className="flex flex-col">
+          <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {d.models.map((m, i) => (
-              <ServedModelRow key={m.name} model={m} index={i} />
+              <ServedModelItem key={m.name} model={m} index={i} />
             ))}
           </ul>
         )}
@@ -48,18 +48,13 @@ export function ServedModels({ className }: { className?: string }) {
   );
 }
 
-function ServedModelRow({ model, index }: { model: ServedModel; index: number }) {
+function ServedModelItem({ model, index }: { model: ServedModel; index: number }) {
   const { t, fmt } = useLocale();
   const loaded = model.loaded && model.source !== null;
   return (
-    <li className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-b border-border py-2 first:pt-0 last:border-b-0 last:pb-0">
-      <ModelName name={model.name} index={index} className="text-body" />
-      <span className="flex items-center gap-2">
-        {loaded && model.loaded_at && (
-          <span className="text-meta text-text-faint" title={fmt.dateTime(model.loaded_at)}>
-            {t("today.models.loadedAt", { age: fmt.relative(model.loaded_at) })}
-          </span>
-        )}
+    <li className="flex min-w-0 flex-col gap-2 border border-border bg-bg/40 px-3 py-2.5">
+      <ModelName name={model.name} index={index} />
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         {!loaded ? (
           <Badge tone="warn">{t("today.models.notLoaded")}</Badge>
         ) : model.source === "registry" ? (
@@ -71,7 +66,12 @@ function ServedModelRow({ model, index }: { model: ServedModel; index: number })
         ) : (
           <Badge>{t("today.models.file")}</Badge>
         )}
-      </span>
+        {loaded && model.loaded_at && (
+          <span className="text-meta text-text-faint" title={fmt.dateTime(model.loaded_at)}>
+            {t("today.models.loadedAt", { age: fmt.relative(model.loaded_at) })}
+          </span>
+        )}
+      </div>
     </li>
   );
 }

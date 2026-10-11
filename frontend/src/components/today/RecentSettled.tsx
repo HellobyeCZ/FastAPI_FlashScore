@@ -1,7 +1,17 @@
 "use client";
 import type { UseQueryResult } from "@tanstack/react-query";
 import { useLocale } from "@/contexts/LocaleContext";
-import { EmptyState, Panel, QueryState, Signed, StateBadge, Table, TextLink, type Column } from "@/components/ui";
+import {
+  EmptyState,
+  ModelName,
+  Panel,
+  QueryState,
+  Signed,
+  StateBadge,
+  Table,
+  TextLink,
+  type Column
+} from "@/components/ui";
 import { marketLabel, modelLabel, selectionLabel } from "@/lib/labels";
 import { routes } from "@/lib/routes";
 import type { TodayResponse, TodaySettled } from "@/hooks/useToday";
@@ -29,8 +39,12 @@ export function RecentSettled({
       cell: (r) => (
         <>
           <MatchName pick={r} />
+          {/* Columns hidden on narrow screens fold into a second line. */}
           <span className="block text-meta text-text-dim sm:hidden">
             {selectionLabel(r.selection, t)} @ {fmt.odds(r.price)} · {fmt.relative(r.settled_at)}
+          </span>
+          <span className="hidden text-meta text-text-dim sm:block lg:hidden">
+            {marketLabel(r.market, t)} · {modelLabel(r.model, t)}
           </span>
         </>
       )
@@ -39,16 +53,16 @@ export function RecentSettled({
       key: "pick",
       header: t("common.selection"),
       hideBelow: "sm",
-      cell: (r) => (
-        <>
-          <span className="whitespace-nowrap">{selectionLabel(r.selection, t)}</span>
-          <span className="block text-meta text-text-dim">
-            {marketLabel(r.market, t)} · {modelLabel(r.model, t)}
-          </span>
-        </>
-      )
+      cell: (r) => <span className="whitespace-nowrap">{selectionLabel(r.selection, t)}</span>
     },
-    { key: "price", header: t("common.price"), align: "right", hideBelow: "md", cell: (r) => fmt.odds(r.price) },
+    {
+      key: "market",
+      header: t("common.market"),
+      hideBelow: "lg",
+      cell: (r) => <span className="text-text-dim">{marketLabel(r.market, t)}</span>
+    },
+    { key: "model", header: t("common.model"), hideBelow: "lg", cell: (r) => <ModelName name={r.model} /> },
+    { key: "price", header: t("common.price"), align: "right", hideBelow: "sm", cell: (r) => fmt.odds(r.price) },
     { key: "result", header: t("common.result"), cell: (r) => <StateBadge state={r.state} /> },
     {
       key: "pnl",

@@ -171,7 +171,7 @@ test.describe("Today cockpit", () => {
     await expect(page.getByText("Small sample (n = 12) — treat as noise")).toBeVisible();
     await expect(page.getByRole("img", { name: "Cumulative P&L of 12 bets settled in the last 30 days" })).toBeVisible();
     await expect(page.getByText("4 kick off today")).toBeVisible();
-    await expect(page.getByText(/^2 overdue \(kick-off over 6 h ago\) · oldest 21 hours ago$/)).toBeVisible();
+    await expect(page.getByText(/^2 overdue \(kick-off over 6\sh ago\) · oldest 21 hours ago$/)).toBeVisible();
     await expect(page.getByText("6 hours ago", { exact: true })).toBeVisible();
 
     // Slate: all six of today's picks, team names linking to the match page.
@@ -252,6 +252,16 @@ test.describe("Today cockpit", () => {
     await expect(panel).toContainText("Oct 13, 2026");
   });
 
+  test("fresh pipeline with nothing to bet says so instead of blaming staleness", async ({ page }) => {
+    await setup(page, { today: { ...TODAY_HEALTHY, slate: [], upcoming72h: [] } });
+    await page.goto("/en/today");
+
+    await expect(slate(page)).toContainText("No picks today or in the next 72 hours");
+    await expect(slate(page)).toContainText("The pipeline last ran 6 hours ago and found nothing worth a pick.");
+    await expect(slate(page).getByRole("link", { name: "Browse matches" })).toHaveAttribute("href", "/en/matches");
+    await expect(slate(page)).not.toContainText("stale");
+  });
+
   test("stale pipeline: full banner and an empty slate that explains why", async ({ page }) => {
     await setup(page, { ops: OPS_STATUS_STALE, today: TODAY_STALE });
     await page.goto("/en/today");
@@ -267,7 +277,7 @@ test.describe("Today cockpit", () => {
     await expect(slate(page).locator("table")).toHaveCount(0);
 
     await expect(page.getByText("No settled bets in 30 days — last settled 5 months ago")).toBeVisible();
-    await expect(page.getByText(/^18 overdue \(kick-off over 6 h ago\) · oldest 5 months ago$/)).toBeVisible();
+    await expect(page.getByText(/^18 overdue \(kick-off over 6\sh ago\) · oldest 5 months ago$/)).toBeVisible();
     await expect(page.getByRole("region", { name: "Last 10 settled" })).toContainText("Latest settled 5 months ago");
   });
 

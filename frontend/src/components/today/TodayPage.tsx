@@ -42,10 +42,8 @@ export function TodayPage() {
         <HealthBanner variant="full" />
         <TodayKpis query={today} />
         <TodaySlate query={today} />
-        <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
-          <RecentSettled query={today} className="xl:col-span-2" />
-          <ServedModels />
-        </div>
+        <ServedModels />
+        <RecentSettled query={today} />
       </div>
     </>
   );

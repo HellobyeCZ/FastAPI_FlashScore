@@ -61,6 +61,7 @@ export function TodaySlate({ query }: { query: UseQueryResult<TodayResponse> }) 
     {
       key: "kickoff",
       header: t("common.kickoff"),
+      hideBelow: "sm",
       cell: (r) => (
         <time dateTime={r.kickoff ?? undefined} className="whitespace-nowrap">
           {fmt.time(r.kickoff)}
@@ -84,6 +85,9 @@ export function TodaySlate({ query }: { query: UseQueryResult<TodayResponse> }) 
             <MatchName pick={r} />
             {/* Columns hidden on narrow screens fold into a second line. */}
             <span className="block text-meta text-text-dim lg:hidden">
+              <span className="sm:hidden">
+                {mode === "today" ? fmt.time(r.kickoff) : fmt.dateTime(r.kickoff)} ·{" "}
+              </span>
               {league && <span className="md:hidden">{league} · </span>}
               {marketLabel(r.market, t)}
             </span>
@@ -101,10 +105,10 @@ export function TodaySlate({ query }: { query: UseQueryResult<TodayResponse> }) 
       key: "pick",
       header: t("common.selection"),
       cell: (r) => (
-        <span className="whitespace-nowrap">
-          {selectionLabel(r.selection, t)}
-          <span className="text-text-dim sm:hidden"> @ {fmt.odds(r.price)}</span>
-        </span>
+        <>
+          <span className="whitespace-nowrap">{selectionLabel(r.selection, t)}</span>
+          <span className="block whitespace-nowrap text-meta text-text-dim sm:hidden">@ {fmt.odds(r.price)}</span>
+        </>
       )
     },
     { key: "price", header: t("common.price"), align: "right", hideBelow: "sm", cell: (r) => fmt.odds(r.price) },
