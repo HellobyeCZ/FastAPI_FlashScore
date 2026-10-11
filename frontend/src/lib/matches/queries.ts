@@ -1,7 +1,9 @@
 "use client";
+import { useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, appGet, backendGet, errorMessage } from "@/lib/api/http";
 import { matchesListKey } from "@/hooks/useMatchesQuery";
+import { boardFromLive, boardFromStored, type OddsBoard } from "./odds";
 import type { EventDetail, EventPicks, PredictResponse } from "./types";
 import type { LiveSnapshotRows, LiveSnapshotSummary, OddsResponse, StoredOddsResponse } from "@/types/odds";
 import type { MatchStatsResponse, StoredStatsResponse } from "@/types/match-stats";
@@ -96,6 +98,32 @@ export function useLiveSnapshot(eventId: string, fetchedAt: string | null) {
     // A capture never changes once written.
     staleTime: Infinity
   });
+}
+
+export type BoardSource = { kind: "stored" | "live"; fetchedAt: string };
+
+/**
+ * The odds board the model view prices against: the latest stored snapshot,
+ * or — when none is stored — the newest live capture.
+ */
+export function useReferenceBoard(eventId: string): {
+  board: OddsBoard | null;
+  source: BoardSource | null;
+  isLoading: boolean;
+} {
+  const stored = useStoredOdds(eventId);
+  const snapshots = useLiveSnapshots(eventId);
+  const latest = stored.data === null ? (snapshots.data?.[0]?.fetched_at ?? null) : null;
+  const live = useLiveSnapshot(eventId, latest);
+  return useMemo(() => {
+    if (stored.data) {
+      return { board: boardFromStored(stored.data), source: { kind: "stored", fetchedAt: stored.data.fetched_at }, isLoading: false };
+    }
+    if (live.data) {
+      return { board: boardFromLive(live.data.rows), source: { kind: "live", fetchedAt: live.data.fetched_at }, isLoading: false };
+    }
+    return { board: null, source: null, isLoading: stored.isLoading || snapshots.isLoading || live.isLoading };
+  }, [stored.data, stored.isLoading, snapshots.isLoading, live.data, live.isLoading]);
 }
 
 export type FetchLatestResult = {
