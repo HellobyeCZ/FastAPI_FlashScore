@@ -460,6 +460,21 @@ def parse_timestamp(value: Any) -> Optional[datetime]:
     return parsed.astimezone(timezone.utc)
 
 
+def format_timestamp(value: Any) -> Optional[str]:
+    """Normalise a stored timestamp (or datetime) to ISO-8601 UTC for API
+    responses; unparseable text is passed through unchanged."""
+    if isinstance(value, datetime):
+        parsed: Optional[datetime] = (
+            value.replace(tzinfo=timezone.utc) if value.tzinfo is None
+            else value.astimezone(timezone.utc)
+        )
+    else:
+        parsed = parse_timestamp(value)
+    if parsed is not None:
+        return parsed.isoformat()
+    return str(value) if value else None
+
+
 def fetch_history(
     filters: StatsFilter,
     *,
