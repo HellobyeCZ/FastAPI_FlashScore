@@ -18,7 +18,12 @@ const BASELINE = "a1aeda64b7e04d2a9c1f5e8b3d6a2c49";
 const FAILED = "e6441c53f0a94b6e8d2c7b1a5f3e9d08";
 const RUNNING = "5d1c8a2e9b7f4e3d8c6a1b0f2e4d7c95";
 const QUEUED = "7b3e0d9c1a5f4b2e8d6c3a9f1e7b5d20";
+const HGB_PCA = "9c8b7a6d5e4f40312a1b0c9d8e7f6a5b";
 const MLFLOW_RUN = "69106395b400429da2d05176533eed0e";
+const MLFLOW_SHORT = "b2c4e6a8d0f24b6d8e0a2c4e6f8a0b2c";
+const MLFLOW_HGB_PCA = "e5f7a9c1b3d54e7f9a1c3e5b7d9f1a3c";
+// Logged later by scripts/backfill_mlflow_backtests.py (purpose=backfill).
+const MLFLOW_BACKFILL = "d4f6a8c0e2b44d6f8a0c2e4b6d8f0a2c";
 
 const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
 
@@ -143,7 +148,8 @@ const RUNS = [
     brier: 0.2222,
     log_loss: 0.6365,
     max_drawdown: 1.9,
-    sharpe_adjusted: -0.212
+    sharpe_adjusted: -0.212,
+    mlflow_run_id: MLFLOW_BACKFILL
   }),
   summary({
     id: LOGISTIC_SHORT,
@@ -159,7 +165,27 @@ const RUNS = [
     brier: 0.2011,
     log_loss: 0.5934,
     max_drawdown: 0.81,
-    sharpe_adjusted: -0.0811
+    sharpe_adjusted: -0.0811,
+    mlflow_run_id: MLFLOW_SHORT,
+    mlflow_ui_url: `http://127.0.0.1:5050/#/experiments/2/runs/${MLFLOW_SHORT}`
+  }),
+  summary({
+    id: HGB_PCA,
+    label: "hgb_pca_2026-05-13T18:02:41.512301Z",
+    model: "hgb_pca",
+    status: "completed",
+    created_at: "2026-05-13T18:02:41Z",
+    test_events: 2686,
+    total_bets: 1204,
+    hit_rate: 0.3106,
+    roi: -0.0418,
+    brier: 0.1987,
+    log_loss: 0.5802,
+    max_drawdown: 3.12,
+    sharpe_adjusted: -0.0247,
+    mlflow_run_id: MLFLOW_HGB_PCA,
+    n_train_events: 12563,
+    mlflow_ui_url: `http://127.0.0.1:5050/#/experiments/2/runs/${MLFLOW_HGB_PCA}`
   })
 ];
 
@@ -272,7 +298,24 @@ const MLFLOW_RUNS = [
     ui_url: `http://127.0.0.1:5050/#/experiments/2/runs/${MLFLOW_RUN}`
   },
   {
-    run_id: "b2c4e6a8d0f24b6d8e0a2c4e6f8a0b2c",
+    run_id: MLFLOW_HGB_PCA,
+    run_name: "bt_hgb_pca_2024-08-01",
+    status: "FINISHED",
+    start_time: "2026-05-13T18:02:41Z",
+    end_time: "2026-05-13T18:04:10Z",
+    purpose: "walk_forward_backtest",
+    model_name: "hgb_pca",
+    train_until: "2024-08-01T00:00:00Z",
+    test_until: null,
+    backtest_run_id: HGB_PCA,
+    has_model: true,
+    params: { n_train_events: "12563" },
+    metrics: { n_bets: 1204, roi: -0.0418, brier: 0.1987, sharpe_adjusted: -0.0247 },
+    registered_versions: [],
+    ui_url: `http://127.0.0.1:5050/#/experiments/2/runs/${MLFLOW_HGB_PCA}`
+  },
+  {
+    run_id: MLFLOW_SHORT,
     run_name: "bt_logistic_2024-08-01_short",
     status: "FINISHED",
     start_time: "2026-05-14T07:43:09Z",
@@ -286,7 +329,7 @@ const MLFLOW_RUNS = [
     params: { n_train_events: "12563" },
     metrics: { n_bets: 173, roi: -0.1124, brier: 0.2011, sharpe_adjusted: -0.0811 },
     registered_versions: [{ name: "picks-logistic", version: "4" }],
-    ui_url: "http://127.0.0.1:5050/#/experiments/2/runs/b2c4e6a8d0f24b6d8e0a2c4e6f8a0b2c"
+    ui_url: `http://127.0.0.1:5050/#/experiments/2/runs/${MLFLOW_SHORT}`
   },
   {
     run_id: "c9e1a3b5d7f94c1e3a5b7d9f1c3e5a7b",
@@ -306,8 +349,8 @@ const MLFLOW_RUNS = [
     ui_url: "http://127.0.0.1:5050/#/experiments/2/runs/c9e1a3b5d7f94c1e3a5b7d9f1c3e5a7b"
   },
   {
-    run_id: "d4f6a8c0e2b44d6f8a0c2e4b6d8f0a2c",
-    run_name: "backfill_dixon_coles_2024-08-01",
+    run_id: MLFLOW_BACKFILL,
+    run_name: "bt_dixon_coles_2024-08-01",
     status: "FINISHED",
     start_time: "2026-10-10T08:00:00Z",
     end_time: "2026-10-10T08:00:02Z",
@@ -320,7 +363,7 @@ const MLFLOW_RUNS = [
     params: {},
     metrics: { n_bets: 306, roi: -0.3146, brier: 0.2222, sharpe_adjusted: -0.212 },
     registered_versions: [],
-    ui_url: "http://127.0.0.1:5050/#/experiments/2/runs/d4f6a8c0e2b44d6f8a0c2e4b6d8f0a2c"
+    ui_url: `http://127.0.0.1:5050/#/experiments/2/runs/${MLFLOW_BACKFILL}`
   }
 ];
 
@@ -356,7 +399,7 @@ const REGISTRY = {
           metrics: { roi: -0.0932, sharpe_adjusted: -0.0539, n_bets: 2756, brier: 0.1919 }
         }),
         version("4", {
-          run_id: "b2c4e6a8d0f24b6d8e0a2c4e6f8a0b2c",
+          run_id: MLFLOW_SHORT,
           created_at: "2026-10-10T16:00:00Z",
           metrics: { roi: -0.1124, sharpe_adjusted: -0.0811, n_bets: 173, brier: 0.2011 }
         }),
@@ -376,7 +419,7 @@ const REGISTRY = {
       ui_url: "http://127.0.0.1:5050/#/models/picks-dixon_coles",
       versions: [
         version("1", {
-          run_id: "d4f6a8c0e2b44d6f8a0c2e4b6d8f0a2c",
+          run_id: MLFLOW_BACKFILL,
           purpose: "backfill",
           metrics: { roi: -0.3146, sharpe_adjusted: -0.212, n_bets: 306, brier: 0.2222 },
           ui_url: "http://127.0.0.1:5050/#/models/picks-dixon_coles/versions/1"
@@ -464,6 +507,13 @@ async function stubLab(page: Page, opts: LabStubs = {}) {
       return json({ count: total, rows: historyRows(runId, offset, limit) });
     }
     if (path === "picks/stats") return json({ group_by: ["day"], filters: {}, rows: dayRows(url.searchParams.get("run_id") ?? "") });
+    const mlflowRun = path.match(/^mlflow\/runs\/([^/]+)$/);
+    if (mlflowRun && method === "GET") {
+      const status = opts.mlflowStatus ?? MLFLOW_OK;
+      if (!(status.enabled && status.reachable)) return json({ detail: "MLflow tracking server is unreachable" }, 503);
+      const found = MLFLOW_RUNS.find((r) => r.run_id === decodeURIComponent(mlflowRun[1]));
+      return found ? json(found) : json({ detail: `Run '${mlflowRun[1]}' not found.` }, 404);
+    }
     if (path === "mlflow/runs") {
       const status = opts.mlflowStatus ?? MLFLOW_OK;
       const purpose = url.searchParams.get("purpose");
@@ -480,7 +530,9 @@ async function stubLab(page: Page, opts: LabStubs = {}) {
     }
     if (path === "mlflow/registry" && method === "GET") return json(opts.registry ?? REGISTRY);
     if (path === "mlflow/registry/register" && method === "POST") {
-      return json({ name: "picks-logistic", version: "5", alias: (body as { alias?: string })?.alias ?? null, reloaded: false });
+      const b = body as { run_id: string; alias?: string | null };
+      const source = MLFLOW_RUNS.find((r) => r.run_id === b.run_id);
+      return json({ name: `picks-${source?.model_name ?? "logistic"}`, version: "1", alias: b.alias ?? null, reloaded: false });
     }
     const alias = path.match(/^mlflow\/registry\/([^/]+)\/aliases(?:\/([^/]+))?$/);
     if (alias && method === "POST") {
@@ -520,8 +572,10 @@ test.describe("lab · backtests", () => {
     await pickDixon.click();
     await expect(pickDixon).toBeChecked();
     await expect(page).toHaveURL(new RegExp(`selected=${LOGISTIC}%2C${DIXON}|selected=${LOGISTIC},${DIXON}`));
-    // Active runs can't be compared.
-    await expect(page.getByRole("checkbox", { name: /Select Logistic · Jan 1, 2025 → open/ })).toBeDisabled();
+    // Active runs can't be compared, and the box says why (no tooltip on disabled controls).
+    const running = page.getByRole("checkbox", { name: /Select Logistic · Jan 1, 2025 → open/ });
+    await expect(running).toBeDisabled();
+    await expect(running).toHaveAccessibleName(/Only completed runs can be compared/);
 
     await page.getByRole("link", { name: "Compare selected (2)" }).click();
     await expect(page).toHaveURL(/\/en\/lab\/compare\?ids=/);
@@ -606,6 +660,26 @@ test.describe("lab · backtests", () => {
     if (mobile) await expect(page).toHaveURL(/\/en\/lab\/backtests$/);
   });
 
+  test("clicks inside a row's dialog don't open the run", async ({ page }, info) => {
+    test.skip(info.project.name === "mobile", "row actions are hidden on phones");
+    const { calls } = await stubLab(page);
+    await page.goto("/en/lab/backtests");
+    const del = page.getByRole("dialog", { name: "Delete this backtest?" });
+
+    await page.getByRole("button", { name: /Delete run Dixon–Coles · Aug 2024 smoke test/ }).click();
+    await del.getByText("Dixon–Coles · Aug 2024 smoke test").click();
+    await page.waitForTimeout(500);
+    await expect(del).toBeVisible();
+    await expect(page).toHaveURL(/\/en\/lab\/backtests$/);
+
+    // Dismissing through the backdrop closes the dialog and stays on the list.
+    await page.mouse.click(10, 10);
+    await expect(del).toBeHidden();
+    await page.waitForTimeout(500);
+    await expect(page).toHaveURL(/\/en\/lab\/backtests$/);
+    expect(calls.some((c) => c.method === "DELETE")).toBe(false);
+  });
+
   test("empty and error states keep the page chrome", async ({ page }) => {
     await stubLab(page, { runs: [] });
     await page.goto("/en/lab/backtests");
@@ -646,19 +720,62 @@ test.describe("lab · run detail", () => {
     await expect(page).toHaveURL(/page=2/);
     await expect(page.getByText("51–100 of 2,756")).toBeVisible();
 
+    // Already registered: no second, identical version.
+    await expect(page.getByText("Already registered as picks-logistic v3.")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Register model…" })).toHaveCount(0);
+
+    await page.goto(`/en/lab/backtests/${HGB_PCA}`);
     await page.getByRole("button", { name: "Register model…" }).click();
-    const dialog = page.getByRole("dialog", { name: "Register a new version of picks-logistic?" });
+    const dialog = page.getByRole("dialog", { name: "Register a new version of picks-hgb_pca?" });
     await expect(dialog).toContainText("Live picks don't change");
+    await expect(dialog).toContainText("over 1,204 bets");
     await dialog.getByLabel("Also set as challenger").check();
     await dialog.getByRole("button", { name: "Register" }).click();
-    await expect(page.getByText("Registered picks-logistic v5")).toBeVisible();
+    await expect(page.getByText("Registered picks-hgb_pca v1")).toBeVisible();
     const reg = calls.find((c) => c.path === "mlflow/registry/register");
-    expect(reg?.body).toEqual({ run_id: MLFLOW_RUN, alias: "challenger" });
+    expect(reg?.body).toEqual({ run_id: MLFLOW_HGB_PCA, alias: "challenger" });
     expect(unhandled).toEqual([]);
   });
 
+  test("finds backfilled runs in MLflow by id and explains missing ones", async ({ page }) => {
+    const { calls, unhandled } = await stubLab(page);
+    await page.goto(`/en/lab/backtests/${DIXON}`);
+    await expect(page.getByText("bt_dixon_coles_2024-08-01")).toBeVisible();
+    await expect(page.getByText(/no logged model \(older runs logged metrics only\)/)).toBeVisible();
+    await expect(page.getByText(/no longer lists it/)).toHaveCount(0);
+    expect(calls.some((c) => c.path === `mlflow/runs/${MLFLOW_BACKFILL}`)).toBe(true);
+    expect(unhandled).toEqual([]);
+
+    // Registered after stubLab, so these win for one run each.
+    await stubJson(page, new RegExp(`/api/backend/mlflow/runs/${MLFLOW_SHORT}$`), { detail: "Run not found." }, 404);
+    await page.goto(`/en/lab/backtests/${LOGISTIC_SHORT}`);
+    await expect(page.getByText("The run was logged to MLflow, but the tracking server no longer lists it.")).toBeVisible();
+
+    // Finished seconds ago, MLflow id not written back yet.
+    await stubJson(page, new RegExp(`/api/backend/backtest/runs/${HGB_PCA}$`), {
+      ...detail(HGB_PCA),
+      mlflow_run_id: null,
+      mlflow_ui_url: null,
+      finished_at: new Date().toISOString()
+    });
+    await page.goto(`/en/lab/backtests/${HGB_PCA}`);
+    await expect(page.getByText(/Logging the run to MLflow/)).toBeVisible();
+
+    await page.goto(`/en/lab/backtests/${FAILED}`);
+    await expect(page.getByText("Only completed runs are logged to MLflow.")).toBeVisible();
+  });
+
+  test("tells MLflow being down apart from a missing run", async ({ page }) => {
+    await stubLab(page, { mlflowStatus: MLFLOW_DOWN });
+    await stubShell(page, { ...OPS_STATUS_OK, mlflow: MLFLOW_DOWN });
+    await page.goto(`/en/lab/backtests/${LOGISTIC}`);
+    await expect(page.getByText("MLflow is unreachable")).toBeVisible();
+    await expect(page.getByText("make mlflow")).toBeVisible();
+    await expect(page.getByText(/no longer lists it/)).toHaveCount(0);
+  });
+
   test("failed and zero-bet runs explain themselves; unknown ids show an empty state", async ({ page }) => {
-    await stubLab(page);
+    const { calls } = await stubLab(page);
     await page.goto(`/en/lab/backtests/${FAILED}`);
     await expect(page.getByText("This run failed")).toBeVisible();
     await expect(page.getByText(/unknown model 'hgb'/)).toBeVisible();
@@ -669,6 +786,23 @@ test.describe("lab · run detail", () => {
     const dialog = page.getByRole("dialog", { name: "New backtest" });
     await expect(dialog.getByLabel("Force bets")).toBeChecked();
     await expect(dialog.getByLabel("Model")).toHaveValue("market_implied");
+    // Scope and market have no controls but are kept, and say so.
+    await expect(dialog.getByText("Kept from the original run")).toBeVisible();
+    await expect(dialog.getByText("7 competitions")).toBeVisible();
+    await dialog.getByRole("button", { name: "Queue backtest" }).click();
+    await expect(page).toHaveURL(/\/en\/lab\/backtests\/f00dfeedcafe4b1e9d2c3a4b5c6d7e8f$/);
+    const post = calls.find((c) => c.method === "POST" && c.path === "backtest/runs");
+    expect(post?.body).toEqual({
+      model: "market_implied",
+      train_until: "2026-02-14T00:00:00Z",
+      test_until: null,
+      min_edge: 0.02,
+      kelly_fraction: 0.25,
+      force_bets: true,
+      label: null,
+      scope: SCOPE,
+      market_spec: "football_1x2_ft"
+    });
 
     await page.goto("/en/lab/backtests/doesnotexist");
     await expect(h1(page)).toContainText("Backtest not found");
@@ -677,13 +811,16 @@ test.describe("lab · run detail", () => {
 });
 
 test.describe("lab · experiments", () => {
-  test("lists MLflow runs with purpose filter in the URL", async ({ page }) => {
+  test("lists MLflow runs with purpose filter in the URL", async ({ page }, info) => {
     const { calls } = await stubLab(page);
     await page.goto("/en/lab/experiments");
     await expect(h1(page)).toContainText("Experiments");
     const table = page.getByRole("table", { name: /MLflow runs/ });
     await expect(table.getByText("bt_logistic_2024-08-01", { exact: true })).toBeVisible();
     await expect(table.getByText("v3").filter({ visible: true })).toBeVisible();
+    // ROI always comes with its sample size: under it on phones, in the bets column from md.
+    if (info.project.name === "mobile") await expect(table.getByText("n = 2,756")).toBeVisible();
+    else await expect(table.getByRole("cell", { name: "2,756", exact: true })).toBeVisible();
 
     await page.getByRole("radio", { name: "Training" }).click();
     await expect(page).toHaveURL(/purpose=offline_training/);
@@ -716,6 +853,10 @@ test.describe("lab · registry", () => {
     await expect(dialog).toContainText("Live picks will be recorded with picks-logistic v4; currently v3.");
     await expect(dialog).toContainText("Only 173 bets of evidence");
     await expect(dialog).toContainText("worse than the champion v3");
+    // Evidence window: the test end comes from each version's source run.
+    const window = dialog.getByRole("row", { name: /Train → test/ });
+    await expect(window).toContainText("Aug 1, 2024 → Sep 1, 2024");
+    await expect(window).toContainText("Aug 1, 2024 → open");
     await dialog.getByRole("button", { name: "Make champion" }).click();
     await expect(dialog).toBeHidden();
     const post = calls.find((c) => c.method === "POST" && c.path === "mlflow/registry/logistic/aliases");
