@@ -57,7 +57,7 @@ export function RunBetsPanel({ run }: { run: BacktestRunDetail }) {
       cell: (b) => (
         <span className="flex flex-col gap-0.5">
           <span>{selectionLabel(b.selection, t)}</span>
-          <span className="whitespace-nowrap text-meta text-text-faint">{marketLabel(b.market, t)}</span>
+          <span className="hidden whitespace-nowrap text-meta text-text-faint sm:block">{marketLabel(b.market, t)}</span>
         </span>
       )
     },

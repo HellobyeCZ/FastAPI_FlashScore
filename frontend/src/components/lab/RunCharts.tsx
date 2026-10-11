@@ -23,6 +23,7 @@ export function ReliabilityPanel({ run }: { run: BacktestRunDetail }) {
     {
       key: "range",
       header: t("lab.reliability.col.range"),
+      hideBelow: "sm",
       cell: (b) => <span className="whitespace-nowrap">{`${fmt.pct(b.lower, 0)}–${fmt.pct(b.upper, 0)}`}</span>
     },
     { key: "pred", header: t("lab.reliability.col.predicted"), align: "right", cell: (b) => fmt.pct(b.mean_pred) },

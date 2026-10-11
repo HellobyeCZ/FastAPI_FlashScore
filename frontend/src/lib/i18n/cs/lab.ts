@@ -198,8 +198,8 @@ export const lab: Record<keyof typeof en, string> = {
   "lab.detail.mlflow.notFound": "Běh byl do MLflow zaznamenán, ale sledovací server ho už neuvádí.",
   "lab.detail.mlflow.runName": "Běh MLflow",
   "lab.detail.mlflow.logged": "Zaznamenáno",
-  "lab.detail.mlflow.model": "Natrénovaný model",
-  "lab.detail.mlflow.modelLogged": "Zaznamenán · lze registrovat",
+  "lab.detail.mlflow.model": "Model",
+  "lab.detail.mlflow.modelLogged": "Uložen, lze registrovat",
   "lab.detail.mlflow.modelMissing": "Nezaznamenán",
   "lab.detail.mlflow.versions": "Registrované verze",
 

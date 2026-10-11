@@ -167,14 +167,14 @@ export function ComparePage() {
     {
       key: "metric",
       header: <span className="sr-only">{t("lab.compare.metric")}</span>,
-      className: "whitespace-nowrap text-text-dim",
+      className: "text-text-dim sm:whitespace-nowrap",
       cell: (row) => <span title={row.title}>{row.label}</span>
     },
     ...runs.map<Column<Row>>((run) => ({
       key: run.id,
       header: <RunHeader run={run} index={index(run.id)} onRemove={() => remove(run.id)} />,
       align: "right",
-      className: "whitespace-nowrap",
+      className: "sm:whitespace-nowrap",
       cell: (row) => row.cell(run)
     }))
   ];
