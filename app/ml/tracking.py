@@ -235,6 +235,13 @@ def resolve_experiment_id() -> Optional[str]:
         return None
 
 
+def ensure_experiment_id() -> str:
+    """Resolve the `picks` experiment id, creating the experiment when
+    missing. Raises MlflowUnavailable when MLflow can't be used."""
+    _, client = require_client()
+    return _experiment_id(client, create=True)
+
+
 def experiment_ui_url(experiment_id: Optional[str] = None) -> Optional[str]:
     base = ui_base_url()
     exp_id = experiment_id or cached_experiment_id()

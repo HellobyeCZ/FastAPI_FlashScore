@@ -339,3 +339,92 @@ def test_api_boots_and_logging_degrades_when_mlflow_is_unimportable(tmp_path):
     )
     assert result.returncode == 0, result.stderr[-2000:]
     assert result.stdout.strip().endswith("OK")
+
+
+# ---------------------------------------------------------------------------
+# scripts/backfill_mlflow_backtests.py
+# ---------------------------------------------------------------------------
+
+def _seed_backtest_db(tmp_path, monkeypatch) -> Path:
+    import asyncio
+    import json
+    import sqlite3
+
+    from app.services.storage import SnapshotStore
+
+    db = tmp_path / "snap.sqlite3"
+    monkeypatch.setenv("APP_STORAGE_DB_PATH", str(db))
+    with sqlite3.connect(db) as c:
+        c.execute("CREATE TABLE odds_snapshots (id INTEGER PRIMARY KEY, event_id TEXT, fetched_at TEXT)")
+        c.execute(
+            "CREATE TABLE match_stats_snapshots (id INTEGER PRIMARY KEY, event_id TEXT, "
+            "fetched_at TEXT, is_terminal INTEGER DEFAULT 0)"
+        )
+    asyncio.run(SnapshotStore(str(db)).initialize())
+    with sqlite3.connect(db) as c:
+        c.execute(
+            "INSERT INTO backtest_runs (id, label, model, train_until, test_until, min_edge, "
+            "kelly_fraction, force_bets, scope_json, status, created_at, started_at, finished_at, "
+            "test_events, total_bets, hit_rate, roi, mean_clv, brier, log_loss, max_drawdown, "
+            "reliability_json, market_spec, sharpe_adjusted) "
+            "VALUES ('old1', 'old run', 'logistic', '2024-08-01T00:00:00Z', NULL, 0.02, 0.25, 0, ?, "
+            "'completed', '2024-09-01T10:00:00Z', '2024-09-01T10:00:01Z', '2024-09-01T10:05:00Z', "
+            "50, 2, 0.5, 0.1, 0.0, 0.24, 0.68, 0.05, ?, 'football_1x2_ft', 0.0123)",
+            (json.dumps([["ENGLAND", "Premier League"]]),
+             json.dumps([{"lower": 0.4, "upper": 0.6, "n": 2, "mean_pred": 0.5, "hit_rate": 0.5}])),
+        )
+        c.executemany(
+            "INSERT INTO backtest_bets (run_id, event_id, bet_ts, kickoff_ts, market, selection, "
+            "price_taken, closing_price, model_prob, implied_prob, devigged_prob, edge, "
+            "stake_kelly_fraction, result, pnl, clv) VALUES "
+            "('old1', ?, '2024-08-10T14:55:00Z', '2024-08-10T15:00:00Z', 'HOME_DRAW_AWAY:FULL_TIME', "
+            "'home', ?, ?, 0.5, 0.5, 0.48, 0.02, 0.05, ?, ?, 0.0)",
+            [("E1", 3.0, 3.0, 1.0, 0.1), ("E2", 2.0, 2.0, 0.0, -0.05)],
+        )
+    return db
+
+
+def test_backfill_logs_completed_runs_once(mlflow_store, tmp_path, monkeypatch, capsys):
+    import sqlite3
+
+    from scripts import backfill_mlflow_backtests as backfill
+
+    db = _seed_backtest_db(tmp_path, monkeypatch)
+
+    monkeypatch.setattr(sys, "argv", ["backfill", "--dry-run"])
+    assert backfill.main() == 0
+    assert "would log old1" in capsys.readouterr().out
+    with sqlite3.connect(db) as c:
+        assert c.execute("SELECT mlflow_run_id FROM backtest_runs").fetchone()[0] is None
+
+    monkeypatch.setattr(sys, "argv", ["backfill"])
+    assert backfill.main() == 0
+    with sqlite3.connect(db) as c:
+        run_id = c.execute("SELECT mlflow_run_id FROM backtest_runs WHERE id = 'old1'").fetchone()[0]
+    assert run_id
+
+    client = _client(mlflow_store)
+    run = client.get_run(run_id)
+    assert run.info.status == "FINISHED"
+    assert run.info.run_name == "bt_logistic_2024-08-01"
+    assert run.data.tags["purpose"] == "backfill"
+    assert run.data.tags["backtest_run_id"] == "old1"
+    assert run.data.tags["has_model"] == "false"
+    assert run.data.params["scope_size"] == "1"
+    assert run.data.params["market"] == "1x2_ft"
+    assert "mean_clv" not in run.data.metrics
+    # Unit-stake recomputation, not the stored (Kelly-scaled) 0.0123:
+    # returns [+2, -1] -> R_p = 1.5, RMSE = sqrt(2.5), Sharpe = 0.5 / sqrt(2.5).
+    assert run.data.metrics["return_per_bet"] == pytest.approx(1.5)
+    assert run.data.metrics["sharpe_adjusted"] == pytest.approx(0.5 / 2.5 ** 0.5)
+    assert "reliability.svg" in {a.path for a in client.list_artifacts(run_id)}
+
+    # Idempotent: nothing pending; a lost write-back is relinked, not duplicated.
+    assert backfill.main() == 0
+    with sqlite3.connect(db) as c:
+        c.execute("UPDATE backtest_runs SET mlflow_run_id = NULL")
+    assert backfill.main() == 0
+    with sqlite3.connect(db) as c:
+        assert c.execute("SELECT mlflow_run_id FROM backtest_runs").fetchone()[0] == run_id
+    experiment_id = run.info.experiment_id
+    assert len(client.search_runs([experiment_id], "tags.purpose = 'backfill'")) == 1

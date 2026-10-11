@@ -296,7 +296,22 @@ def main() -> int:
                 "gated_total_bets": gated_cal.total_bets,
                 "gated_roi": gated_cal.roi,
             },
-            trained_model=rates_by_event,  # the dict of per-event rates
+            # Per-event rates: logged for inspection, not servable from the
+            # registry (serving needs team_latest_rates.json from out_dir).
+            trained_model=rates_by_event,
+            extra_params={
+                "xg_weight": cfg.xg_weight,
+                "ewma_half_life": cfg.ewma_half_life,
+                "home_advantage": cfg.home_advantage,
+                "rho": cfg.rho,
+                "max_goals": cfg.max_goals,
+                "league_mean_goals": cfg.league_mean_goals,
+                "temperature": T,
+                "calib_until": args.calib_until,
+                "min_edge": args.min_edge,
+                "kelly_fraction": args.kelly_fraction,
+                "label": label,
+            },
             artifact_extras={
                 "reliability_uncalibrated.svg": render_reliability_svg(forced_uncal.reliability_buckets),
                 "reliability_calibrated.svg": render_reliability_svg(forced_cal.reliability_buckets),

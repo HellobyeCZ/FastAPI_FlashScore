@@ -6,7 +6,8 @@
   4. Fit per-class IsotonicRegression on calib.
   5. Run the Phase 2 backtester twice on test (uncalibrated, calibrated)
      with both forced bets (full distribution) and the default edge gate.
-  6. Log everything to MLflow under experiment ``phase3_models``.
+  6. Log params (incl. hyper-parameters), metrics and the calibrated
+     model to the MLflow ``picks`` experiment (skip with --no-mlflow).
 
 Outputs:
   reports/logistic_<timestamp>/
@@ -56,6 +57,7 @@ def main() -> int:
     parser.add_argument("--train-until", default="2024-08-01T00:00:00Z")
     parser.add_argument("--calib-until", default="2025-02-01T00:00:00Z")
     parser.add_argument("--C", type=float, default=1.0)
+    parser.add_argument("--max-iter", type=int, default=1000)
     parser.add_argument("--min-edge", type=float, default=0.02)
     parser.add_argument("--kelly-fraction", type=float, default=0.25)
     parser.add_argument("--label", default=None)
@@ -80,7 +82,7 @@ def main() -> int:
           f"test:  {len(split.test.event_ids):>6}")
 
     print("\nStep 2/4: fit logistic")
-    raw_model = train_logistic(split.train, C=args.C)
+    raw_model = train_logistic(split.train, C=args.C, max_iter=args.max_iter)
 
     print("\nStep 3/4: fit isotonic calibration on calib block")
     cal_model = isotonic_calibrate(raw_model, split.calib)
@@ -174,6 +176,7 @@ def main() -> int:
         },
         "config": {
             "C": args.C,
+            "max_iter": args.max_iter,
             "train_until": args.train_until,
             "calib_until": args.calib_until,
             "kelly_fraction": args.kelly_fraction,
@@ -205,6 +208,14 @@ def main() -> int:
                 "gated_roi": gated_cal.roi,
             },
             trained_model=cal_model,  # the calibrated TrainedLogistic instance
+            extra_params={
+                "C": args.C,
+                "max_iter": args.max_iter,
+                "calib_until": args.calib_until,
+                "min_edge": args.min_edge,
+                "kelly_fraction": args.kelly_fraction,
+                "label": label,
+            },
             artifact_extras={
                 "reliability_uncalibrated.svg": render_reliability_svg(forced_uncal.reliability_buckets),
                 "reliability_calibrated.svg": render_reliability_svg(forced_cal.reliability_buckets),
