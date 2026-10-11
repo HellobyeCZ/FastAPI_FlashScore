@@ -1,4 +1,5 @@
-import { mkdirSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { stubJson, stubShell } from "./fixtures/stub";
@@ -666,6 +667,46 @@ test.describe("Matches list", () => {
     await expect(page.getByRole("link", { name: "Open match" })).toHaveAttribute("href", `/en/matches/${EVENT_ID}`);
   });
 
+  test("?id= is resolved through the search", async ({ page }) => {
+    await setup(page);
+    const seen = await stubList(page);
+    await page.goto(`/en/matches?id=${EVENT_ID}`);
+    await expect(page.getByRole("searchbox", { name: "Search matches" })).toHaveValue(EVENT_ID);
+    await expect(page.getByRole("link", { name: "Open match" })).toHaveAttribute("href", `/en/matches/${EVENT_ID}`);
+    expect(seen[0].searchParams.get("q")).toBe(EVENT_ID);
+  });
+
+  test("a failed “load more” keeps the rows and retries that page", async ({ page }) => {
+    await setup(page);
+    const firstPage = Array.from({ length: 50 }, (_, i) => ({
+      ...LIST_ITEMS[i % LIST_ITEMS.length],
+      event_id: `row${String(i).padStart(5, "0")}`
+    }));
+    // The query client retries a 5xx once by itself, so "load more" fails twice.
+    let failures = 2;
+    await page.route(/\/api\/scraped-matches(\?|$)/, (route) => {
+      const offset = Number(new URL(route.request().url()).searchParams.get("offset") ?? 0);
+      if (offset === 0) {
+        return route.fulfill({ json: { ...listBody(firstPage, 51), limit: 50 } });
+      }
+      if (failures > 0) {
+        failures -= 1;
+        return route.fulfill({ status: 500, json: { error: { code: "x", message: "database is locked" } } });
+      }
+      return route.fulfill({ json: { items: [SPARTA], total: 51, offset: 50, limit: 50, exact: null } });
+    });
+    await page.goto("/en/matches");
+    await expect(page.getByText("50 of 51").first()).toBeVisible();
+    await page.getByRole("button", { name: "Load more" }).click();
+    await expect(page.getByText("database is locked")).toBeVisible();
+    // The loaded rows stay; retrying fetches the missing page.
+    await expect(page.getByText("50 of 51").first()).toBeVisible();
+    await page.getByRole("button", { name: "Retry" }).click();
+    await expect(page.getByText("51 of 51").first()).toBeVisible();
+    await expect(page.locator(`a[href="/en/matches/${EVENT_ID}"]`)).toBeVisible();
+    await expect(page.getByText("database is locked")).toBeHidden();
+  });
+
   test("an empty result names the filters and clears them", async ({ page }) => {
     await setup(page);
     await stubList(page);
@@ -837,6 +878,17 @@ test.describe("Match detail", () => {
     expect(requests).toContain(`/api/match-stats/${EVENT_ID}`);
   });
 
+  test("a terminal snapshot without a stored outcome reads as finished", async ({ page }) => {
+    await setup(page);
+    await stubDetail(page, { event: { outcome: null, score: { home: 0, away: 0 }, is_terminal: true } });
+    await page.goto(`/en/matches/${EVENT_ID}`);
+    const header = page.locator("header").filter({ has: page.getByRole("heading", { level: 1 }) });
+    await expect(header.getByText("Finished")).toBeVisible();
+    await expect(header.getByLabel("Score 0:0")).toBeVisible();
+    await expect(header.getByText("Final result stored — snapshots are frozen")).toBeVisible();
+    await expect(page.getByText("Unconfirmed")).toHaveCount(0);
+  });
+
   test("no served model explains itself and links to the registry", async ({ page }) => {
     await setup(page);
     await stubDetail(page, { predict: NO_MODELS });
@@ -934,6 +986,12 @@ test.describe("Match detail", () => {
     await expect(page.getByRole("heading", { name: "Statistiky" })).toBeVisible();
     await expect(page.locator("#odds").getByRole("tab", { name: "Dvojitá šance" })).toBeVisible();
     await expect(page.locator("#odds").getByRole("row").filter({ hasText: "Remíza" }).first()).toBeVisible();
+    // FlashScore's English stat names and plain numbers are localised.
+    const stats = page.locator("#stats");
+    await expect(stats.getByText("Hlavní statistiky")).toBeVisible();
+    await expect(stats.getByRole("row", { name: /Držení míče/ })).toContainText("77 %");
+    await expect(stats.getByRole("row", { name: /Očekávané góly/ })).toContainText("1,20");
+    await expect(stats.getByRole("row", { name: /Přihrávky/ }).first()).toContainText("93 % (550/594)");
   });
 
   test("does not overflow a 390px viewport", async ({ page }) => {
@@ -944,6 +1002,173 @@ test.describe("Match detail", () => {
     await expect(page.locator("#odds").getByRole("tab", { name: "1X2" })).toBeVisible();
     await expect(page.locator("#stats").getByRole("row", { name: /Ball possession/ })).toBeVisible();
     await expectNoHorizontalOverflow(page);
+    // Bet outcomes sit under the pick on phones instead of in a scrolled-off column.
+    const won = page.locator("#bets").getByText("Won").filter({ visible: true }).first();
+    await won.scrollIntoViewIfNeeded();
+    const box = await won.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.x + box!.width).toBeLessThanOrEqual(390);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// /api/scraped-matches against a fixture database. The route handler runs in
+// the test process (the dev server reads the real DATABASE_URL), so these
+// check the SQL itself: status before LIMIT, exact totals, facets that leave
+// out their own dimension, and the exact-id lookup.
+// ---------------------------------------------------------------------------
+
+type IndexBody = {
+  items: { event_id: string; status: string; score: { home: number; away: number } | null }[];
+  total: number;
+  facets?: Record<string, { value: string; count: number }[]>;
+  exact: { event_id: string } | null;
+};
+
+// Kick-offs are far from today: the route derives "scheduled" from the real clock.
+// prettier-ignore
+const INDEX_ROWS: [string, string, string, string, string, string | null, string | null][] = [
+  // event_id, home – away, sport, country, competition, kick-off, outcome
+  ["evFinish", "Arsenal – Chelsea", "football", "ENGLAND", "Premier League", "2020-01-01T15:00:00Z", "home_win"],
+  ["evTermin", "Everton – Fulham", "football", "ENGLAND", "Premier League", "2020-01-02T15:00:00+00:00", null],
+  ["evUnconf", "Jablonec – Liberec", "football", "CZECH REPUBLIC", "Chance Liga - Championship Group", "2020-01-03T15:00:00Z", null],
+  ["evFuture", "Boston Bruins – Dallas Stars", "hockey", "USA", "NHL - Play Offs", "2099-01-01T01:00:00Z", null],
+  ["evLive00", "Colorado Avalanche – Utah", "hockey", "USA", "NHL", "2020-01-04T01:00:00Z", null],
+  ["evNba000", "Boston Celtics – New York Knicks", "basketball", "USA", "NBA", "2020-01-05T01:00:00Z", "away_win"]
+];
+
+const INDEX_SCHEMA = [
+  `CREATE TABLE match_event_summaries (event_id TEXT PRIMARY KEY, event_name TEXT, home_team TEXT,
+    away_team TEXT, sport TEXT, country TEXT, competition TEXT, start_time_utc TEXT, status TEXT, outcome TEXT,
+    odds_snapshot_count INTEGER NOT NULL DEFAULT 0, stats_snapshot_count INTEGER NOT NULL DEFAULT 0,
+    latest_odds_fetched_at TEXT, latest_stats_fetched_at TEXT)`,
+  `CREATE TABLE match_stats_snapshots (id INTEGER PRIMARY KEY AUTOINCREMENT, event_id TEXT NOT NULL,
+    fetched_at TEXT NOT NULL, is_terminal INTEGER NOT NULL DEFAULT 0)`,
+  "CREATE TABLE paper_bets (id INTEGER PRIMARY KEY AUTOINCREMENT, event_id TEXT NOT NULL)",
+  "CREATE TABLE backtest_bets (run_id TEXT NOT NULL, event_id TEXT NOT NULL)",
+  "CREATE TABLE bet_labels (event_id TEXT PRIMARY KEY, home_score INTEGER, away_score INTEGER)"
+];
+
+test.describe("Stored-matches index API", () => {
+  test.skip(({ isMobile }) => isMobile, "runs once, against a fixture database");
+  test.describe.configure({ mode: "serial" });
+
+  let dir = "";
+  let handler: (request: Request) => Promise<Response>;
+  let disconnect: () => Promise<void>;
+
+  async function index(query: string): Promise<IndexBody> {
+    const res = await handler(new Request(`http://localhost/api/scraped-matches?${query}`));
+    expect(res.status).toBe(200);
+    return (await res.json()) as IndexBody;
+  }
+
+  const facet = (body: IndexBody, key: string) =>
+    Object.fromEntries((body.facets?.[key] ?? []).map((f) => [f.value, f.count]));
+
+  test.beforeAll(async () => {
+    dir = mkdtempSync(path.join(os.tmpdir(), "matches-index-"));
+    // Read once, when the Prisma client module is first loaded. Specs compile
+    // to CommonJS, so require() goes through Playwright's TypeScript loader
+    // (a dynamic import() would reach Node's own ESM loader instead).
+    process.env.DATABASE_URL = `file:${path.join(dir, "index.sqlite")}`;
+    const { prisma } = require("@/server/prisma") as typeof import("@/server/prisma");
+    for (const sql of INDEX_SCHEMA) await prisma.$executeRawUnsafe(sql);
+    for (const [id, teams, sport, country, competition, kickoff, outcome] of INDEX_ROWS) {
+      const [home, away] = teams.split(" – ");
+      await prisma.$executeRawUnsafe(
+        `INSERT INTO match_event_summaries (event_id, event_name, home_team, away_team, sport, country,
+          competition, start_time_utc, status, outcome) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ...[id, `${home} vs ${away}`, home, away, sport, country, competition, kickoff],
+        // Upstream says "finished" even for pre-match captures; only in-play wording counts.
+        id === "evLive00" ? "live" : "finished",
+        outcome
+      );
+    }
+    for (const [id, fetchedAt, terminal] of [
+      ["evTermin", "2020-01-02T17:00:00Z", 1],
+      ["evUnconf", "2020-01-03T10:00:00Z", 0]
+    ] as const) {
+      await prisma.$executeRawUnsafe(
+        "INSERT INTO match_stats_snapshots (event_id, fetched_at, is_terminal) VALUES (?, ?, ?)",
+        id,
+        fetchedAt,
+        terminal
+      );
+    }
+    await prisma.$executeRawUnsafe("INSERT INTO paper_bets (event_id) VALUES ('evFinish'), ('evFinish')");
+    await prisma.$executeRawUnsafe("INSERT INTO backtest_bets (run_id, event_id) VALUES ('run1', 'evFuture')");
+    await prisma.$executeRawUnsafe(
+      "INSERT INTO bet_labels (event_id, home_score, away_score) VALUES ('evFinish', 2, 1), ('evTermin', 0, 0)"
+    );
+    ({ GET: handler } = require("@/app/api/scraped-matches/route") as typeof import("@/app/api/scraped-matches/route"));
+    disconnect = () => prisma.$disconnect();
+  });
+
+  test.afterAll(async () => {
+    await disconnect?.();
+    if (dir) rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("derives every status, counting a terminal snapshot without an outcome as finished", async () => {
+    const all = await index("");
+    expect(all.total).toBe(INDEX_ROWS.length);
+    expect(all.items).toHaveLength(INDEX_ROWS.length);
+    const status = Object.fromEntries(all.items.map((m) => [m.event_id, m.status]));
+    expect(status).toEqual({
+      evFinish: "finished",
+      evTermin: "finished",
+      evUnconf: "unconfirmed",
+      evFuture: "scheduled",
+      evLive00: "live",
+      evNba000: "finished"
+    });
+    expect(all.items.find((m) => m.event_id === "evTermin")?.score).toEqual({ home: 0, away: 0 });
+    expect(facet(all, "status")).toEqual({ finished: 3, unconfirmed: 1, scheduled: 1, live: 1 });
+  });
+
+  test("filters by status before paging, so totals and pages are exact", async () => {
+    const unconfirmed = await index("status=unconfirmed");
+    expect(unconfirmed.total).toBe(1);
+    expect(unconfirmed.items.map((m) => m.event_id)).toEqual(["evUnconf"]);
+
+    const page1 = await index("status=finished&limit=2&sort=kickoff_asc");
+    const page2 = await index("status=finished&limit=2&offset=2&sort=kickoff_asc");
+    expect(page1.total).toBe(3);
+    expect([...page1.items, ...page2.items].map((m) => m.event_id)).toEqual(["evFinish", "evTermin", "evNba000"]);
+    // Facets come with the first page only.
+    expect(page2.facets).toBeUndefined();
+  });
+
+  test("facet counts leave out their own dimension", async () => {
+    const finished = await index("status=finished");
+    expect(facet(finished, "status")).toEqual({ finished: 3, unconfirmed: 1, scheduled: 1, live: 1 });
+    expect(facet(finished, "sport")).toEqual({ football: 2, basketball: 1 });
+
+    // "NHL - Play Offs" folds into NHL; the other leagues keep their counts.
+    const nhl = await index("league=NHL");
+    expect(nhl.total).toBe(2);
+    expect(facet(nhl, "league")).toEqual({ "Premier League": 2, NHL: 2, "Chance Liga": 1, NBA: 1 });
+    expect(facet(nhl, "sport")).toEqual({ hockey: 2 });
+    expect(facet(nhl, "status")).toEqual({ scheduled: 1, live: 1 });
+  });
+
+  test("bet filters and search", async () => {
+    expect((await index("bets=live")).items.map((m) => m.event_id)).toEqual(["evFinish"]);
+    expect((await index("bets=backtest")).items.map((m) => m.event_id)).toEqual(["evFuture"]);
+    expect(facet(await index(""), "bets")).toEqual({ live: 1, backtest: 1 });
+    expect((await index("q=boston")).total).toBe(2);
+    expect((await index(`q=${encodeURIComponent("boston vs knicks")}`)).items.map((m) => m.event_id)).toEqual([
+      "evNba000"
+    ]);
+  });
+
+  test("an exact id is found even when the filters exclude it", async () => {
+    const body = await index("q=evFinish&league=NHL");
+    expect(body.total).toBe(0);
+    expect(body.items).toEqual([]);
+    expect(body.exact?.event_id).toBe("evFinish");
+    expect((await index("q=evFinis")).exact).toBeNull();
   });
 });
 
