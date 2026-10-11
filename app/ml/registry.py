@@ -46,7 +46,9 @@ __all__ = [
     "load_champion",
     "register_run",
     "registered_name",
+    "run_has_model",
     "set_alias",
+    "translate_errors",
     "versions_by_run",
 ]
 
@@ -80,8 +82,10 @@ def _ms_to_iso(ms: Optional[int]) -> Optional[str]:
 
 
 @contextmanager
-def _translated() -> Iterator[None]:
-    """Map MLflow client exceptions onto the module's error types."""
+def translate_errors() -> Iterator[None]:
+    """Map MLflow client exceptions onto the module's error types:
+    missing resources -> RegistryNotFound, invalid values -> RegistryError,
+    anything while the server is down -> MlflowUnavailable."""
     try:
         yield
     except (MlflowUnavailable, RegistryError, RegistryNotFound):
@@ -177,7 +181,7 @@ def register_run(
     if alias is not None:
         _validate_alias(alias)
     client = _client()
-    with _translated():
+    with translate_errors():
         run = client.get_run(run_id)
         model_name = run.data.params.get("model_name")
         if not model_name:
@@ -208,7 +212,7 @@ def register_run(
             client.set_registered_model_alias(name, alias, version.version)
     _log.info(
         "registry_version_created",
-        extra={"event": "registry_version_created", "name": name,
+        extra={"event": "registry_version_created", "registered_model": name,
                "version": version.version, "run_id": run_id, "alias": alias},
     )
     return {"name": name, "version": str(version.version), "alias": alias}
@@ -220,12 +224,12 @@ def set_alias(model_name: str, version: str, alias: str) -> Dict[str, str]:
     name = registered_name(model_name)
     _check_champion_allowed(app_model_name(name), alias)
     client = _client()
-    with _translated():
+    with translate_errors():
         client.get_model_version(name, str(version))
         client.set_registered_model_alias(name, alias, str(version))
     _log.info(
         "registry_alias_set",
-        extra={"event": "registry_alias_set", "name": name, "version": str(version),
+        extra={"event": "registry_alias_set", "registered_model": name, "version": str(version),
                "alias": alias},
     )
     return {"name": name, "version": str(version), "alias": alias}
@@ -236,14 +240,14 @@ def delete_alias(model_name: str, alias: str) -> Dict[str, str]:
     _validate_alias(alias)
     name = registered_name(model_name)
     client = _client()
-    with _translated():
+    with translate_errors():
         model = client.get_registered_model(name)
         if alias not in (model.aliases or {}):
             raise RegistryNotFound(f"{name} has no @{alias} alias")
         client.delete_registered_model_alias(name, alias)
     _log.info(
         "registry_alias_deleted",
-        extra={"event": "registry_alias_deleted", "name": name, "alias": alias},
+        extra={"event": "registry_alias_deleted", "registered_model": name, "alias": alias},
     )
     return {"name": name, "alias": alias}
 
@@ -275,7 +279,7 @@ def versions_by_run(client=None) -> Dict[str, List[Dict[str, str]]]:
     """{run_id: [{name, version}, ...]} across all `picks-*` models."""
     client = client or _client()
     out: Dict[str, List[Dict[str, str]]] = {}
-    with _translated():
+    with translate_errors():
         for model in _registered_models(client):
             for v in _versions(client, model.name):
                 if v.run_id:
@@ -291,7 +295,7 @@ def list_registry() -> List[Dict[str, Any]]:
     client = _client()
     runs: Dict[str, Any] = {}
     out: List[Dict[str, Any]] = []
-    with _translated():
+    with translate_errors():
         for model in _registered_models(client):
             aliases = {a: str(v) for a, v in (model.aliases or {}).items()}
             versions = []
@@ -338,7 +342,7 @@ def get_champion(model_name: str) -> Optional[Tuple[str, Optional[str]]]:
     client = _client()
     name = registered_name(model_name)
     try:
-        with _translated():
+        with translate_errors():
             model = client.get_registered_model(name)
             champion = (model.aliases or {}).get("champion")
             if champion is None:
@@ -368,7 +372,7 @@ def load_champion(model_name: str) -> Optional[LoadedVersion]:
     version, run_id = champion
     mlflow = tracking.import_mlflow()
     name = registered_name(model_name)
-    with tempfile.TemporaryDirectory() as tmp, _translated():
+    with tempfile.TemporaryDirectory() as tmp, translate_errors():
         local = Path(mlflow.artifacts.download_artifacts(
             artifact_uri=f"models:/{name}/{version}",
             dst_path=tmp,
