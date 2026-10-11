@@ -3,7 +3,7 @@ import { clsx } from "clsx";
 import { Button, Callout, EmptyState, Panel, SegmentedControl, Skeleton } from "@/components/ui";
 import { useLocale } from "@/contexts/LocaleContext";
 import { errorMessage } from "@/lib/api/http";
-import { statsPeriodLabel, type Teams } from "@/lib/matches/labels";
+import { statCategoryLabel, statLabel, statsPeriodLabel, statValue, type Teams } from "@/lib/matches/labels";
 import { useStoredStats } from "@/lib/matches/queries";
 import type { MatchStat, MatchStatsCategory } from "@/types/match-stats";
 import { useDetailParams } from "./useDetailParams";
@@ -28,6 +28,7 @@ export function StatsPanel({
   const { get, set } = useDetailParams(eventId);
   const stats = useStoredStats(eventId);
   const periods = stats.data?.event.periods ?? [];
+  const sport = stats.data?.event.sport ?? null;
   const requested = get("stats");
   const period = periods.find((p) => p.name === requested) ?? periods[0];
 
@@ -89,7 +90,7 @@ export function StatsPanel({
             </span>
           </div>
           {period.categories.map((cat, i) => (
-            <CategoryTable key={`${cat.name}-${i}`} category={cat} teams={teams} />
+            <CategoryTable key={`${cat.name}-${i}`} category={cat} teams={teams} sport={sport} />
           ))}
         </div>
       )}
@@ -97,12 +98,20 @@ export function StatsPanel({
   );
 }
 
-function CategoryTable({ category, teams }: { category: MatchStatsCategory; teams: Teams }) {
+function CategoryTable({
+  category,
+  teams,
+  sport
+}: {
+  category: MatchStatsCategory;
+  teams: Teams;
+  sport: string | null;
+}) {
   const { t } = useLocale();
   return (
     <table className="w-full table-fixed border-collapse text-body">
       <caption className="mb-1 text-left font-sans text-label uppercase tracking-label text-text-dim">
-        {category.name}
+        {statCategoryLabel(category.name, t)}
       </caption>
       <colgroup>
         <col className="w-1/4" />
@@ -118,14 +127,17 @@ function CategoryTable({ category, teams }: { category: MatchStatsCategory; team
       </thead>
       <tbody>
         {category.stats.map((s, i) => (
-          <StatRow key={`${s.code ?? s.label}-${i}`} stat={s} />
+          <StatRow key={`${s.code ?? s.label}-${i}`} stat={s} sport={sport} />
         ))}
       </tbody>
     </table>
   );
 }
 
-function StatRow({ stat }: { stat: MatchStat }) {
+/** One statistic. Names and plain numbers are localised; anything else is shown as published. */
+function StatRow({ stat, sport }: { stat: MatchStat; sport: string | null }) {
+  const { t, fmt } = useLocale();
+  const label = stat.label ? statLabel(stat.label, sport, t) : null;
   const home = leadingNumber(stat.home);
   const away = leadingNumber(stat.away);
   const total = home !== null && away !== null && home >= 0 && away >= 0 ? home + away : 0;
@@ -140,11 +152,11 @@ function StatRow({ stat }: { stat: MatchStat }) {
           lead === "home" ? "font-medium text-text" : "text-text-dim"
         )}
       >
-        {stat.home ?? "—"}
+        {stat.home === null ? "—" : statValue(stat.home, fmt)}
       </td>
       <th scope="row" className="py-1.5 text-center font-sans font-normal text-text-dim">
-        <span className="block truncate" title={stat.label ?? undefined}>
-          {stat.label ?? "—"}
+        <span className="block truncate" title={label ?? undefined}>
+          {label ?? "—"}
         </span>
         {homeShare !== null && (
           <span aria-hidden className="mt-1 flex h-1 w-full overflow-hidden bg-surface-3">
@@ -159,7 +171,7 @@ function StatRow({ stat }: { stat: MatchStat }) {
           lead === "away" ? "font-medium text-text" : "text-text-dim"
         )}
       >
-        {stat.away ?? "—"}
+        {stat.away === null ? "—" : statValue(stat.away, fmt)}
       </td>
     </tr>
   );
