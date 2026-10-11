@@ -86,8 +86,8 @@ export function FacetOptions({
 
 /**
  * Compact multi-select for desktop toolbars: a button showing how many values
- * are chosen, opening a checkbox list. Escape or a click outside closes it and
- * returns focus to the button.
+ * are chosen, opening a checkbox list. Escape closes it and returns focus to
+ * the button; a click outside or tabbing out of it closes it too.
  */
 export function FacetSelect({
   label,
@@ -136,6 +136,13 @@ export function FacetSelect({
           triggerRef.current?.focus();
         }
       }}
+      onBlur={(e) => {
+        // Focus moving to another control closes the panel. A null target
+        // (a click on the panel's padding, or Safari not focusing clicked
+        // checkboxes) is left to the click-outside handler.
+        const next = e.relatedTarget as Node | null;
+        if (open && next && !rootRef.current?.contains(next)) setOpen(false);
+      }}
     >
       <Button
         ref={triggerRef}
@@ -161,7 +168,7 @@ export function FacetSelect({
         <div
           id={panelId}
           className={clsx(
-            "absolute top-full z-30 mt-1 w-72 border border-border-strong bg-surface p-1 shadow-[0_8px_24px_rgb(0_0_0/0.45)]",
+            "absolute top-full z-30 mt-1 w-72 border border-border-strong bg-surface p-1 shadow-[0_8px_24px_rgb(var(--bg)/0.6)]",
             alignRight ? "right-0" : "left-0"
           )}
         >

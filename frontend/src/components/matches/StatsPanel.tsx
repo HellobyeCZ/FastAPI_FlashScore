@@ -56,7 +56,8 @@ export function StatsPanel({
         </Callout>
       ) : !stats.data ? (
         <EmptyState compact title={t("matches.stats.empty")}>
-          {terminal === false ? t("matches.stats.emptyFetch") : t("matches.stats.emptyArchived")}
+          {/* Until the event loads it is unknown whether the archive is frozen. */}
+          {terminal === undefined ? null : terminal ? t("matches.stats.emptyArchived") : t("matches.stats.emptyFetch")}
         </EmptyState>
       ) : !period ? (
         <EmptyState compact title={t("matches.stats.noPeriods")}>

@@ -48,15 +48,16 @@ export function scoreText(score: { home: number | string | null; away: number | 
 }
 
 /**
- * Same rules as the list route's SQL: a stored result means finished; an
- * upstream in-play status means live; otherwise kick-off decides between
- * scheduled and unconfirmed (kicked off, no result captured).
+ * Same rules as the list route's SQL: a stored result or a terminal stats
+ * snapshot means finished (not "a score is present" — in-play snapshots carry
+ * scores too); an upstream in-play status means live; otherwise kick-off
+ * decides between scheduled and unconfirmed (kicked off, no result captured).
  */
 export function eventStatus(
-  e: Pick<EventDetail, "outcome" | "status" | "start_time_utc">,
+  e: Pick<EventDetail, "outcome" | "is_terminal" | "status" | "start_time_utc">,
   now = new Date()
 ): MatchStatusKind {
-  if (e.outcome) return "finished";
+  if (e.outcome || e.is_terminal) return "finished";
   const raw = (e.status ?? "").toLowerCase();
   if (raw.includes("live") || raw.includes("in_play") || raw.includes("progress")) return "live";
   const kickoff = e.start_time_utc ? Date.parse(e.start_time_utc) : NaN;

@@ -42,10 +42,15 @@ function oneOf<V extends string>(values: string[], allowed: readonly V[]): V[] {
   return values.filter((v): v is V => (allowed as readonly string[]).includes(v));
 }
 
+/**
+ * `?id=<eventId>` (links from older pages and tools) is read as a search; the
+ * exact-id lookup then offers the match. The next update rewrites the URL
+ * with `q`, which drops `id`.
+ */
 export function parseMatchesUrl(params: Readable): MatchesUrlState {
   const sort = params.get("sort") ?? "";
   return {
-    q: (params.get("q") ?? "").trim(),
+    q: (params.get("q") ?? params.get("id") ?? "").trim(),
     sport: list(params, "sport"),
     country: list(params, "country"),
     league: list(params, "league"),

@@ -166,6 +166,7 @@ export const matches: Record<keyof typeof en, string> = {
   "matches.bets.count.many": "{count} sázky",
   "matches.bets.count.other": "{count} sázek",
   "matches.bets.runAt": "Běh z {time}",
+  "matches.bets.runUnlabelled": "Neoznačený běh modelu {model}",
   "matches.bets.runCaption": "Sázky backtestu {run}",
   "matches.bets.col.recommended": "Doporučeno",
   "matches.bets.col.closing": "Závěrečný",

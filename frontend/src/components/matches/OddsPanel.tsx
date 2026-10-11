@@ -139,7 +139,8 @@ export function OddsPanel({
         </Callout>
       ) : !board || board.markets.length === 0 ? (
         <EmptyState compact title={t("matches.odds.empty")}>
-          {terminal === false ? t("matches.odds.emptyFetch") : t("matches.odds.emptyArchived")}
+          {/* Until the event loads it is unknown whether the archive is frozen. */}
+          {terminal === undefined ? null : terminal ? t("matches.odds.emptyArchived") : t("matches.odds.emptyFetch")}
         </EmptyState>
       ) : (
         <MarketView
@@ -346,8 +347,11 @@ function MarketTable({ market, books, teams }: { market: BoardMarket; books: str
       headerTitle: t("matches.odds.col.impliedTitle"),
       align: "right",
       hideBelow: "sm",
-      cell: (r) =>
-        r.kind === "sel" && r.row.top ? <span className="text-text-dim">{fmt.pct(1 / r.row.top.price, 1)}</span> : null
+      cell: (r) => {
+        // Margin rows carry no implied probability; a selection nobody quotes shows a dash.
+        if (r.kind === "margin") return null;
+        return <span className="text-text-dim">{r.row.top ? fmt.pct(1 / r.row.top.price, 1) : "—"}</span>;
+      }
     }
   ];
 

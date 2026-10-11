@@ -17,7 +17,7 @@ import {
   type SortState
 } from "@/components/ui";
 import { useLocale } from "@/contexts/LocaleContext";
-import { useMatchesQuery } from "@/hooks/useMatchesQuery";
+import { useMatchesQuery, useNextPageFailed } from "@/hooks/useMatchesQuery";
 import { errorMessage } from "@/lib/api/http";
 import { competitionRoot } from "@/lib/competition";
 import type { MessageKey } from "@/lib/i18n";
@@ -55,6 +55,7 @@ export function MatchesPage() {
   }, [text, state.q, update]);
 
   const query = useMatchesQuery(state);
+  const nextPageFailed = useNextPageFailed(state, query.isError);
   const pages = query.data?.pages ?? [];
   const first = pages[0];
   const items = pages.flatMap((p) => p.items);
@@ -291,7 +292,21 @@ export function MatchesPage() {
               }
             />
             {query.isError && query.data && (
-              <Callout tone="neg" title={t("matches.error")} className="m-3">
+              <Callout
+                tone="neg"
+                title={t("matches.error")}
+                className="m-3"
+                action={
+                  <Button
+                    size="sm"
+                    // A failed "load more" retries that page; a failed refetch reloads the list.
+                    onClick={() => (nextPageFailed ? query.fetchNextPage() : query.refetch())}
+                    loading={query.isFetching}
+                  >
+                    {t("common.retry")}
+                  </Button>
+                }
+              >
                 {errorMessage(query.error)}
               </Callout>
             )}

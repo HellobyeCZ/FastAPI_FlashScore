@@ -6,7 +6,7 @@
 /**
  * Display status derived from stored facts, not from the upstream `status`
  * column (which says "finished" even for fixtures captured before kick-off):
- * - finished:    a result (outcome) is stored
+ * - finished:    a result (outcome) or a terminal stats snapshot is stored
  * - live:        upstream reports the match in play
  * - scheduled:   kick-off is in the future
  * - unconfirmed: kick-off has passed but no result was captured

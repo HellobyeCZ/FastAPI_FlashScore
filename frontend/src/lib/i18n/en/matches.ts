@@ -166,6 +166,7 @@ export const matches = {
   "matches.bets.count.many": "{count} bets",
   "matches.bets.count.other": "{count} bets",
   "matches.bets.runAt": "Run of {time}",
+  "matches.bets.runUnlabelled": "Unlabelled {model} run",
   "matches.bets.runCaption": "Backtest bets of {run}",
   "matches.bets.col.recommended": "Recommended",
   "matches.bets.col.closing": "Closing",

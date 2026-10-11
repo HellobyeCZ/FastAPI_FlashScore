@@ -15,7 +15,7 @@ import {
 import { useLocale } from "@/contexts/LocaleContext";
 import { errorMessage } from "@/lib/api/http";
 import type { Formatters } from "@/lib/format";
-import { marketLabel, selectionLabel } from "@/lib/labels";
+import { marketLabel, modelLabel, selectionLabel } from "@/lib/labels";
 import { useEventPicks } from "@/lib/matches/queries";
 import type { BacktestBetRow, PaperBetRow } from "@/lib/matches/types";
 import { routes } from "@/lib/routes";
@@ -30,12 +30,22 @@ function betState(status: string, result: number | null): string | number | null
   return status;
 }
 
-/** Backtest labels are "<model>_<ISO timestamp>"; show them as "Run of <local time>". */
-function runName(run: { run_id: string; run_label: string | null; model: string }, t: T, fmt: Formatters): string {
-  const label = run.run_label ?? "";
+/**
+ * Backtest labels are "<model>_<ISO timestamp>"; show them as "Run of <local
+ * time>". Custom labels are shown as they are; an unlabelled run is named by
+ * its model, never by its id.
+ */
+function runName(run: { run_label: string | null; model: string }, t: T, fmt: Formatters): string {
+  const label = run.run_label?.trim() ?? "";
   const stamp = label.startsWith(`${run.model}_`) ? label.slice(run.model.length + 1) : null;
   if (stamp && !Number.isNaN(Date.parse(stamp))) return t("matches.bets.runAt", { time: fmt.dateTime(stamp) });
-  return label || run.run_id.slice(0, 8);
+  return label || t("matches.bets.runUnlabelled", { model: modelLabel(run.model, t) });
+}
+
+/** Sum of settled P&L; null (shown as a dash) while no bet of the run is settled. */
+function settledPnl(bets: BacktestBetRow[]): number | null {
+  const settled = bets.filter((b) => b.pnl !== null);
+  return settled.length ? settled.reduce((sum, b) => sum + (b.pnl ?? 0), 0) : null;
 }
 
 /** Live paper bets and backtest bets placed on this match, linking to their model and run. */
@@ -110,10 +120,13 @@ function LiveBetsTable({ rows }: { rows: PaperBetRow[] }) {
       header: t("common.selection"),
       cell: (b) => (
         <span className="flex flex-col gap-0.5 leading-tight">
-          {/* The model column is hidden on phones; name the model here instead. */}
+          {/* Model and status columns are hidden on phones; show them here instead. */}
           <ModelLink model={b.model} className="sm:hidden" />
           <span>{selectionLabel(b.selection, t)}</span>
           <span className="whitespace-nowrap text-meta text-text-dim">{marketLabel(b.market, t)}</span>
+          <span className="self-start sm:hidden">
+            <StateBadge state={betState(b.status, b.result)} />
+          </span>
         </span>
       )
     },
@@ -143,6 +156,7 @@ function LiveBetsTable({ rows }: { rows: PaperBetRow[] }) {
     {
       key: "status",
       header: t("common.status"),
+      hideBelow: "sm",
       cell: (b) => <StateBadge state={betState(b.status, b.result)} />
     }
   ];
@@ -161,9 +175,15 @@ function BacktestBets({ rows }: { rows: BacktestBetRow[] }) {
       key: "pick",
       header: t("common.selection"),
       cell: (b) => (
-        <span className="flex flex-col leading-tight">
+        <span className="flex flex-col gap-0.5 leading-tight">
           <span>{selectionLabel(b.selection, t)}</span>
           <span className="whitespace-nowrap text-meta text-text-dim">{marketLabel(b.market, t)}</span>
+          {/* The result column is hidden on phones; show the result here instead. */}
+          {b.result !== null && (
+            <span className="self-start sm:hidden">
+              <StateBadge state={b.result} />
+            </span>
+          )}
         </span>
       )
     },
@@ -190,14 +210,19 @@ function BacktestBets({ rows }: { rows: BacktestBetRow[] }) {
       cell: (b) => <Signed value={b.edge} format="pct" />
     },
     { key: "pnl", header: t("common.pnl"), align: "right", cell: (b) => <Signed value={b.pnl} format="units" /> },
-    { key: "result", header: t("common.result"), cell: (b) => <StateBadge state={b.result} /> }
+    {
+      key: "result",
+      header: t("common.result"),
+      hideBelow: "sm",
+      cell: (b) => <StateBadge state={b.result} />
+    }
   ];
 
   return (
     <div className="flex flex-col gap-4">
       {Array.from(runs.entries()).map(([runId, bets]) => {
         const run = bets[0];
-        const pnl = bets.reduce((sum, b) => sum + (b.pnl ?? 0), 0);
+        const pnl = settledPnl(bets);
         return (
           <div key={runId} className="flex flex-col gap-1.5">
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-body">
