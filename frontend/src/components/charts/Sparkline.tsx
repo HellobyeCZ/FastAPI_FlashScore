@@ -1,32 +1,75 @@
 "use client";
 
-/** Tiny inline trend line. `points` are y-values in order. */
+import { DASH } from "@/lib/format";
+import { useElementWidth } from "@/hooks/useElementWidth";
+import { ChartSvg, isFiniteNumber, tok } from "./frame";
+import { useChartText } from "./text";
+
+/** Width used when the container gives no width of its own (inline, shrink-wrapped). */
+const FALLBACK_WIDTH = 120;
+
+/**
+ * Tiny inline trend line. `points` are y-values in order (oldest first). Fills
+ * its container's width when `width` is omitted; the stroke follows the sign
+ * of the last value unless `color` is given.
+ */
 export function Sparkline({
   points,
-  width = 120,
+  width,
   height = 28,
   ariaLabel,
-  color
+  color,
+  format
 }: {
   points: number[];
   width?: number;
   height?: number;
   ariaLabel: string;
   color?: string;
+  /** Formats the first/last/min/max values in the description (default: locale number). */
+  format?: (v: number) => string;
 }) {
-  if (points.length < 2) return <span className="text-text-faint">—</span>;
-  const min = Math.min(...points, 0);
-  const max = Math.max(...points, 0);
+  const { t, fmt } = useChartText();
+  // -1 = not measured yet; 0 = the container has no width of its own.
+  const [ref, measured] = useElementWidth<HTMLDivElement>(-1);
+  const values = points.filter(isFiniteNumber);
+  const w = Math.floor(width ?? (measured > 0 ? measured : measured === 0 ? FALLBACK_WIDTH : 0));
+
+  // The wrapper is rendered in every state so the measured element never changes.
+  if (values.length < 2) {
+    return (
+      <div ref={ref} className="w-full min-w-0 text-text-faint" title={ariaLabel}>
+        {DASH}
+      </div>
+    );
+  }
+
+  const fmtValue = format ?? ((v: number) => fmt.num(v, 2));
+  const min = Math.min(...values, 0);
+  const max = Math.max(...values, 0);
   const span = max - min || 1;
-  const x = (i: number) => (i / (points.length - 1)) * (width - 2) + 1;
-  const y = (v: number) => height - 1 - ((v - min) / span) * (height - 2);
-  const d = points.map((v, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
-  const last = points[points.length - 1];
-  const stroke = color ?? (last >= 0 ? "rgb(var(--pos))" : "rgb(var(--neg))");
+  const pad = 3;
+  const x = (i: number) => (i / (values.length - 1)) * (w - pad * 2) + pad;
+  const y = (v: number) => height - pad - ((v - min) / span) * (height - pad * 2);
+  const d = values.map((v, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join("");
+  const last = values[values.length - 1];
+  const stroke = color ?? (last >= 0 ? tok("pos") : tok("neg"));
+  const desc = t("sparkline.desc", {
+    first: fmtValue(values[0]),
+    last: fmtValue(last),
+    min: fmtValue(Math.min(...values)),
+    max: fmtValue(Math.max(...values))
+  });
+
   return (
-    <svg width={width} height={height} role="img" aria-label={ariaLabel} className="block overflow-visible">
-      <line x1={0} x2={width} y1={y(0)} y2={y(0)} stroke="rgb(var(--border-strong))" strokeDasharray="2 2" />
-      <path d={d} fill="none" stroke={stroke} strokeWidth={1.5} />
-    </svg>
+    <div ref={ref} className="w-full min-w-0" style={{ height }}>
+      {w > 0 && (
+        <ChartSvg width={w} height={height} label={ariaLabel} desc={desc}>
+          <line x1={0} x2={w} y1={y(0)} y2={y(0)} stroke={tok("border-strong")} strokeDasharray="2 2" />
+          <path d={d} fill="none" stroke={stroke} strokeWidth={1.5} strokeLinejoin="round" />
+          <circle cx={x(values.length - 1)} cy={y(last)} r={2.5} fill={stroke} />
+        </ChartSvg>
+      )}
+    </div>
   );
 }
