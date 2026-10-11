@@ -169,6 +169,8 @@ export const performance = {
   "performance.pager.next": "Next",
   "performance.pager.range": "{start}–{end}",
   "performance.pager.rangeOf": "{start}–{end} of {total}",
+  "performance.pager.beyond": "This page is past the last bet",
+  "performance.pager.first": "First page",
 
   "performance.unit.pp": "{value} pp",
   "performance.unit.units": "{value}u",

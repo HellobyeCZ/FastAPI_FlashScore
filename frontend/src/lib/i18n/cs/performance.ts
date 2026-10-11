@@ -168,6 +168,8 @@ export const performance: Record<keyof typeof en, string> = {
   "performance.pager.next": "Další",
   "performance.pager.range": "{start}–{end}",
   "performance.pager.rangeOf": "{start}–{end} z {total}",
+  "performance.pager.beyond": "Tato stránka je až za poslední sázkou",
+  "performance.pager.first": "První stránka",
 
   "performance.unit.pp": "{value} p. b.",
   "performance.unit.units": "{value} j.",

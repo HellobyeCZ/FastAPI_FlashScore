@@ -42,6 +42,9 @@ const SORT_VALUE: Record<string, (r: Row) => number | null> = {
   max_drawdown: (r) => r.max_drawdown
 };
 
+/** Column keys the leaderboard can be sorted by (validated before reading the URL). */
+export const LEADERBOARD_SORT_KEYS: readonly string[] = ["model", ...Object.keys(SORT_VALUE)];
+
 function sortRows(rows: Row[], sort: NonNullable<SortState>, label: (r: Row) => string): Row[] {
   const value = sort.key === "model" ? label : SORT_VALUE[sort.key];
   if (!value) return rows;
@@ -66,7 +69,8 @@ export function LeaderboardTable({
   sort,
   onSortChange,
   linkParams,
-  empty
+  empty,
+  loading
 }: {
   rows: StatsRow[];
   /** Settled bets behind the rows (null while loading or when truncated). */
@@ -75,6 +79,7 @@ export function LeaderboardTable({
   onSortChange: (s: SortState) => void;
   linkParams: Record<string, string>;
   empty: React.ReactNode;
+  loading?: boolean;
 }) {
   const { t, fmt, locale } = useLocale();
   const rows = useMemo(() => rawRows.filter((r): r is Row => !!r.model), [rawRows]);
@@ -214,6 +219,8 @@ export function LeaderboardTable({
       rowClassName={(r) => (r.n < MIN_N ? "opacity-70" : undefined)}
       sort={sort ?? DEFAULT_SORT}
       onSortChange={onSortChange}
+      loading={loading}
+      skeletonRows={4}
       empty={empty}
       footer={rows.length > 0 ? t("performance.leaderboard.footer", { min: MIN_N }) : undefined}
     />

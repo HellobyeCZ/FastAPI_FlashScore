@@ -11,6 +11,7 @@ import { routes } from "@/lib/routes";
 import type { MessageKey } from "@/lib/i18n";
 import { activeFilterCount, MIN_N } from "@/lib/performance/filters";
 import type { PerformanceFilterState } from "@/lib/performance/useFilters";
+import type { RowsResult } from "@/lib/performance/api";
 import type { HistoryRow } from "@/lib/performance/types";
 import { Button, ButtonLink, Callout, EmptyState, LinkTabs, Panel, Skeleton } from "@/components/ui";
 
@@ -90,6 +91,12 @@ export function StaleWindowCallout({ since }: { since: string }) {
   );
 }
 
+const EMPTY_TITLE = {
+  settled: "performance.empty.settledTitle",
+  pending: "performance.empty.pendingTitle",
+  any: "performance.empty.anyTitle"
+} as const satisfies Record<string, MessageKey>;
+
 /**
  * Empty result for the current window/filters: says which window and filters
  * produced it and offers the action that widens the view.
@@ -101,15 +108,13 @@ export function NoBetsEmpty({
 }: {
   state: PerformanceFilterState;
   compact?: boolean;
-  subject?: "settled" | "any";
+  subject?: "settled" | "pending" | "any";
 }) {
   const { t, locale } = useLocale();
   const windowText = useWindowText(state);
   const filterText = useFilterSummary(state);
   const filtered = activeFilterCount(state.filters, state.keys) > 0;
-  const title = t(subject === "settled" ? "performance.empty.settledTitle" : "performance.empty.anyTitle", {
-    window: windowText
-  });
+  const title = t(EMPTY_TITLE[subject], { window: windowText });
   return (
     <EmptyState
       compact={compact}
@@ -141,6 +146,16 @@ export function NoBetsEmpty({
           : t("performance.empty.outsideWindow")}
     </EmptyState>
   );
+}
+
+/** Caveats for panels built from individual bets (row cap, unapplied filter). */
+export function useRowsNote(rows: Pick<RowsResult, "truncated" | "competitionIgnored">): string | undefined {
+  const { t } = useLocale();
+  const notes = [
+    rows.truncated && t("performance.chart.truncated"),
+    rows.competitionIgnored && t("performance.chart.legacyCompetition")
+  ].filter((n): n is string => !!n);
+  return notes.length ? notes.join(" ") : undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -280,13 +295,14 @@ export function Measured({
 // ---------------------------------------------------------------------------
 // Cells
 
-export function MatchCell({ row }: { row: HistoryRow }) {
+/** "Home – Away" over the competition; falls back to the event id only when no names exist. */
+export function MatchCell({ row, className }: { row: HistoryRow; className?: string }) {
   const { t } = useLocale();
   const home = row.home_team ?? row.home_team_raw;
   const away = row.away_team ?? row.away_team_raw;
   const comp = competitionRoot(row.competition ?? null);
   return (
-    <span className="flex min-w-0 flex-col">
+    <span className={clsx("flex min-w-0 flex-col", className)}>
       {home && away ? (
         <span className="truncate">
           {home} – {away}

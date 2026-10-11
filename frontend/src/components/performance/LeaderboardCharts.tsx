@@ -8,7 +8,7 @@ import { usePicksStats, type RowsResult } from "@/lib/performance/api";
 import type { PicksQuery } from "@/lib/performance/filters";
 import { competitionKey, cumulativeByModel, dayOffset, foldStats } from "@/lib/performance/stats";
 import type { PerformanceFilterState } from "@/lib/performance/useFilters";
-import { ChartPanel, Measured, NoBetsEmpty, panelStatus } from "./shared";
+import { ChartPanel, Measured, NoBetsEmpty, panelStatus, useRowsNote } from "./shared";
 
 const CHART_HEIGHT = 240;
 
@@ -16,7 +16,15 @@ const CHART_HEIGHT = 240;
 const dayIso = (day: string) => `${day}T12:00:00Z`;
 
 /** Running P&L per model over time (settled bets, by settlement day). */
-export function PnlOverTimePanel({ state, q }: { state: PerformanceFilterState; q: PicksQuery }) {
+export function PnlOverTimePanel({
+  state,
+  q,
+  className
+}: {
+  state: PerformanceFilterState;
+  q: PicksQuery;
+  className?: string;
+}) {
   const { t, fmt } = useLocale();
   const stats = usePicksStats(["model", "day"], q, state.ready);
   const status = panelStatus(state.ready, stats);
@@ -40,6 +48,7 @@ export function PnlOverTimePanel({ state, q }: { state: PerformanceFilterState; 
     <ChartPanel
       title={t("performance.chart.pnl.title")}
       description={t("performance.chart.pnl.description")}
+      className={className}
       status={status}
       isEmpty={data.series.length === 0}
       empty={<NoBetsEmpty state={state} compact />}
@@ -84,11 +93,13 @@ export function PnlOverTimePanel({ state, q }: { state: PerformanceFilterState; 
 export function CompetitionPanel({
   state,
   q,
-  metric
+  metric,
+  className
 }: {
   state: PerformanceFilterState;
   q: PicksQuery;
   metric: "roi" | "pnl";
+  className?: string;
 }) {
   const { t, tp, fmt } = useLocale();
   const stats = usePicksStats(["competition"], q, state.ready);
@@ -113,6 +124,7 @@ export function CompetitionPanel({
     <ChartPanel
       title={title}
       description={t("performance.chart.competition.description")}
+      className={className}
       status={status}
       isEmpty={bars.length === 0}
       empty={<NoBetsEmpty state={state} compact />}
@@ -143,8 +155,17 @@ function median(values: number[]): number {
 }
 
 /** Distribution of closing-line value per model (settled bets with a closing price). */
-export function ClvDistributionPanel({ state, settled }: { state: PerformanceFilterState; settled: RowsResult }) {
+export function ClvDistributionPanel({
+  state,
+  settled,
+  className
+}: {
+  state: PerformanceFilterState;
+  settled: RowsResult;
+  className?: string;
+}) {
   const { t, fmt } = useLocale();
+  const note = useRowsNote(settled);
   const status = panelStatus(state.ready, settled);
   const perModel = useMemo(() => {
     const map = new Map<string, number[]>();
@@ -167,10 +188,11 @@ export function ClvDistributionPanel({ state, settled }: { state: PerformanceFil
     <ChartPanel
       title={title}
       description={t("performance.chart.clv.description")}
+      className={className}
       status={status}
       isEmpty={series.length === 0}
       empty={<NoBetsEmpty state={state} compact />}
-      footer={settled.truncated ? t("performance.chart.truncated") : undefined}
+      footer={note}
       table={
         <Table
           caption={title}

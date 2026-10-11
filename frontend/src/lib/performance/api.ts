@@ -95,6 +95,11 @@ export type RowsResult = {
   rows: HistoryRow[];
   /** More bets match than were returned (the 5000-row cap was hit). */
   truncated: boolean;
+  /**
+   * An older backend returned rows without a competition column, so an active
+   * competition filter could not be applied to them (panels must say so).
+   */
+  competitionIgnored: boolean;
   isLoading: boolean;
   isError: boolean;
   error: unknown;
@@ -116,6 +121,7 @@ export function useHistoryRows(q: PicksQuery, status: BetStatus | undefined, ena
   return {
     rows,
     truncated,
+    competitionIgnored: legacy && !!q.competition?.length,
     isLoading: query.isLoading,
     isError: query.isError,
     error: query.error,
@@ -155,6 +161,7 @@ export function useBetsPage(
     return {
       rows: full.rows.slice(start, start + pageSize),
       total: full.isLoading ? null : full.rows.length,
+      competitionIgnored: full.competitionIgnored,
       isLoading: full.isLoading,
       isError: full.isError,
       error: full.error,
@@ -166,6 +173,7 @@ export function useBetsPage(
   return {
     rows: server.data?.rows ?? [],
     total: server.data ? Math.max(server.data.count, page * pageSize + server.data.rows.length) : null,
+    competitionIgnored: false,
     isLoading: server.isLoading,
     isError: server.isError,
     error: server.error,

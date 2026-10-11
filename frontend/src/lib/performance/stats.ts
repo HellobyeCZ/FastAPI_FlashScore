@@ -120,6 +120,51 @@ export function edgeQuantileBins(rows: HistoryRow[], maxBins = 10, minPerBin = 5
   return bins;
 }
 
+/** Price buckets matching the backend's `price_bucket` grouping (upper bounds inclusive). */
+export const PRICE_EDGES = [1.5, 2, 3, 5] as const;
+
+export type PriceBucket = {
+  /** Bucket bounds; `lo` null = from the lowest price, `hi` null = no upper bound. */
+  lo: number | null;
+  hi: number | null;
+  n: number;
+  wins: number;
+  hitRate: number | null;
+  ci: Interval | null;
+  /** Mean of 1 / price: the hit rate at which the bucket breaks even. */
+  breakEven: number | null;
+};
+
+/** Hit rate per price bucket over settled won/lost bets (voids excluded). */
+export function priceBuckets(rows: HistoryRow[]): PriceBucket[] {
+  const bounds: [number | null, number | null][] = [
+    [null, PRICE_EDGES[0]],
+    ...PRICE_EDGES.slice(1).map((hi, i): [number, number] => [PRICE_EDGES[i], hi]),
+    [PRICE_EDGES[PRICE_EDGES.length - 1], null]
+  ];
+  return bounds
+    .map(([lo, hi]) => {
+      const bets = rows.filter((r) => {
+        const p = r.price_at_recommendation;
+        if (p === null || (r.result !== 0 && r.result !== 1)) return false;
+        return (lo === null || p > lo) && (hi === null || p <= hi);
+      });
+      const n = bets.length;
+      const wins = bets.filter((r) => r.result === 1).length;
+      const inv = bets.reduce((a, r) => a + 1 / (r.price_at_recommendation as number), 0);
+      return {
+        lo,
+        hi,
+        n,
+        wins,
+        hitRate: n > 0 ? wins / n : null,
+        ci: wilson(wins, n),
+        breakEven: n > 0 ? inv / n : null
+      };
+    })
+    .filter((b) => b.n > 0);
+}
+
 // ---------------------------------------------------------------------------
 // Folding aggregate rows (competition stage variants → one root)
 
