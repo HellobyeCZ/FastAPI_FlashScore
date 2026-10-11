@@ -1,3 +1,54 @@
+/**
+ * Bulk scrape jobs — FastAPI wire contract (app/schemas/bulk_scrape.py),
+ * reached through the /api/backend proxy. Timestamps are ISO-8601 UTC.
+ */
+export type BulkScrapeJobStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "completed_with_errors"
+  | "failed"
+  | "cancelled";
+
+export type BulkScrapeJobRow = {
+  id: number;
+  competition_path: string;
+  seasons: number;
+  include_stats: boolean;
+  include_odds: boolean;
+  max_concurrency: number;
+  status: BulkScrapeJobStatus | string;
+  created_at: string;
+  started_at: string | null;
+  updated_at: string;
+  finished_at: string | null;
+  last_error: string | null;
+  total_events: number;
+  pending_events: number;
+  running_events: number;
+  succeeded_events: number;
+  failed_events: number;
+  skipped_events: number;
+};
+
+export type BulkScrapeJobList = {
+  total: number;
+  jobs: BulkScrapeJobRow[];
+};
+
+/** POST /bulk-scrape/jobs body. */
+export type BulkScrapeJobCreate = {
+  competition_path: string;
+  seasons: number;
+  include_stats: boolean;
+  include_odds: boolean;
+  max_concurrency: number;
+};
+
+/*
+ * Normalised camelCase shapes consumed by the legacy fetchers in
+ * lib/api-client.ts. New code uses the wire types above.
+ */
 export interface BulkScrapeJob {
   id: number;
   competitionPath: string;
