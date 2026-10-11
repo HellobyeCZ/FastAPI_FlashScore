@@ -44,8 +44,10 @@ export type TodayResponse = {
   window: { today_start: string; today_end: string; tz: string };
   /** Every pick (any state) with kick-off inside `window`. */
   slate: TodayPick[];
-  /** Open picks with kick-off in [now, now + 72 h). */
+  /** Open picks with kick-off in [now, now + 72 h), at most 500 rows. */
   upcoming72h: TodayPick[];
+  /** Uncapped counts of those open picks, in total and kicking off before `window.today_end`. */
+  open72h: { count: number; today_count: number };
   /** Settled bets with settled_at in the last 30 days; `pnl` is null when n = 0. */
   pnl30d: { n: number; pnl: number | null; series: { settled_at: string; cum_pnl: number }[] };
   /** Latest settled_at of a settled (not voided) bet, any age. */

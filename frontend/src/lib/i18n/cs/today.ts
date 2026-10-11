@@ -7,7 +7,10 @@ export const today: Record<keyof typeof en, string> = {
   "today.kpi.pnl": "Zisk/ztráta · posledních 30 dní",
   "today.kpi.pnl.empty": "Za 30 dní žádná vypořádaná sázka — poslední {age}",
   "today.kpi.pnl.never": "Zatím nebyla vypořádána žádná sázka",
-  "today.kpi.pnl.chart": "Kumulativní zisk/ztráta sázek vypořádaných za posledních 30 dní (počet: {count})",
+  "today.kpi.pnl.chart.one": "Kumulativní zisk/ztráta {count} sázky vypořádané za posledních 30 dní",
+  "today.kpi.pnl.chart.few": "Kumulativní zisk/ztráta {count} sázek vypořádaných za posledních 30 dní",
+  "today.kpi.pnl.chart.many": "Kumulativní zisk/ztráta {count} sázky vypořádané za posledních 30 dní",
+  "today.kpi.pnl.chart.other": "Kumulativní zisk/ztráta {count} sázek vypořádaných za posledních 30 dní",
   "today.kpi.open": "Otevřené tipy · příštích 72\u00a0h",
   "today.kpi.open.today.one": "{count} tip začíná dnes",
   "today.kpi.open.today.few": "{count} tipy začínají dnes",
@@ -83,5 +86,6 @@ export const today: Record<keyof typeof en, string> = {
   "today.recent.allResults": "Všechny výsledky",
   "today.recent.error": "Vypořádané sázky se nepodařilo načíst",
   "today.recent.empty": "Zatím nebyla vypořádána žádná sázka",
-  "today.recent.emptyBody": "Papírové sázky se tu objeví po skončení zápasů a běhu vypořádání."
+  "today.recent.emptyBody":
+    "Papírové sázky se tu objeví po skončení zápasů a běhu vypořádání. Vypořádání se spouští s pipeline ve Správě dat."
 };

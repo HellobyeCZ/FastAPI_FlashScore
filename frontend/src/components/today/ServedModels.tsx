@@ -1,6 +1,6 @@
 "use client";
 import { useLocale } from "@/contexts/LocaleContext";
-import { Badge, EmptyState, ModelName, Panel, QueryState, Skeleton, TextLink } from "@/components/ui";
+import { Badge, ButtonLink, EmptyState, ModelName, Panel, QueryState, Skeleton, TextLink } from "@/components/ui";
 import { useOpsStatus } from "@/hooks/useOpsStatus";
 import { routes } from "@/lib/routes";
 import type { ServedModel } from "@/types/ops";
@@ -30,7 +30,15 @@ export function ServedModels({ className }: { className?: string }) {
         errorTitle={t("today.models.error")}
         isEmpty={(d) => d.models.length === 0}
         empty={
-          <EmptyState compact title={t("today.models.empty")}>
+          <EmptyState
+            compact
+            title={t("today.models.empty")}
+            action={
+              <ButtonLink href={routes.registry(locale)} size="sm">
+                {t("today.models.openRegistry")}
+              </ButtonLink>
+            }
+          >
             {t("today.models.emptyBody")}
           </EmptyState>
         }

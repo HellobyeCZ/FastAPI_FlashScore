@@ -22,7 +22,8 @@ export const dynamic = "force-dynamic";
 //
 // Windows (all relative to one `now`):
 //   slate          every pick with kick-off in the viewer's local day
-//   upcoming72h    pending picks with kick-off in [now, now + 72 h)
+//   upcoming72h    pending picks with kick-off in [now, now + 72 h); the rows
+//                  are capped at ROW_LIMIT, open72h counts them uncapped
 //   pending        pending picks whose kick-off has passed; overdue after 6 h
 //                  (the same rule as the settle_overdue health check)
 //   pnl30d         settled bets with settled_at in the last 30 days (voided
@@ -83,6 +84,8 @@ type RawSummary = {
   overdue_count: number | bigint | null;
   unscheduled_count: number | bigint | null;
   oldest_kickoff: string | null;
+  open_72h_count: number | bigint | null;
+  open_today_count: number | bigint | null;
 };
 
 type RawSeriesPoint = { settled_at: string; pnl: number };
@@ -246,6 +249,11 @@ export async function GET(request: NextRequest) {
           SUM(CASE WHEN b.status = 'pending' AND b.kickoff_jd < julianday(${overdueIso}) THEN 1 ELSE 0 END)
             AS overdue_count,
           SUM(CASE WHEN b.status = 'pending' AND b.kickoff_jd IS NULL THEN 1 ELSE 0 END) AS unscheduled_count,
+          SUM(CASE WHEN b.status = 'pending' AND b.kickoff_jd >= julianday(${nowIso})
+            AND b.kickoff_jd < julianday(${in72hIso}) THEN 1 ELSE 0 END) AS open_72h_count,
+          SUM(CASE WHEN b.status = 'pending' AND b.kickoff_jd >= julianday(${nowIso})
+            AND b.kickoff_jd < julianday(${in72hIso})
+            AND b.kickoff_jd < julianday(${day.end.toISOString()}) THEN 1 ELSE 0 END) AS open_today_count,
           strftime(${ISO}, MIN(CASE WHEN b.status = 'pending' AND b.kickoff_jd < julianday(${nowIso})
             THEN b.kickoff_jd END)) AS oldest_kickoff
         FROM (${BETS}) b
@@ -270,6 +278,10 @@ export async function GET(request: NextRequest) {
       window: { today_start: day.start.toISOString(), today_end: day.end.toISOString(), tz: day.tz },
       slate: slateRows.map((r) => toPick(r, nowJd)),
       upcoming72h: upcomingRows.map((r) => toPick(r, nowJd)),
+      open72h: {
+        count: Number(summary?.open_72h_count ?? 0),
+        today_count: Number(summary?.open_today_count ?? 0)
+      },
       pnl30d: { n: series.length, pnl: series.length > 0 ? cum : null, series },
       last_settled_at: summary?.last_settled_at ?? null,
       pending: {

@@ -104,6 +104,7 @@ const TODAY_HEALTHY = {
   window: WINDOW,
   slate: SLATE,
   upcoming72h: [...SLATE.filter((p) => p.state === "open"), ...LATER],
+  open72h: { count: 6, today_count: 4 },
   pnl30d: { n: PNL_SERIES.length, pnl: PNL_SERIES[PNL_SERIES.length - 1].cum_pnl, series: PNL_SERIES },
   last_settled_at: "2026-10-11T09:00:00.000Z",
   pending: { count: 3, overdue_count: 2, unscheduled_count: 0, oldest_kickoff: "2026-10-10T15:00:00.000Z" },
@@ -118,6 +119,7 @@ const TODAY_STALE = {
   window: WINDOW,
   slate: [],
   upcoming72h: [],
+  open72h: { count: 0, today_count: 0 },
   pnl30d: { n: 0, pnl: null, series: [] },
   last_settled_at: "2026-05-13T20:41:26.231Z",
   pending: { count: 18, overdue_count: 18, unscheduled_count: 0, oldest_kickoff: "2026-05-12T19:30:00.000Z" },
@@ -242,7 +244,9 @@ test.describe("Today cockpit", () => {
   });
 
   test("nothing today falls back to the next 72 hours and says so", async ({ page }) => {
-    await setup(page, { today: { ...TODAY_HEALTHY, slate: [], upcoming72h: LATER } });
+    await setup(page, {
+      today: { ...TODAY_HEALTHY, slate: [], upcoming72h: LATER, open72h: { count: 2, today_count: 0 } }
+    });
     await page.goto("/en/today");
 
     const panel = slate(page, "Next 72 hours");
@@ -253,7 +257,9 @@ test.describe("Today cockpit", () => {
   });
 
   test("fresh pipeline with nothing to bet says so instead of blaming staleness", async ({ page }) => {
-    await setup(page, { today: { ...TODAY_HEALTHY, slate: [], upcoming72h: [] } });
+    await setup(page, {
+      today: { ...TODAY_HEALTHY, slate: [], upcoming72h: [], open72h: { count: 0, today_count: 0 } }
+    });
     await page.goto("/en/today");
 
     await expect(slate(page)).toContainText("No picks today or in the next 72 hours");

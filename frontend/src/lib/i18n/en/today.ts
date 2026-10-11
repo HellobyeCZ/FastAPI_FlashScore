@@ -8,7 +8,10 @@ export const today = {
   "today.kpi.pnl": "P&L · last 30 days",
   "today.kpi.pnl.empty": "No settled bets in 30 days — last settled {age}",
   "today.kpi.pnl.never": "No bet has been settled yet",
-  "today.kpi.pnl.chart": "Cumulative P&L of {count} bets settled in the last 30 days",
+  "today.kpi.pnl.chart.one": "Cumulative P&L of {count} bet settled in the last 30 days",
+  "today.kpi.pnl.chart.few": "Cumulative P&L of {count} bets settled in the last 30 days",
+  "today.kpi.pnl.chart.many": "Cumulative P&L of {count} bets settled in the last 30 days",
+  "today.kpi.pnl.chart.other": "Cumulative P&L of {count} bets settled in the last 30 days",
   "today.kpi.open": "Open picks · next 72\u00a0h",
   "today.kpi.open.today.one": "{count} kicks off today",
   "today.kpi.open.today.few": "{count} kick off today",
@@ -84,5 +87,6 @@ export const today = {
   "today.recent.allResults": "All results",
   "today.recent.error": "Couldn't load settled bets",
   "today.recent.empty": "No bet has been settled yet",
-  "today.recent.emptyBody": "Paper bets appear here once their matches finish and the settler has run."
+  "today.recent.emptyBody":
+    "Paper bets appear here once their matches finish and the settler has run. The settler runs with the pipeline from Data ops."
 } as const;

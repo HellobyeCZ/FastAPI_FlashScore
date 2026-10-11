@@ -4,7 +4,7 @@ import { useLocale } from "@/contexts/LocaleContext";
 import { SampleSize, Skeleton, Stat, StatGrid, TextLink } from "@/components/ui";
 import { Sparkline } from "@/components/charts";
 import { useElementWidth } from "@/hooks/useElementWidth";
-import { DASH, parseDate, signTone } from "@/lib/format";
+import { DASH, signTone } from "@/lib/format";
 import { routes } from "@/lib/routes";
 import type { TodayResponse } from "@/hooks/useToday";
 import { FRESHNESS_TONE, pipelineFreshness } from "./shared";
@@ -49,7 +49,7 @@ export function TodayKpis({ query }: { query: UseQueryResult<TodayResponse> }) {
 }
 
 function PnlStat({ data }: { data: TodayResponse }) {
-  const { t, fmt } = useLocale();
+  const { t, tp, fmt } = useLocale();
   const { n, pnl, series } = data.pnl30d;
 
   if (n === 0 || pnl === null) {
@@ -79,7 +79,7 @@ function PnlStat({ data }: { data: TodayResponse }) {
       sub={n >= SMALL_SAMPLE ? <SampleSize n={n} min={SMALL_SAMPLE} /> : undefined}
       caution={n < SMALL_SAMPLE ? t("common.smallSample", { n }) : undefined}
     >
-      <PnlSparkline points={points} label={t("today.kpi.pnl.chart", { count: n })} />
+      <PnlSparkline points={points} label={tp("today.kpi.pnl.chart", n)} />
     </Stat>
   );
 }
@@ -96,13 +96,11 @@ function PnlSparkline({ points, label }: { points: number[]; label: string }) {
 
 function OpenStat({ data }: { data: TodayResponse }) {
   const { t, tp, fmt } = useLocale();
-  const end = parseDate(data.window.today_end)?.getTime() ?? 0;
-  const today = data.upcoming72h.filter((p) => (parseDate(p.kickoff)?.getTime() ?? Infinity) < end).length;
   return (
     <Stat
       label={t("today.kpi.open")}
-      value={fmt.int(data.upcoming72h.length)}
-      sub={tp("today.kpi.open.today", today)}
+      value={fmt.int(data.open72h.count)}
+      sub={tp("today.kpi.open.today", data.open72h.today_count)}
     />
   );
 }

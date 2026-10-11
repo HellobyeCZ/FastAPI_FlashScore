@@ -2,6 +2,7 @@
 import type { UseQueryResult } from "@tanstack/react-query";
 import { useLocale } from "@/contexts/LocaleContext";
 import {
+  ButtonLink,
   EmptyState,
   ModelName,
   Panel,
@@ -101,7 +102,15 @@ export function RecentSettled({
           errorTitle={t("today.recent.error")}
           isEmpty={(d) => d.recent_settled.length === 0}
           empty={
-            <EmptyState compact title={t("today.recent.empty")}>
+            <EmptyState
+              compact
+              title={t("today.recent.empty")}
+              action={
+                <ButtonLink href={routes.ops(locale)} size="sm">
+                  {t("today.slate.openOps")}
+                </ButtonLink>
+              }
+            >
               {t("today.recent.emptyBody")}
             </EmptyState>
           }
