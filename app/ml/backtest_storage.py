@@ -39,6 +39,7 @@ class RunRow:
     market_spec: str = "football_1x2_ft"
     sharpe_adjusted: Optional[float] = None
     mlflow_run_id: Optional[str] = None
+    n_train_events: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -69,6 +70,11 @@ _RUN_COLS = (
     "sharpe_adjusted mlflow_run_id"
 ).split()
 
+# Columns added after the Phase A schema. Read when present so helpers keep
+# working against databases (and test fixtures) created before they existed;
+# written only through their dedicated setters.
+_RUN_OPTIONAL_COLS = ("n_train_events",)
+
 _BET_COLS = (
     "run_id event_id bet_ts kickoff_ts market selection price_taken "
     "closing_price model_prob implied_prob devigged_prob edge "
@@ -97,7 +103,10 @@ def insert_bets(conn: sqlite3.Connection, bets: Sequence[BetRow]) -> None:
 
 
 def _row_to_run(row: sqlite3.Row) -> RunRow:
-    return RunRow(**{c: row[c] for c in _RUN_COLS})
+    data = {c: row[c] for c in _RUN_COLS}
+    keys = row.keys()
+    data.update({c: row[c] for c in _RUN_OPTIONAL_COLS if c in keys})
+    return RunRow(**data)
 
 
 def _row_to_bet(row: sqlite3.Row) -> BetRow:
@@ -204,6 +213,20 @@ def update_mlflow_run_id(
     conn.execute(
         "UPDATE backtest_runs SET mlflow_run_id = ? WHERE id = ?",
         (mlflow_run_id, run_id),
+    )
+    conn.commit()
+
+
+def update_n_train_events(
+    conn: sqlite3.Connection,
+    run_id: str,
+    n_train_events: Optional[int],
+) -> None:
+    """Record how many events the run's model was fitted on (0 for the
+    analytic baselines). Set once training finishes."""
+    conn.execute(
+        "UPDATE backtest_runs SET n_train_events = ? WHERE id = ?",
+        (n_train_events, run_id),
     )
     conn.commit()
 

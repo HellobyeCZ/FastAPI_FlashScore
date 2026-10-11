@@ -208,3 +208,51 @@ def test_models_endpoint_returns_items_with_kind(app_client: TestClient):
     # Trainable
     assert kinds_by_name.get("logistic") == "trainable"
     assert kinds_by_name.get("dixon_coles") == "trainable"
+
+
+def test_cancel_route(app_client: TestClient, monkeypatch):
+    """POST /backtest/runs/{id}/cancel: 404 unknown, running -> flagged then
+    cancelled, 409 once finished. Summaries carry the new fields."""
+    import threading
+
+    release = threading.Event()
+
+    def blocking(**kw):
+        release.wait(10)
+        raise AssertionError("cancelled run must not need a report")
+
+    monkeypatch.setattr("app.services.backtest_manager.run_backtest", blocking)
+    try:
+        assert app_client.post("/backtest/runs/nope/cancel").status_code == 404
+
+        run_id = app_client.post(
+            "/backtest/runs",
+            json={"model": "market_implied", "train_until": "2024-08-01T00:00:00Z"},
+        ).json()["id"]
+        for _ in range(100):
+            if app_client.get(f"/backtest/runs/{run_id}").json()["status"] == "running":
+                break
+            time.sleep(0.05)
+
+        resp = app_client.post(f"/backtest/runs/{run_id}/cancel")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["id"] == run_id
+        assert body["status"] == "running"
+        assert body["stage"] == "cancelling"
+        assert "n_train_events" in body and "mlflow_ui_url" in body
+
+        release.set()
+        detail = {}
+        for _ in range(100):
+            detail = app_client.get(f"/backtest/runs/{run_id}").json()
+            if detail["status"] != "running":
+                break
+            time.sleep(0.05)
+        assert detail["status"] == "cancelled"
+        assert detail["mlflow_ui_url"] is None
+
+        again = app_client.post(f"/backtest/runs/{run_id}/cancel")
+        assert again.status_code == 409
+    finally:
+        release.set()

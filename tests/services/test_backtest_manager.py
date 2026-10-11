@@ -282,3 +282,152 @@ def test_start_with_no_orphans_does_not_fail(db_path):
         await mgr.shutdown()
 
     asyncio.run(go())
+
+
+# ---------------------------------------------------------------------------
+# MLflow isolation, n_train_events, cancel
+# ---------------------------------------------------------------------------
+
+def _wait_for(mgr, run_id, statuses, *, tries=200):
+    async def go():
+        for _ in range(tries):
+            r = await mgr.get_run(run_id)
+            if r and r.status in statuses:
+                return r
+            await asyncio.sleep(0.05)
+        return await mgr.get_run(run_id)
+    return go()
+
+
+def _run_once(params_model="market_implied"):
+    """Create one run on a fresh manager and wait for a terminal status."""
+    from app.services.backtest_manager import BacktestManager, CreateRunParams
+
+    async def go():
+        mgr = BacktestManager()
+        await mgr.start()
+        run_id = await mgr.create_run(
+            CreateRunParams(model=params_model, train_until="2024-08-01T00:00:00Z")
+        )
+        row = await _wait_for(mgr, run_id, ("completed", "failed", "cancelled"))
+        # Logging runs after the row turns completed; give it a beat.
+        for _ in range(40):
+            if row.mlflow_run_id:
+                break
+            await asyncio.sleep(0.05)
+            row = await mgr.get_run(run_id)
+        await mgr.shutdown()
+        return row
+
+    return asyncio.run(go())
+
+
+def test_completed_run_stays_completed_when_mlflow_logging_raises(db_path, monkeypatch):
+    monkeypatch.setattr(
+        "app.services.backtest_manager.run_backtest", lambda **kw: _ok_report(),
+    )
+
+    def boom(**kwargs):
+        raise RuntimeError("tracking server exploded")
+
+    monkeypatch.setattr("app.services.backtest_manager.log_backtest_run", boom)
+    row = _run_once()
+    assert row.status == "completed", row.error
+    assert row.error is None
+    assert row.mlflow_run_id is None
+
+
+def test_mlflow_run_id_persisted_from_log_backtest_run(db_path, monkeypatch):
+    monkeypatch.setattr(
+        "app.services.backtest_manager.run_backtest", lambda **kw: _ok_report(),
+    )
+    seen = {}
+
+    def fake_log(**kwargs):
+        seen.update(kwargs)
+        return "mlflow-run-123"
+
+    monkeypatch.setattr("app.services.backtest_manager.log_backtest_run", fake_log)
+    row = _run_once()
+    assert row.status == "completed"
+    assert row.mlflow_run_id == "mlflow-run-123"
+    assert row.n_train_events == 0  # analytic baseline: fitted on nothing
+    assert seen["backtest_run_id"] == row.id
+    assert seen["scope_size"] > 0
+    assert seen["trained_model"] is None
+
+
+def test_fitted_model_of_prefers_attribute_then_closure():
+    from app.ml.models import make_dixon_coles_model_fn, make_trained_model_fn
+    from app.services.backtest_manager import _fitted_model_of
+
+    class Trained:
+        feature_columns = ("home_elo",)
+
+        def predict_proba(self, X):  # pragma: no cover - never called
+            raise AssertionError
+
+    trained = Trained()
+    fn = make_trained_model_fn(trained, calibrated=True, name_prefix="hgb")
+    assert _fitted_model_of(fn) is trained  # closure fallback
+
+    other = Trained()
+    fn.trained_model = other
+    assert _fitted_model_of(fn) is other  # explicit attribute wins
+
+    from app.ml.dixon_coles import DCConfig
+    assert _fitted_model_of(make_dixon_coles_model_fn({}, DCConfig())) is None
+
+    from app.ml.models import get
+    assert _fitted_model_of(get("market_implied")) is None
+
+
+def test_cancel_queued_and_running_runs(db_path, monkeypatch):
+    import threading
+
+    release = threading.Event()
+
+    def blocking_backtest(**kw):
+        release.wait(10)
+        return _ok_report()
+
+    monkeypatch.setattr("app.services.backtest_manager.run_backtest", blocking_backtest)
+    from app.services.backtest_manager import (
+        BacktestManager, CreateRunParams, RunNotCancellable,
+    )
+
+    async def go():
+        mgr = BacktestManager()
+        await mgr.start()
+        params = CreateRunParams(model="market_implied", train_until="2024-08-01T00:00:00Z")
+        first = await mgr.create_run(params)
+        second = await mgr.create_run(params)  # queued behind the blocked first run
+        await _wait_for(mgr, first, ("running",))
+
+        queued = await mgr.cancel(second)
+        assert queued.status == "cancelled"
+        assert queued.finished_at is not None
+
+        running = await mgr.cancel(first)
+        assert running.status == "running"
+        assert running.stage == "cancelling"
+
+        release.set()
+        first_row = await _wait_for(mgr, first, ("cancelled", "completed", "failed"))
+        assert first_row.status == "cancelled"
+        assert first_row.stage is None
+        assert first_row.total_bets is None  # results discarded
+
+        try:
+            await mgr.cancel(first)
+        except RunNotCancellable as exc:
+            assert exc.status == "cancelled"
+        else:
+            raise AssertionError("cancelling a finished run must raise")
+        assert await mgr.cancel("does-not-exist") is None
+        await mgr.shutdown()
+
+    try:
+        asyncio.run(go())
+    finally:
+        release.set()

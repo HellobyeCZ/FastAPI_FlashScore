@@ -1577,6 +1577,10 @@ class SnapshotStore:
             connection.execute(
                 "ALTER TABLE backtest_runs ADD COLUMN mlflow_run_id TEXT"
             )
+        if "n_train_events" not in existing_cols:
+            connection.execute(
+                "ALTER TABLE backtest_runs ADD COLUMN n_train_events INTEGER"
+            )
         connection.commit()
 
     @staticmethod
