@@ -26,10 +26,9 @@ import {
   type BoardRow,
   type OddsBoard
 } from "@/lib/matches/odds";
-import { useLiveSnapshot, useLiveSnapshots, useStoredOdds } from "@/lib/matches/queries";
+import { STORED_SOURCE, useDefaultOddsSource, useLiveSnapshot } from "@/lib/matches/queries";
 import { useDetailParams } from "./useDetailParams";
 
-const STORED = "stored";
 /** Lines either side of the main line shown before "show all lines". */
 const LINE_WINDOW = 2;
 
@@ -53,13 +52,14 @@ export function OddsPanel({
 }) {
   const { t, fmt } = useLocale();
   const { get, set } = useDetailParams(eventId);
-  const stored = useStoredOdds(eventId);
-  const snapshots = useLiveSnapshots(eventId);
+  const { stored, snapshots, source: defaultSource, settled } = useDefaultOddsSource(eventId);
 
-  // Without a stored snapshot the newest live capture is the default view.
+  // ?snap= picks a board explicitly ("stored" or a capture's fetched_at);
+  // without it the page opens on the newer of the stored snapshot and the
+  // newest live capture, the same board the model view prices against.
   const requested = get("snap");
-  const fallbackLive = stored.data === null ? (snapshots.data?.[0]?.fetched_at ?? null) : null;
-  const snap = requested ?? fallbackLive;
+  const selected = requested ?? defaultSource ?? STORED_SOURCE;
+  const snap = selected === STORED_SOURCE ? null : selected;
   const live = useLiveSnapshot(eventId, snap);
   const active = snap ? live : stored;
 
@@ -72,7 +72,7 @@ export function OddsPanel({
 
   const stripOptions: SegmentOption<string>[] = [
     ...(stored.data
-      ? [{ value: STORED, label: t("matches.odds.storedChip", { time: fmt.dateTime(stored.data.fetched_at) }) }]
+      ? [{ value: STORED_SOURCE, label: t("matches.odds.storedChip", { time: fmt.dateTime(stored.data.fetched_at) }) }]
       : []),
     ...(snapshots.data ?? []).map((s) => ({ value: s.fetched_at, label: fmt.dateTime(s.fetched_at) }))
   ];
@@ -100,9 +100,9 @@ export function OddsPanel({
             <SegmentedControl
               label={t("matches.odds.snapshots")}
               size="sm"
-              value={snap ?? STORED}
+              value={selected}
               options={stripOptions}
-              onChange={(v) => set({ snap: v === STORED ? null : v })}
+              onChange={(v) => set({ snap: v === (defaultSource ?? STORED_SOURCE) ? null : v })}
               className="min-w-max"
             />
           </div>
@@ -122,7 +122,7 @@ export function OddsPanel({
           {errorMessage(snapshots.error)}
         </Callout>
       )}
-      {active.isLoading || (stored.data === null && snapshots.isLoading) ? (
+      {(!requested && !settled) || active.isLoading ? (
         <Skeleton lines={8} className="p-4" />
       ) : active.isError ? (
         <Callout
@@ -143,7 +143,7 @@ export function OddsPanel({
         </EmptyState>
       ) : (
         <MarketView
-          key={snap ?? STORED}
+          key={selected}
           board={board}
           teams={teams}
           family={get("market")}

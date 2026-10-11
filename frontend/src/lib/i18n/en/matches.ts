@@ -100,6 +100,10 @@ export const matches = {
   "matches.detail.notFoundHint":
     "Search the stored matches, or fetch this event from FlashScore to add it to the archive.",
   "matches.detail.searchStored": "Search stored matches",
+  "matches.detail.notFoundHintNoFetch": "Search the stored matches for it.",
+  "matches.detail.unavailable": "Couldn't load this stored match",
+  "matches.detail.unavailableBody":
+    "The match is in the archive, but the backend returned no event details ({message}). Check that FastAPI is running the current version.",
   "matches.detail.provenance": "Stored data · newest snapshot {time} ({age})",
   "matches.detail.provenanceNone": "No snapshots stored yet",
   "matches.detail.frozen": "Final result stored — snapshots are frozen",

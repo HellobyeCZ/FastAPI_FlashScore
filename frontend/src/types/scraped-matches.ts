@@ -36,6 +36,8 @@ export type MatchesQuery = {
   sort?: MatchesSort;
   offset?: number;
   limit?: number;
+  /** false skips facet counts (cheap id lookups). */
+  facets?: boolean;
 };
 
 export type MatchListItem = {
@@ -82,7 +84,7 @@ export type MatchesResponse = {
   /**
    * Counts per option with every *other* active filter applied, so choosing
    * one country still shows how many matches the other countries have.
-   * Only computed for the first page (offset 0).
+   * Only computed for the first page (offset 0), unless `facets=0`.
    */
   facets?: MatchFacets;
   /** Present when the search text is exactly a stored event id (ignores filters). */

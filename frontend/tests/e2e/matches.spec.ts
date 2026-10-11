@@ -510,7 +510,10 @@ type DetailOptions = {
   event?: Record<string, unknown> | null;
   eventStatus?: number;
   predict?: unknown;
-  odds?: unknown;
+  /** Stored odds payload; null answers 404 ("nothing stored"). */
+  odds?: unknown | null;
+  /** false answers 404 for stored stats. */
+  stats?: boolean;
   captures?: string[];
 };
 
@@ -523,8 +526,10 @@ async function stubDetail(page: Page, opts: DetailOptions = {}) {
   } else {
     await stubJson(page, base, { ...EVENT, ...(opts.event ?? {}) });
   }
-  await stubJson(page, `${base}/odds`, opts.odds ?? storedOdds());
-  await stubJson(page, `${base}/stats`, { ...STATS, event: { ...STATS.event, event_id: id } });
+  if (opts.odds === null) await stubJson(page, `${base}/odds`, { detail: "No stored odds snapshot" }, 404);
+  else await stubJson(page, `${base}/odds`, opts.odds ?? storedOdds());
+  if (opts.stats === false) await stubJson(page, `${base}/stats`, { detail: "No stored stats snapshot" }, 404);
+  else await stubJson(page, `${base}/stats`, { ...STATS, event: { ...STATS.event, event_id: id } });
   await stubJson(page, `${base}/picks`, PICKS);
   await stubJson(page, `**/api/backend/predict/${id}`, opts.predict ?? PREDICT);
   const captures = opts.captures ?? CAPTURES;
@@ -844,6 +849,7 @@ test.describe("Match detail", () => {
 
   test("an unknown event shows a not-found state", async ({ page }) => {
     const requests = await setup(page);
+    const lookups = await stubList(page);
     await stubDetail(page, { event: { event_id: "nope1234" }, eventStatus: 404 });
     await page.goto("/en/matches/nope1234");
     await expect(page.getByRole("heading", { level: 1, name: "Match not found" })).toBeVisible();
@@ -852,7 +858,58 @@ test.describe("Match detail", () => {
       "href",
       "/en/matches?q=nope1234"
     );
+    // The index confirmed the id is not stored, so fetching it is offered (and still confirmed).
+    await expect(page.getByRole("button", { name: /Fetch latest from FlashScore/ })).toBeVisible();
+    expect(lookups[0].searchParams.get("facets")).toBe("0");
     expect(requests.filter((p) => UPSTREAM.test(p))).toEqual([]);
+  });
+
+  test("a stored match whose event endpoint 404s is reported as unavailable, not unknown", async ({ page }) => {
+    await setup(page);
+    await stubList(page);
+    await stubDetail(page, { eventStatus: 404 });
+    await page.goto(`/en/matches/${EVENT_ID}`);
+    await expect(page.getByRole("heading", { level: 1, name: "Sparta Prague – Hradec Kralove" })).toBeVisible();
+    await expect(page.getByText("Couldn't load this stored match")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Fetch latest from FlashScore/ })).toHaveCount(0);
+  });
+
+  test("without a stored snapshot the newest live capture is the board and the price source", async ({ page }) => {
+    await setup(page);
+    await stubDetail(page, { odds: null });
+    await page.goto(`/en/matches/${EVENT_ID}`);
+    const odds = page.locator("#odds");
+    await expect(odds.getByText(/Live capture · May 13, 2026, 10:40 PM/)).toBeVisible();
+    await expect(odds.getByRole("row").filter({ hasText: "Draw" }).getByRole("cell").nth(1)).toHaveText("9.40");
+    const model = page.locator("#model");
+    await expect(model.getByText(/best prices from the live capture of May 13, 2026, 10:40 PM/)).toBeVisible();
+    // Best draw price in that capture: Betano 9.45 (Tipsport 9.40).
+    await expect(model.getByRole("row").filter({ hasText: "Logistic" }).filter({ hasText: "Draw" })).toContainText(
+      "9.45"
+    );
+  });
+
+  test("a live capture newer than the stored snapshot is the default board", async ({ page }) => {
+    await setup(page);
+    await stubDetail(page, { odds: { ...storedOdds(), fetched_at: "2026-05-01T08:00:00.000000+00:00" } });
+    await page.goto(`/en/matches/${EVENT_ID}`);
+    const odds = page.locator("#odds");
+    await expect(odds.getByText(/Live capture · May 13, 2026, 10:40 PM/)).toBeVisible();
+    await odds.getByRole("radio", { name: /Stored/i }).click();
+    await expect(page).toHaveURL(/snap=stored/);
+    await expect(odds.getByText(/Stored snapshot · fetched May 1, 2026/)).toBeVisible();
+    await expect(odds.getByRole("row").filter({ hasText: "Draw" }).getByRole("cell").nth(1)).toHaveText("6.10");
+  });
+
+  test("nothing stored shows empty odds and statistics panels", async ({ page }) => {
+    await setup(page);
+    await stubDetail(page, { odds: null, stats: false, captures: [] });
+    await page.goto(`/en/matches/${EVENT_ID}`);
+    await expect(page.getByText("No odds stored for this match")).toBeVisible();
+    await expect(page.getByText("This match was archived without odds.")).toBeVisible();
+    await expect(page.getByText("No statistics stored for this match")).toBeVisible();
+    await expect(page.getByText("This match was archived without statistics.")).toBeVisible();
   });
 
   test("a failing event keeps the page chrome and the other panels", async ({ page }) => {

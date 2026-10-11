@@ -6,7 +6,7 @@ import { competitionRoot } from "@/lib/competition";
 import type { MessageKey } from "@/lib/i18n";
 import { countryLabel, eventStatus, matchTitle, sportLabel } from "@/lib/matches/display";
 import type { Teams } from "@/lib/matches/labels";
-import { isNotFound, useEvent } from "@/lib/matches/queries";
+import { isNotFound, useEvent, useStoredMatchLookup } from "@/lib/matches/queries";
 import type { EventDetail } from "@/lib/matches/types";
 import { routes } from "@/lib/routes";
 import { BetsPanel } from "./BetsPanel";
@@ -43,24 +43,15 @@ export function MatchDetailPage({ eventId }: { eventId: string }) {
   const e = event.data;
 
   if (event.isError && isNotFound(event.error)) {
+    // Retry goes through this page's observer: a second useEvent() mounting on
+    // an errored query would refetch on mount and flip this branch back and forth.
     return (
-      <>
-        <PageHeader
-          title={t("matches.detail.notFound")}
-          crumbs={[{ label: t("matches.title"), href: routes.matches(locale) }]}
-        />
-        <EmptyState
-          title={t("matches.detail.notFoundBody", { id: eventId })}
-          action={
-            <>
-              <ButtonLink href={routes.matches(locale, { q: eventId })}>{t("matches.detail.searchStored")}</ButtonLink>
-              <FetchLatest eventId={eventId} lastFetchedAt={null} size="md" />
-            </>
-          }
-        >
-          {t("matches.detail.notFoundHint")}
-        </EmptyState>
-      </>
+      <EventNotFound
+        eventId={eventId}
+        error={event.error}
+        onRetry={() => event.refetch()}
+        retrying={event.isFetching}
+      />
     );
   }
 
@@ -167,5 +158,71 @@ function Provenance({ event }: { event: EventDetail }) {
       </span>
       {event.is_terminal && <span>{t("matches.detail.frozen")}</span>}
     </span>
+  );
+}
+
+/**
+ * /events/{id} answered 404. If the id is in the stored-matches index the
+ * event endpoint itself is failing (say so, offer a retry); only a truly
+ * unknown id gets "not found" plus the option to fetch it from FlashScore.
+ */
+function EventNotFound({
+  eventId,
+  error,
+  onRetry,
+  retrying
+}: {
+  eventId: string;
+  error: unknown;
+  onRetry: () => void;
+  retrying: boolean;
+}) {
+  const { t, locale } = useLocale();
+  const lookup = useStoredMatchLookup(eventId, true);
+  const stored = lookup.data?.exact ?? null;
+  const crumbs: Crumb[] = [{ label: t("matches.title"), href: routes.matches(locale) }];
+
+  if (lookup.isLoading) {
+    return (
+      <>
+        <PageHeader title={<Skeleton className="inline-block h-6 w-64 max-w-full" />} crumbs={crumbs} />
+        <Skeleton lines={4} />
+      </>
+    );
+  }
+  if (stored) {
+    return (
+      <>
+        <PageHeader title={matchTitle(stored, t)} crumbs={crumbs} />
+        <Callout
+          tone="neg"
+          title={t("matches.detail.unavailable")}
+          action={
+            <Button size="sm" onClick={onRetry} loading={retrying}>
+              {t("common.retry")}
+            </Button>
+          }
+        >
+          {t("matches.detail.unavailableBody", { message: errorMessage(error) })}
+        </Callout>
+      </>
+    );
+  }
+  return (
+    <>
+      <PageHeader title={t("matches.detail.notFound")} crumbs={crumbs} />
+      <EmptyState
+        title={t("matches.detail.notFoundBody", { id: eventId })}
+        action={
+          <>
+            <ButtonLink href={routes.matches(locale, { q: eventId })}>{t("matches.detail.searchStored")}</ButtonLink>
+            {/* Only offered when the index confirms the id is not stored. */}
+            {lookup.isSuccess && <FetchLatest eventId={eventId} lastFetchedAt={null} size="md" />}
+          </>
+        }
+      >
+        {lookup.isSuccess ? t("matches.detail.notFoundHint") : t("matches.detail.notFoundHintNoFetch")}
+      </EmptyState>
+    </>
   );
 }

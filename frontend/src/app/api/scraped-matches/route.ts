@@ -285,6 +285,8 @@ export async function GET(request: Request) {
     : "kickoff_desc";
   const limit = intParam(params.get("limit"), DEFAULT_LIMIT, 1, MAX_LIMIT);
   const offset = intParam(params.get("offset"), 0, 0, 10_000_000);
+  // Lookups that only need rows (e.g. "is this id stored?") skip the facet GROUP BYs.
+  const wantFacets = offset === 0 && params.get("facets") !== "0";
 
   try {
     // Tables written by the ML pipeline may not exist in a fresh database.
@@ -320,7 +322,7 @@ export async function GET(request: Request) {
     ]);
 
     let facets: MatchFacets | undefined;
-    if (offset === 0) {
+    if (wantFacets) {
       const [sport, country, league, status, bets] = await Promise.all([
         facetCounts("sport", "m.sport", clauses),
         facetCounts("country", "m.country", clauses),

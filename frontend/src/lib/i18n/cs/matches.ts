@@ -100,6 +100,10 @@ export const matches: Record<keyof typeof en, string> = {
   "matches.detail.notFoundHint":
     "Prohledejte uložené zápasy, nebo tuto událost stáhněte z FlashScore a přidejte ji do archivu.",
   "matches.detail.searchStored": "Hledat v uložených zápasech",
+  "matches.detail.notFoundHintNoFetch": "Zkuste ho najít mezi uloženými zápasy.",
+  "matches.detail.unavailable": "Uložený zápas se nepodařilo načíst",
+  "matches.detail.unavailableBody":
+    "Zápas v archivu je, ale backend nevrátil podrobnosti události ({message}). Ověřte, že FastAPI běží v aktuální verzi.",
   "matches.detail.provenance": "Uložená data · nejnovější snímek {time} ({age})",
   "matches.detail.provenanceNone": "Zatím nejsou uloženy žádné snímky",
   "matches.detail.frozen": "Konečný výsledek uložen — snímky jsou zmrazené",
