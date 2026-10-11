@@ -1,3 +1,4 @@
+import contextlib
 import json
 import logging
 import logging.config
@@ -5,6 +6,7 @@ import os
 import time
 import uuid
 from contextvars import ContextVar
+from datetime import datetime, timezone
 from functools import lru_cache
 from typing import Any, Optional
 
@@ -14,6 +16,7 @@ from fastapi.responses import JSONResponse
 
 from app.config import get_settings
 from app.schemas.bulk_scrape import (
+    BulkScrapeJob,
     BulkScrapeJobCreateRequest,
     BulkScrapeJobDetail,
     BulkScrapeJobListResponse,
@@ -22,6 +25,7 @@ from app.schemas.match_stats import MatchStatsResponse
 from app.schemas.odds import OddsResponse
 from app.services.bulk_scrape import (
     BulkScrapeJobConfig,
+    BulkScrapeJobNotActiveError,
     BulkScrapeManager,
     LiveOddsScheduler,
     build_live_odds_scheduler_from_settings,
@@ -47,7 +51,9 @@ from app.schemas.backtest import (
     BacktestBetListResponse,
     ReliabilityBucketDTO,
 )
+from app.ml import backtest_stats, paper_trade_stats
 from app.ml.models import names as analytic_model_names
+from app.ml.picks_facets import facets_for_backtest, facets_for_both, facets_for_live
 from app.ml.trainable import TRAINABLE
 
 try:
@@ -751,6 +757,22 @@ async def get_bulk_scrape_job(
     return BulkScrapeJobDetail(**job)
 
 
+@app.post("/bulk-scrape/jobs/{job_id}/cancel", response_model=BulkScrapeJob)
+async def cancel_bulk_scrape_job(
+    job_id: int,
+    bulk_scrape_manager: BulkScrapeManager = Depends(bulk_scrape_manager_dependency),
+) -> BulkScrapeJob:
+    """Stop a queued or running job: no further FlashScore requests are
+    made for it and it is not resumed on restart. 409 once it finished."""
+    try:
+        job = await bulk_scrape_manager.cancel_job(job_id=job_id)
+    except BulkScrapeJobNotActiveError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if job is None:
+        raise HTTPException(status_code=404, detail="Bulk scrape job not found.")
+    return BulkScrapeJob(**job)
+
+
 # ---------------------------------------------------------------------------
 # Backtest routes
 # ---------------------------------------------------------------------------
@@ -955,8 +977,12 @@ def _serialize_prediction(record) -> dict:
     }
 
 
+# The serving and /picks/* handlers below are plain ``def`` endpoints on
+# purpose: they run synchronous SQLite queries and model inference, so
+# FastAPI executes them in its threadpool instead of on the event loop.
+
 @app.get("/predict/{event_id}")
-async def predict_event(event_id: str) -> dict:
+def predict_event(event_id: str) -> dict:
     """Run every loaded model on the given event and return per
     (model, market, selection) predictions. ``market_*`` fields reflect
     the freshest live_odds_snapshot — None if no live snapshot exists
@@ -977,7 +1003,7 @@ async def predict_event(event_id: str) -> dict:
 
 
 @app.get("/picks/upcoming")
-async def picks_upcoming(
+def picks_upcoming(
     hours_ahead: int = Query(default=72, ge=1, le=336),
     min_edge: float = Query(default=0.02, ge=0.0, le=1.0),
     model: Optional[str] = Query(default=None,
@@ -1020,69 +1046,216 @@ async def picks_upcoming(
     }
 
 
+PICKS_SOURCES = ("live", "backtest", "both")
+
+
+def _csv(value: Optional[str]) -> tuple:
+    """Split a comma-separated multi-value query parameter."""
+    if not value:
+        return ()
+    return tuple(v.strip() for v in value.split(",") if v.strip())
+
+
+def _resolve_run_ids(run_ids: Optional[str], run_id: Optional[str]) -> tuple:
+    """Pick ``run_ids`` (CSV) if present, else fall back to single ``run_id``."""
+    if run_ids:
+        return _csv(run_ids)
+    if run_id:
+        return (run_id,)
+    return ()
+
+
+def _require_source(source: str, run_ids: tuple) -> None:
+    """400 for an unknown ``source`` or a backtest source without runs."""
+    if source not in PICKS_SOURCES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"unknown source={source!r}; expected one of {'|'.join(PICKS_SOURCES)}",
+        )
+    if source != "live" and not run_ids:
+        raise HTTPException(status_code=400, detail=f"run_ids required when source={source}")
+
+
+def _stamp_backtest_rows(rows: list, run_ids: tuple, group_by: tuple) -> None:
+    """Label aggregate rows with their backtest run.
+
+    Rows grouped by ``run_id`` already carry it (plus ``run_label``); for a
+    single selected run every row belongs to it. ``model`` is filled from
+    the run unless it is itself a group_by dimension, so a single-run or
+    per-run leaderboard is labelled without the caller grouping by model.
+    """
+    runs = backtest_stats.fetch_runs(run_ids)
+    single = runs.get(run_ids[0]) if len(run_ids) == 1 else None
+    for row in rows:
+        run = runs.get(row.get("run_id")) if "run_id" in group_by else single
+        if "run_id" not in group_by:
+            row["run_id"] = run["id"] if run else None
+            row["run_label"] = run["label"] if run else None
+        if "model" not in group_by and run is not None:
+            row["model"] = run["model"]
+
+
+def _filters_echo(
+    *,
+    status: str,
+    date_from: Optional[str],
+    date_to: Optional[str],
+    model: tuple,
+    market: tuple,
+    sport: tuple,
+    country: tuple,
+    competition: tuple,
+    selection: tuple,
+    edge_min: Optional[float],
+    edge_max: Optional[float],
+    price_min: Optional[float],
+    price_max: Optional[float],
+) -> dict:
+    return {
+        "status": status,
+        "date_from": date_from,
+        "date_to": date_to,
+        "model": list(model),
+        "market": list(market),
+        "sport": list(sport),
+        "country": list(country),
+        "competition": list(competition),
+        "selection": list(selection),
+        "edge_min": edge_min,
+        "edge_max": edge_max,
+        "price_min": price_min,
+        "price_max": price_max,
+    }
+
+
+def _history_sort_key(row: dict) -> datetime:
+    return paper_trade_stats.parse_timestamp(row.get("recommended_at")) or _EPOCH
+
+
+_EPOCH = datetime.min.replace(tzinfo=timezone.utc)
+
+
 @app.get("/picks/history")
-async def picks_history(
-    status: Optional[str] = Query(default=None, description="pending|settled|voided"),
+def picks_history(
+    status: Optional[str] = Query(default=None, description="pending|settled|voided (omit for all)"),
     limit: int = Query(default=200, ge=1, le=5000),
+    offset: int = Query(default=0, ge=0),
     source: str = Query(default="live"),
     run_id: Optional[str] = Query(default=None),
     run_ids: Optional[str] = Query(default=None),
+    date_from: Optional[str] = Query(default=None),
+    date_to: Optional[str] = Query(default=None),
+    model: Optional[str] = Query(default=None),
+    market: Optional[str] = Query(default=None),
+    sport: Optional[str] = Query(default=None),
+    country: Optional[str] = Query(default=None),
+    competition: Optional[str] = Query(default=None),
+    selection: Optional[str] = Query(default=None),
+    edge_min: Optional[float] = Query(default=None),
+    edge_max: Optional[float] = Query(default=None),
+    price_min: Optional[float] = Query(default=None),
+    price_max: Optional[float] = Query(default=None),
 ) -> dict:
-    """Return paper_bets rows for the dashboard. Filterable by status.
+    """Bets for the dashboard tables, newest first, paginated with
+    ``limit``/``offset``. ``count`` is the total number of matching rows.
 
-    Pass ``source=backtest`` plus ``run_ids=<csv>`` (or single ``run_id=<id>``)
-    to read from one or more backtest runs instead of live paper bets.
-    Each row is stamped with its run's model name. ``source=both`` mixes
-    live with the named backtest runs.
+    Takes the same filters as ``/picks/stats`` (and applies the same WHERE
+    clause), so a table always lists exactly the bets its panels aggregate.
+    ``source=backtest`` reads ``run_ids=<csv>`` (or ``run_id``) and pages
+    across all selected runs as one list; ``source=both`` merges live bets
+    with those runs by recommendation time. Backtest bets are all settled.
     """
     ids = _resolve_run_ids(run_ids, run_id)
-    if source in ("backtest", "both"):
-        if not ids:
-            raise HTTPException(status_code=400, detail="run_ids required when source=backtest|both")
-        mgr = _get_backtest_manager()
-        all_rows: list = []
-        per_run_limit = max(1, limit // len(ids))  # roughly even share across runs
-        for rid in ids:
-            run = await mgr.get_run(rid)
-            if run is None:
-                raise HTTPException(status_code=404, detail=f"backtest run {rid!r} not found")
-            bets, _total = await mgr.list_bets(rid, offset=0, limit=per_run_limit)
-            for b in bets:
-                all_rows.append({
-                    "id": f"{rid}_{b.event_id}_{b.market}_{b.selection}",
-                    "event_id": b.event_id,
-                    "market": b.market,
-                    "selection": b.selection,
-                    "recommended_at": b.bet_ts,
-                    "price_at_recommendation": b.price_taken,
-                    "model_prob": b.model_prob,
-                    "edge": b.edge,
-                    "result": b.result,
-                    "pnl": b.pnl,
-                    "clv": b.clv,
-                    "status": "settled",
-                    "model": run.model,
-                })
-        return {"count": len(all_rows), "rows": all_rows[:limit]}
+    _require_source(source, ids)
+    status_value = status or "all"
+    if status_value not in paper_trade_stats.ALLOWED_STATUS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"unknown status {status_value!r}. allowed: {paper_trade_stats.ALLOWED_STATUS}",
+        )
 
-    from app.ml.paper_trade import fetch_paper_bets
+    if source != "live":
+        runs = backtest_stats.fetch_runs(ids)
+        missing = [rid for rid in ids if rid not in runs]
+        if missing:
+            raise HTTPException(status_code=404, detail=f"backtest run {missing[0]!r} not found")
 
-    rows = fetch_paper_bets(status=status, limit=limit)
-    return {"count": len(rows), "rows": rows}
+    # source=both pages over the merge of two newest-first lists: the first
+    # offset+limit rows of the merge always come from the first offset+limit
+    # rows of each side.
+    window = offset + limit if source == "both" else limit
+    side_offset = 0 if source == "both" else offset
+
+    total = 0
+    rows: list = []
+    if source in ("live", "both"):
+        live_filter = paper_trade_stats.StatsFilter(
+            status=status_value,
+            date_from=date_from,
+            date_to=date_to,
+            model=_csv(model),
+            market=_csv(market),
+            sport=_csv(sport),
+            country=_csv(country),
+            competition=_csv(competition),
+            selection=_csv(selection),
+            edge_min=edge_min,
+            edge_max=edge_max,
+            price_min=price_min,
+            price_max=price_max,
+        )
+        live_total, live_rows = paper_trade_stats.fetch_history(
+            live_filter, limit=window, offset=side_offset,
+        )
+        total += live_total
+        rows.extend(live_rows)
+    if source in ("backtest", "both") and status_value in ("all", "settled"):
+        bt_filter = backtest_stats.BacktestStatsFilter(
+            model=_csv(model),
+            market=_csv(market),
+            sport=_csv(sport),
+            country=_csv(country),
+            competition=_csv(competition),
+            selection=_csv(selection),
+            edge_min=edge_min,
+            edge_max=edge_max,
+            price_min=price_min,
+            price_max=price_max,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        bt_total, bt_rows = backtest_stats.fetch_backtest_history(
+            ids, bt_filter, limit=window, offset=side_offset,
+        )
+        total += bt_total
+        rows.extend(bt_rows)
+
+    if source == "both":
+        rows.sort(key=_history_sort_key, reverse=True)
+        rows = rows[offset:offset + limit]
+    return {"count": total, "offset": offset, "limit": limit, "rows": rows}
 
 
 @app.get("/picks/summary")
-async def picks_summary() -> dict:
+def picks_summary() -> dict:
     """Aggregate paper_bets stats: totals, per-model and per-market
     breakdowns, settled time-series for the cumulative P&L / CLV
-    dashboard chart."""
+    dashboard chart, plus pipeline freshness (``last_recommended_at``,
+    ``last_settled_at``, ``oldest_pending_kickoff``)."""
+    from app.ml import db as ml_db
     from app.ml.paper_trade import fetch_summary
 
-    return fetch_summary()
+    summary = fetch_summary()
+    with contextlib.closing(ml_db.connect(read_only=True)) as conn:
+        freshness = paper_trade_stats.pipeline_freshness(conn, now=datetime.now(timezone.utc))
+    summary["last_recommended_at"] = freshness["last_recommended_at"]
+    summary["last_settled_at"] = freshness["last_settled_at"]
+    summary["oldest_pending_kickoff"] = freshness["oldest_pending_kickoff"]
+    return summary
 
 
 @app.get("/picks/stats")
-async def picks_stats(
+def picks_stats(
     group_by: Optional[str] = Query(default=None),
     status: str = Query(default="settled"),
     date_from: Optional[str] = Query(default=None),
@@ -1108,97 +1281,32 @@ async def picks_stats(
     Pass ``source=backtest`` plus ``run_ids=<csv>`` (or ``run_id=<id>`` for a
     single run) to aggregate over one or more backtest runs instead of live
     paper bets. ``source=both`` overlays live with the named backtest runs.
-    When multiple backtest runs are selected, include ``"model"`` in
-    ``group_by`` so the response carries a model name per row.
+    Backtest rows carry ``run_id``/``run_label`` (set for a single run or
+    with ``group_by=run_id``) and the run's ``model``; their ``mean_clv`` is
+    always null. ``hit_rate``/``roi``/``brier``/``mean_clv`` are null when a
+    row has ``n == 0``.
     """
-    def _csv(value: Optional[str]) -> tuple:
-        if not value:
-            return ()
-        return tuple(v.strip() for v in value.split(",") if v.strip())
+    ids = _resolve_run_ids(run_ids, run_id)
+    _require_source(source, ids)
+    gb_tuple = _csv(group_by)
+    model_t, market_t, sport_t = _csv(model), _csv(market), _csv(sport)
+    country_t, competition_t, selection_t = _csv(country), _csv(competition), _csv(selection)
 
-    if source == "backtest":
-        ids = _resolve_run_ids(run_ids, run_id)
-        if not ids:
-            raise HTTPException(status_code=400, detail="run_ids required when source=backtest")
-        from app.ml.backtest_stats import (
-            aggregate_backtest,
-            BacktestStatsRequest,
-            BacktestStatsFilter,
-        )
-        gb_tuple = _csv(group_by)
+    live_rows: list = []
+    if source in ("live", "both"):
         try:
-            bt_req = BacktestStatsRequest(
-                run_ids=ids,
-                filters=BacktestStatsFilter(
-                    market=_csv(market),
-                    sport=_csv(sport),
-                    country=_csv(country),
-                    competition=_csv(competition),
-                    selection=_csv(selection),
-                    edge_min=edge_min,
-                    edge_max=edge_max,
-                    price_min=price_min,
-                    price_max=price_max,
-                    date_from=date_from,
-                    date_to=date_to,
-                ),
+            live_req = paper_trade_stats.StatsRequest(
                 group_by=gb_tuple,
-                min_n_per_group=min_n_per_group,
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc))
-        rows = aggregate_backtest(bt_req)
-        # When model is not in group_by but exactly one run is selected,
-        # stamp the run's model so legacy single-run callers still get a
-        # labelled leaderboard row. Multi-run callers must include
-        # "model" in group_by.
-        if "model" not in gb_tuple and len(ids) == 1:
-            mgr = _get_backtest_manager()
-            run = await mgr.get_run(ids[0])
-            if run is not None:
-                for r in rows:
-                    r["model"] = run.model
-        return {
-            "group_by": list(bt_req.group_by),
-            "filters": {
-                "status": "settled",
-                "date_from": date_from,
-                "date_to": date_to,
-                "model": [],
-                "market": list(bt_req.filters.market),
-                "sport": list(bt_req.filters.sport),
-                "country": list(bt_req.filters.country),
-                "competition": list(bt_req.filters.competition),
-                "selection": list(bt_req.filters.selection),
-                "edge_min": edge_min,
-                "edge_max": edge_max,
-                "price_min": price_min,
-                "price_max": price_max,
-            },
-            "rows": rows,
-        }
-
-    from app.ml.paper_trade_stats import StatsFilter, StatsRequest, aggregate
-
-    if source == "both":
-        ids = _resolve_run_ids(run_ids, run_id)
-        if not ids:
-            raise HTTPException(status_code=400, detail="run_ids required when source=both")
-
-        # Live side
-        try:
-            live_req = StatsRequest(
-                group_by=_csv(group_by),
-                filters=StatsFilter(
+                filters=paper_trade_stats.StatsFilter(
                     status=status,
                     date_from=date_from,
                     date_to=date_to,
-                    model=_csv(model),
-                    market=_csv(market),
-                    sport=_csv(sport),
-                    country=_csv(country),
-                    competition=_csv(competition),
-                    selection=_csv(selection),
+                    model=model_t,
+                    market=market_t,
+                    sport=sport_t,
+                    country=country_t,
+                    competition=competition_t,
+                    selection=selection_t,
                     edge_min=edge_min,
                     edge_max=edge_max,
                     price_min=price_min,
@@ -1208,26 +1316,20 @@ async def picks_stats(
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
-        live_rows = aggregate(live_req)
-        for r in live_rows:
-            r["origin"] = "live"
+        live_rows = paper_trade_stats.aggregate(live_req)
 
-        # Backtest side
-        from app.ml.backtest_stats import (
-            aggregate_backtest,
-            BacktestStatsRequest,
-            BacktestStatsFilter,
-        )
-        gb_tuple = _csv(group_by)
+    bt_rows: list = []
+    if source in ("backtest", "both"):
         try:
-            bt_req = BacktestStatsRequest(
+            bt_req = backtest_stats.BacktestStatsRequest(
                 run_ids=ids,
-                filters=BacktestStatsFilter(
-                    market=_csv(market),
-                    sport=_csv(sport),
-                    country=_csv(country),
-                    competition=_csv(competition),
-                    selection=_csv(selection),
+                filters=backtest_stats.BacktestStatsFilter(
+                    model=model_t,
+                    market=market_t,
+                    sport=sport_t,
+                    country=country_t,
+                    competition=competition_t,
+                    selection=selection_t,
                     edge_min=edge_min,
                     edge_max=edge_max,
                     price_min=price_min,
@@ -1240,85 +1342,44 @@ async def picks_stats(
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
-        bt_rows = aggregate_backtest(bt_req)
+        bt_rows = backtest_stats.aggregate_backtest(bt_req)
+        _stamp_backtest_rows(bt_rows, ids, gb_tuple)
+
+    if source == "both":
+        for r in live_rows:
+            r["origin"] = "live"
         # Suffix " (backtest)" onto model labels so the same model name
         # appearing in both live and backtest rows is visually distinct.
-        single_run_model: Optional[str] = None
-        if "model" not in gb_tuple and len(ids) == 1:
-            mgr = _get_backtest_manager()
-            single_run = await mgr.get_run(ids[0])
-            if single_run is not None:
-                single_run_model = single_run.model
         for r in bt_rows:
             r["origin"] = "backtest"
-            if "model" in gb_tuple and r.get("model"):
+            if r.get("model"):
                 r["model"] = f"{r['model']} (backtest)"
-            elif single_run_model is not None:
-                r["model"] = f"{single_run_model} (backtest)"
 
-        return {
-            "group_by": list(_csv(group_by)),
-            "filters": {
-                "status": status,
-                "date_from": date_from,
-                "date_to": date_to,
-                "model": list(_csv(model)),
-                "market": list(_csv(market)),
-                "sport": list(_csv(sport)),
-                "country": list(_csv(country)),
-                "competition": list(_csv(competition)),
-                "selection": list(_csv(selection)),
-                "edge_min": edge_min,
-                "edge_max": edge_max,
-                "price_min": price_min,
-                "price_max": price_max,
-            },
-            "rows": live_rows + bt_rows,
-        }
-
-    try:
-        request = StatsRequest(
-            group_by=_csv(group_by),
-            filters=StatsFilter(
-                status=status,
-                date_from=date_from,
-                date_to=date_to,
-                model=_csv(model),
-                market=_csv(market),
-                sport=_csv(sport),
-                country=_csv(country),
-                competition=_csv(competition),
-                selection=_csv(selection),
-                edge_min=edge_min,
-                edge_max=edge_max,
-                price_min=price_min,
-                price_max=price_max,
-            ),
-            min_n_per_group=min_n_per_group,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
-
-    rows = aggregate(request)
     return {
-        "group_by": list(request.group_by),
-        "filters": {
-            "status": status, "date_from": date_from, "date_to": date_to,
-            "model": list(request.filters.model),
-            "market": list(request.filters.market),
-            "sport": list(request.filters.sport),
-            "country": list(request.filters.country),
-            "competition": list(request.filters.competition),
-            "selection": list(request.filters.selection),
-            "edge_min": edge_min, "edge_max": edge_max,
-            "price_min": price_min, "price_max": price_max,
-        },
-        "rows": rows,
+        "group_by": list(gb_tuple),
+        "filters": _filters_echo(
+            # Backtest bets are always settled; the live status filter does
+            # not apply to them.
+            status="settled" if source == "backtest" else status,
+            date_from=date_from,
+            date_to=date_to,
+            model=model_t,
+            market=market_t,
+            sport=sport_t,
+            country=country_t,
+            competition=competition_t,
+            selection=selection_t,
+            edge_min=edge_min,
+            edge_max=edge_max,
+            price_min=price_min,
+            price_max=price_max,
+        ),
+        "rows": live_rows + bt_rows,
     }
 
 
 @app.get("/picks/stats/calibration")
-async def picks_stats_calibration(
+def picks_stats_calibration(
     model: str = Query(...),
     date_from: Optional[str] = Query(default=None),
     date_to: Optional[str] = Query(default=None),
@@ -1327,42 +1388,18 @@ async def picks_stats_calibration(
     n_buckets: int = Query(default=10, ge=2, le=50),
 ) -> dict:
     """Calibration buckets for ``model``. Settled bets only."""
-    from app.ml.paper_trade_stats import StatsFilter, calibration_buckets
-
-    def _csv(value: Optional[str]) -> tuple:
-        if not value:
-            return ()
-        return tuple(v.strip() for v in value.split(",") if v.strip())
-
-    filters = StatsFilter(
+    filters = paper_trade_stats.StatsFilter(
         status="settled",
         date_from=date_from, date_to=date_to,
         market=_csv(market),
         competition=_csv(competition),
     )
-    buckets = calibration_buckets(model=model, filters=filters, n_buckets=n_buckets)
+    buckets = paper_trade_stats.calibration_buckets(model=model, filters=filters, n_buckets=n_buckets)
     return {"model": model, "n_buckets": n_buckets, "buckets": buckets}
 
 
-from app.ml.picks_facets import (  # noqa: E402
-    FacetsResponse,
-    facets_for_live,
-    facets_for_backtest,
-    facets_for_both,
-)
-
-
-def _resolve_run_ids(run_ids: Optional[str], run_id: Optional[str]) -> tuple:
-    """Pick ``run_ids`` (CSV) if present, else fall back to single ``run_id``."""
-    if run_ids:
-        return tuple(v.strip() for v in run_ids.split(",") if v.strip())
-    if run_id:
-        return (run_id,)
-    return ()
-
-
 @app.get("/picks/facets")
-async def picks_facets(
+def picks_facets(
     source: str = "live",
     run_id: Optional[str] = None,
     run_ids: Optional[str] = None,
@@ -1378,18 +1415,13 @@ async def picks_facets(
     for back-compat.
     """
     ids = _resolve_run_ids(run_ids, run_id)
+    _require_source(source, ids)
     if source == "live":
         f = facets_for_live()
     elif source == "backtest":
-        if not ids:
-            raise HTTPException(status_code=400, detail="run_ids required when source=backtest")
         f = facets_for_backtest(ids)
-    elif source == "both":
-        if not ids:
-            raise HTTPException(status_code=400, detail="run_ids required when source=both")
-        f = facets_for_both(ids)
     else:
-        raise HTTPException(status_code=400, detail=f"unknown source={source!r}")
+        f = facets_for_both(ids)
     return {
         "models": f.models,
         "markets": f.markets,

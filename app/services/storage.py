@@ -85,7 +85,7 @@ class SnapshotStore:
         fetched_at = response.retrieved_at.astimezone(timezone.utc).isoformat()
         response_payload_json = self._dump_payload(self._model_to_payload(response))
         feed_payloads_json = self._dump_payload(feed_payloads)
-        is_terminal = self._is_terminal_match_response(response)
+        is_terminal = self.is_terminal_match_response(response)
 
         async with self._write_lock:
             await asyncio.to_thread(
@@ -618,7 +618,7 @@ class SnapshotStore:
         if row is None:
             return None
 
-        return self._load_model_from_json(OddsResponse, row["odds_payload_json"])
+        return self.load_model_from_json(OddsResponse, row["odds_payload_json"])
 
     def _is_event_terminal_sync(self, event_id: str) -> bool:
         resolved = self._resolve_latest_match_stats_snapshot_sync(event_id)
@@ -1223,13 +1223,13 @@ class SnapshotStore:
             if row is None:
                 return None
 
-            response = self._load_model_from_json(MatchStatsResponse, row["match_stats_payload_json"])
+            response = self.load_model_from_json(MatchStatsResponse, row["match_stats_payload_json"])
             if response is None:
                 return None
 
             is_terminal = bool(row["is_terminal"])
             if not is_terminal:
-                is_terminal = self._is_terminal_match_response(response)
+                is_terminal = self.is_terminal_match_response(response)
                 if is_terminal:
                     connection.execute(
                         """
@@ -1260,7 +1260,7 @@ class SnapshotStore:
         return model
 
     @staticmethod
-    def _load_model_from_json(
+    def load_model_from_json(
         model_cls: Type[ModelT],
         payload_json: str,
     ) -> Optional[ModelT]:
@@ -1700,7 +1700,7 @@ class SnapshotStore:
         }
 
     @staticmethod
-    def _is_terminal_match_response(response: MatchStatsResponse) -> bool:
+    def is_terminal_match_response(response: MatchStatsResponse) -> bool:
         status = (response.event.status or "").strip().lower()
 
         # Keep non-terminal events refreshable (scheduled/live/interrupted/postponed).
@@ -1731,10 +1731,10 @@ class SnapshotStore:
     @staticmethod
     def _has_final_score(response: MatchStatsResponse) -> bool:
         """True iff the payload exposes a usable Final score row."""
-        return SnapshotStore._final_score(response) is not None
+        return SnapshotStore.final_score(response) is not None
 
     @staticmethod
-    def _final_score(response: MatchStatsResponse) -> Optional[Tuple[int, int]]:
+    def final_score(response: MatchStatsResponse) -> Optional[Tuple[int, int]]:
         """Return ``(home, away)`` from the Final score row, or None.
 
         Mirrors the parser in :func:`app.ml.sports._football_labels` but is

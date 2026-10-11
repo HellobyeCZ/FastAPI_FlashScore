@@ -5,8 +5,10 @@ record/settle and avoid growing it into a query toolbox.
 """
 from __future__ import annotations
 
+import contextlib
 import sqlite3
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from app.ml import db as ml_db
@@ -28,7 +30,7 @@ ALLOWED_GROUP_BY = (
     "month",
 )
 
-ALLOWED_STATUS = ("settled", "pending", "all")
+ALLOWED_STATUS = ("settled", "pending", "voided", "all")
 
 
 @dataclass(frozen=True)
@@ -231,6 +233,10 @@ def aggregate(request: StatsRequest) -> List[Dict[str, Any]]:
             pnl = entry.get("pnl_total", 0.0) or 0.0
             entry["hit_rate"] = (wins / n) if n > 0 else None
             entry["roi"] = (pnl / stake) if stake > 0 else None
+            if n == 0:
+                # An empty population has no hit rate, ROI, Brier or CLV —
+                # report "undefined", never a measured zero.
+                entry.update(hit_rate=None, roi=None, brier=None, mean_clv=None)
             out.append(entry)
 
         # Second pass: compute max_drawdown per group from individual bets.
@@ -387,4 +393,195 @@ def calibration_buckets(
             "mean_pred": mean_pred,
             "hit_rate": hit_rate,
         })
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Bet history (/picks/history, /events/{id}/picks) and pipeline freshness
+# ---------------------------------------------------------------------------
+
+# A pending bet whose kickoff is older than this should have been settled.
+SETTLE_GRACE = timedelta(hours=6)
+
+# Display columns for history rows. Archive summaries win; fixtures captured
+# by discovery fill in events the archive has not seen yet (most pending
+# bets). ``upcoming_fixtures.country`` is lowercase, the archive's is
+# uppercase, so the fallback is upper-cased to keep one vocabulary.
+# ``kickoff``/``home_team_raw``/``away_team_raw``/``competition_path`` keep
+# the keys the dashboard already reads.
+_HISTORY_DISPLAY_WITH_FIXTURES = """
+    COALESCE(mes.start_time_utc, uf.start_time_utc) AS kickoff,
+    uf.home_team_raw AS home_team_raw,
+    uf.away_team_raw AS away_team_raw,
+    uf.competition_path AS competition_path,
+    COALESCE(mes.home_team, uf.home_team_raw) AS home_team,
+    COALESCE(mes.away_team, uf.away_team_raw) AS away_team,
+    COALESCE(mes.sport, uf.sport) AS sport,
+    COALESCE(mes.country, UPPER(uf.country)) AS country,
+    COALESCE(mes.competition, uf.competition) AS competition
+"""
+_HISTORY_DISPLAY_SUMMARIES_ONLY = """
+    mes.start_time_utc AS kickoff,
+    NULL AS home_team_raw,
+    NULL AS away_team_raw,
+    NULL AS competition_path,
+    mes.home_team AS home_team,
+    mes.away_team AS away_team,
+    mes.sport AS sport,
+    mes.country AS country,
+    mes.competition AS competition
+"""
+
+
+def table_names(conn: sqlite3.Connection) -> frozenset:
+    """Names of the tables in ``conn``'s main schema."""
+    return frozenset(
+        row[0]
+        for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+    )
+
+
+def parse_timestamp(value: Any) -> Optional[datetime]:
+    """Parse the ISO-8601 strings stored across the archive into aware UTC
+    datetimes. Columns mix ``...Z`` and ``...+00:00`` (and a few naive
+    values written as UTC), so string comparison is not reliable across
+    tables. Returns None for empty or unparseable input."""
+    if not value:
+        return None
+    text = str(value).strip()
+    if text.endswith(("Z", "z")):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def fetch_history(
+    filters: StatsFilter,
+    *,
+    limit: Optional[int],
+    offset: int = 0,
+    event_id: Optional[str] = None,
+) -> Tuple[int, List[Dict[str, Any]]]:
+    """Live paper bets matching ``filters``, newest recommendation first.
+
+    Uses the exact WHERE clause of :func:`aggregate`, so a history page and
+    the /picks/stats panels always describe the same population. Returns
+    ``(total_matching, page)``; ``limit=None`` returns every match. Each
+    row is the full ``paper_bets`` row plus the display columns above.
+
+    Dimension filters (sport/country/competition) read the archive summary
+    like /picks/stats does, so a pending bet on a fixture the archive has
+    not captured yet is shown with fixture names but is not matched by
+    those filters.
+    """
+    where_clause, params = _build_where(filters)
+    if event_id is not None:
+        where_clause = f"{where_clause} AND pb.event_id = ?"
+        params.append(event_id)
+
+    with contextlib.closing(ml_db.connect(read_only=True)) as conn:
+        tables = table_names(conn)
+        if "paper_bets" not in tables:
+            return 0, []
+        joins = "LEFT JOIN match_event_summaries mes ON mes.event_id = pb.event_id"
+        if "upcoming_fixtures" in tables:
+            joins += " LEFT JOIN upcoming_fixtures uf ON uf.event_id = pb.event_id"
+            display = _HISTORY_DISPLAY_WITH_FIXTURES
+        else:
+            display = _HISTORY_DISPLAY_SUMMARIES_ONLY
+
+        total = conn.execute(
+            f"""
+            SELECT COUNT(*)
+            FROM paper_bets pb
+            LEFT JOIN match_event_summaries mes ON mes.event_id = pb.event_id
+            WHERE {where_clause}
+            """,
+            params,
+        ).fetchone()[0]
+        rows = conn.execute(
+            f"""
+            SELECT pb.*, {display.strip()}
+            FROM paper_bets pb
+            {joins}
+            WHERE {where_clause}
+            ORDER BY pb.recommended_at DESC, pb.id DESC
+            LIMIT ? OFFSET ?
+            """,
+            [*params, -1 if limit is None else limit, offset],
+        ).fetchall()
+    return int(total or 0), [dict(row) for row in rows]
+
+
+def pipeline_freshness(
+    conn: sqlite3.Connection,
+    *,
+    now: datetime,
+    settle_grace: timedelta = SETTLE_GRACE,
+) -> Dict[str, Any]:
+    """When the picks pipeline last recorded and settled, and how far
+    behind settlement is. Shared by /picks/summary and /ops/status.
+
+    ``paper_bets`` is small (tens of rows), so pending kickoffs are parsed
+    in Python rather than compared as mixed-format strings in SQL. Pending
+    bets whose kickoff is unknown are never counted as overdue.
+    """
+    out: Dict[str, Any] = {
+        "last_recommended_at": None,
+        "last_settled_at": None,
+        "pending_bets": 0,
+        "oldest_pending_recommended_at": None,
+        "oldest_pending_kickoff": None,
+        "overdue_pending_bets": 0,
+        "oldest_overdue_kickoff": None,
+    }
+    tables = table_names(conn)
+    if "paper_bets" not in tables:
+        return out
+
+    totals = conn.execute(
+        """
+        SELECT
+            MAX(recommended_at),
+            MAX(settled_at),
+            SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END),
+            MIN(CASE WHEN status = 'pending' THEN recommended_at END)
+        FROM paper_bets
+        """
+    ).fetchone()
+    out["last_recommended_at"] = totals[0]
+    out["last_settled_at"] = totals[1]
+    out["pending_bets"] = int(totals[2] or 0)
+    out["oldest_pending_recommended_at"] = totals[3]
+    if not out["pending_bets"]:
+        return out
+
+    if "upcoming_fixtures" in tables:
+        kickoff_sql = """
+            SELECT COALESCE(mes.start_time_utc, uf.start_time_utc)
+            FROM paper_bets pb
+            LEFT JOIN match_event_summaries mes ON mes.event_id = pb.event_id
+            LEFT JOIN upcoming_fixtures uf ON uf.event_id = pb.event_id
+            WHERE pb.status = 'pending'
+        """
+    else:
+        kickoff_sql = """
+            SELECT mes.start_time_utc
+            FROM paper_bets pb
+            LEFT JOIN match_event_summaries mes ON mes.event_id = pb.event_id
+            WHERE pb.status = 'pending'
+        """
+    parsed_kickoffs = (parse_timestamp(raw) for (raw,) in conn.execute(kickoff_sql))
+    kickoffs = [k for k in parsed_kickoffs if k is not None]
+    if kickoffs:
+        out["oldest_pending_kickoff"] = min(kickoffs).isoformat()
+    overdue = [k for k in kickoffs if k <= now - settle_grace]
+    out["overdue_pending_bets"] = len(overdue)
+    if overdue:
+        out["oldest_overdue_kickoff"] = min(overdue).isoformat()
     return out
