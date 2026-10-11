@@ -34,6 +34,7 @@ _HTML_LANG_PATTERN = re.compile(r'<html[^>]*\blang="([a-zA-Z-]+)"', flags=re.IGN
 _PROJECT_TYPE_ID_PATTERN = re.compile(r'"project_type"\s*:\s*\{\s*"id"\s*:\s*(\d+)')
 _MAX_RESULTS_DATA_PARTS = 250
 _DEFAULT_PROJECT_TYPE_ID = 1
+_logger = logging.getLogger("bulk_scrape")
 
 
 @dataclass(frozen=True)
@@ -46,7 +47,37 @@ class BulkScrapeJobConfig:
 
 
 class BulkScrapeDiscoveryError(Exception):
-    pass
+    def __init__(self, message: str, *, status_code: Optional[int] = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
+class BulkScrapeJobNotActiveError(Exception):
+    """Raised when cancelling a job that already reached a terminal status."""
+
+    def __init__(self, job_id: int, status: str) -> None:
+        super().__init__(f"Bulk scrape job {job_id} is already {status}.")
+        self.job_id = job_id
+        self.status = status
+
+
+def describe_error(exc: BaseException) -> str:
+    """Render an exception for ``last_error`` columns the operator reads.
+
+    ``str(exc)`` alone is often empty (httpx timeouts) or hides the cause, so
+    always lead with the exception type and add the HTTP status when the
+    exception carries one: ``"ReadTimeout"``, ``"OddsAPIError (HTTP 429): …"``.
+    """
+    status = (
+        getattr(exc, "upstream_status", None)
+        or getattr(exc, "status_code", None)
+        or getattr(getattr(exc, "response", None), "status_code", None)
+    )
+    label = type(exc).__name__
+    if isinstance(status, int):
+        label = f"{label} (HTTP {status})"
+    message = str(exc).strip()
+    return f"{label}: {message}" if message else label
 
 
 @dataclass(frozen=True)
@@ -140,11 +171,14 @@ class FlashscoreDiscoveryClient:
         try:
             response = await self._client.get(url)
         except httpx.RequestError as exc:
-            raise BulkScrapeDiscoveryError(f"Could not fetch '{url}': {exc}") from exc
+            raise BulkScrapeDiscoveryError(
+                f"Could not fetch '{url}': {describe_error(exc)}"
+            ) from exc
 
         if response.status_code != httpx.codes.OK:
             raise BulkScrapeDiscoveryError(
-                f"Unexpected status {response.status_code} while fetching '{url}'."
+                f"Unexpected status {response.status_code} while fetching '{url}'.",
+                status_code=response.status_code,
             )
 
         return response.text
@@ -494,6 +528,40 @@ class BulkScrapeManager:
         )
         return dict(job) if job else None
 
+    async def cancel_job(self, *, job_id: int) -> Optional[Dict[str, object]]:
+        """Stop a queued/running job and mark it ``cancelled``.
+
+        Returns None for an unknown job and raises
+        :class:`BulkScrapeJobNotActiveError` when it already finished. The
+        asyncio task is cancelled (and awaited) before the status is written,
+        so a shutdown-style cancellation of the same task — which leaves the
+        job resumable — is never confused with an operator cancel.
+        """
+        job = await self._snapshot_store.get_bulk_scrape_job(job_id=job_id)
+        if job is None:
+            return None
+        if job["status"] not in ("queued", "running"):
+            raise BulkScrapeJobNotActiveError(job_id, str(job["status"]))
+
+        async with self._task_lock:
+            task = self._job_tasks.pop(job_id, None)
+        if task is not None and not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
+
+        if not await self._snapshot_store.cancel_bulk_scrape_job(job_id=job_id):
+            # The job finished between the status read and the cancel.
+            latest = await self._snapshot_store.get_bulk_scrape_job(job_id=job_id)
+            raise BulkScrapeJobNotActiveError(job_id, str((latest or job)["status"]))
+
+        _logger.info(
+            "bulk_scrape_job_cancelled",
+            extra={"job_id": job_id, "previous_status": job["status"]},
+        )
+        cancelled = await self._snapshot_store.get_bulk_scrape_job(job_id=job_id)
+        return dict(cancelled) if cancelled else None
+
     async def _spawn_job(self, job_id: int) -> None:
         async with self._task_lock:
             existing = self._job_tasks.get(job_id)
@@ -516,7 +584,9 @@ class BulkScrapeManager:
             if not params:
                 return
 
-            await self._snapshot_store.mark_bulk_scrape_job_running(job_id=job_id)
+            if not await self._snapshot_store.mark_bulk_scrape_job_running(job_id=job_id):
+                # Cancelled (or finished) before this task got going.
+                return
             await self._snapshot_store.reset_running_bulk_scrape_job_events(job_id=job_id)
             pending = await self._snapshot_store.list_bulk_scrape_pending_events(job_id=job_id)
 
@@ -562,7 +632,7 @@ class BulkScrapeManager:
         except Exception as exc:
             await self._snapshot_store.mark_bulk_scrape_job_failed(
                 job_id=job_id,
-                error=str(exc),
+                error=describe_error(exc),
             )
 
     async def _process_event(
@@ -591,7 +661,7 @@ class BulkScrapeManager:
             await self._snapshot_store.mark_bulk_scrape_event_failed(
                 job_id=job_id,
                 event_id=event_id,
-                error=str(exc),
+                error=describe_error(exc),
             )
 
     async def _scrape_event(
@@ -758,11 +828,14 @@ class FlashscoreFixturesClient:
         try:
             response = await self._client.get(url)
         except httpx.RequestError as exc:
-            raise BulkScrapeDiscoveryError(f"Could not fetch '{url}': {exc}") from exc
+            raise BulkScrapeDiscoveryError(
+                f"Could not fetch '{url}': {describe_error(exc)}"
+            ) from exc
 
         if response.status_code != httpx.codes.OK:
             raise BulkScrapeDiscoveryError(
-                f"Unexpected status {response.status_code} while fetching '{url}'."
+                f"Unexpected status {response.status_code} while fetching '{url}'.",
+                status_code=response.status_code,
             )
         return response.text
 

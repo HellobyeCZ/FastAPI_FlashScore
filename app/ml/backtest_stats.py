@@ -4,18 +4,23 @@
 Same response shape (n, wins, hit_rate, stake_total, pnl_total, roi,
 mean_clv, brier, max_drawdown) so the frontend can render identical
 charts whether ``source=live`` or ``source=backtest``.
+
+``mean_clv`` is always None here: archive backtests take the closing
+price, so closing-line value is undefined by construction (not zero).
 """
 from __future__ import annotations
 
+import contextlib
 import sqlite3
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from app.ml import db as ml_db
+from app.ml.paper_trade_stats import ALLOWED_STATUS, table_names
 
 
 ALLOWED_GROUP_BY = (
-    "model",
+    "model", "run_id",
     "market", "sport", "country", "competition",
     "selection", "edge_bucket", "price_bucket", "day", "week", "month",
 )
@@ -23,6 +28,10 @@ ALLOWED_GROUP_BY = (
 
 @dataclass(frozen=True)
 class BacktestStatsFilter:
+    # The live paper_bets status vocabulary. Backtest bets are settled by
+    # construction, so "pending"/"voided" match none of them.
+    status: str = "all"
+    model: Tuple[str, ...] = ()
     market: Tuple[str, ...] = ()
     sport: Tuple[str, ...] = ()
     country: Tuple[str, ...] = ()
@@ -51,11 +60,16 @@ class BacktestStatsRequest:
                 raise ValueError(
                     f"unknown group_by {t!r}. allowed: {ALLOWED_GROUP_BY}"
                 )
+        if self.filters.status not in ALLOWED_STATUS:
+            raise ValueError(
+                f"unknown status {self.filters.status!r}. allowed: {ALLOWED_STATUS}"
+            )
 
 
 _GROUP_EXPR = {
     # model lives on backtest_runs, joined as r.
     "model": "r.model",
+    "run_id": "b.run_id",
     "market": "b.market",
     "sport": "mes.sport",
     "country": "mes.country",
@@ -90,7 +104,13 @@ def _build_where(run_ids: Sequence[str], f: BacktestStatsFilter) -> Tuple[str, L
     where: List[str] = [f"b.run_id IN ({placeholders})"]
     params: List[Any] = list(run_ids)
 
+    if f.status not in ("all", "settled"):
+        # Every backtest bet is settled: nothing matches, so stats and
+        # history agree with the live side's status semantics.
+        where.append("0 = 1")
+
     for col, values in [
+        ("r.model", f.model),
         ("b.market", f.market),
         ("mes.sport", f.sport),
         ("mes.country", f.country),
@@ -140,13 +160,15 @@ def aggregate_backtest(req: BacktestStatsRequest) -> List[Dict[str, Any]]:
         expr = _GROUP_EXPR[token]
         select_parts.append(f"{expr} AS {token}")
         group_parts.append(expr)
+    if "run_id" in req.group_by:
+        # One label per run id, so MAX() just carries it through the group.
+        select_parts.append("MAX(r.label) AS run_label")
 
     aggregates = """
         COUNT(*) AS n,
         SUM(CASE WHEN b.result = 1.0 THEN 1 ELSE 0 END) AS wins,
         SUM(COALESCE(b.stake_kelly_fraction, 0)) AS stake_total,
         SUM(COALESCE(b.pnl, 0)) AS pnl_total,
-        AVG(b.clv) AS mean_clv,
         AVG(
             CASE WHEN b.result IS NOT NULL
                  THEN (b.model_prob - b.result) * (b.model_prob - b.result)
@@ -190,10 +212,59 @@ def aggregate_backtest(req: BacktestStatsRequest) -> List[Dict[str, Any]]:
             pnl = entry.get("pnl_total", 0.0) or 0.0
             entry["hit_rate"] = (wins / n) if n > 0 else None
             entry["roi"] = (pnl / stake) if stake > 0 else None
+            entry["mean_clv"] = None
+            if n == 0:
+                # Undefined rates, not measured zeros; sums over nothing are 0.
+                entry.update(hit_rate=None, roi=None, brier=None)
+                entry.update(wins=0, stake_total=0.0, pnl_total=0.0)
             out.append(entry)
+
+        if req.group_by == ("run_id",) and req.min_n_per_group <= 1:
+            out = _with_empty_runs(conn, out, req.run_ids)
 
         # Second pass: compute max_drawdown per group from ordered bets.
         out = _attach_max_drawdown(conn, out, req, where_clause, where_params)
+    return out
+
+
+def _with_empty_runs(
+    conn: sqlite3.Connection,
+    rows: List[Dict[str, Any]],
+    run_ids: Sequence[str],
+) -> List[Dict[str, Any]]:
+    """One row per requested run, in request order, for ``group_by=run_id``.
+
+    GROUP BY drops a run without matching bets, which would make it vanish
+    from a per-run comparison instead of reading ``n == 0`` with null
+    rates. Run ids that do not exist get no row.
+    """
+    by_run = {row["run_id"]: row for row in rows}
+    requested = list(dict.fromkeys(run_ids))
+    placeholders = ",".join("?" for _ in requested)
+    labels = {
+        run_id: label
+        for run_id, label in conn.execute(
+            f"SELECT id, label FROM backtest_runs WHERE id IN ({placeholders})",
+            requested,
+        )
+    }
+    out: List[Dict[str, Any]] = []
+    for run_id in requested:
+        if run_id in by_run:
+            out.append(by_run[run_id])
+        elif run_id in labels:
+            out.append({
+                "run_id": run_id,
+                "run_label": labels[run_id],
+                "n": 0,
+                "wins": 0,
+                "stake_total": 0.0,
+                "pnl_total": 0.0,
+                "brier": None,
+                "hit_rate": None,
+                "roi": None,
+                "mean_clv": None,
+            })
     return out
 
 
@@ -259,3 +330,124 @@ def _max_drawdown(pnls: Sequence[float]) -> float:
         if dd > max_dd:
             max_dd = dd
     return max_dd
+
+
+# ---------------------------------------------------------------------------
+# Run lookups and bet history (/picks/history, /events/{id}/picks)
+# ---------------------------------------------------------------------------
+
+def fetch_runs(run_ids: Sequence[str]) -> Dict[str, Dict[str, Any]]:
+    """``{run_id: {"id", "label", "model"}}`` for the runs that exist."""
+    if not run_ids:
+        return {}
+    placeholders = ",".join("?" for _ in run_ids)
+    with contextlib.closing(ml_db.connect(read_only=True)) as conn:
+        if "backtest_runs" not in table_names(conn):
+            return {}
+        rows = conn.execute(
+            f"SELECT id, label, model FROM backtest_runs WHERE id IN ({placeholders})",
+            tuple(run_ids),
+        ).fetchall()
+    return {row["id"]: dict(row) for row in rows}
+
+
+def fetch_backtest_history(
+    run_ids: Sequence[str],
+    filters: BacktestStatsFilter,
+    *,
+    limit: Optional[int],
+    offset: int = 0,
+) -> Tuple[int, List[Dict[str, Any]]]:
+    """Bets of ``run_ids`` matching ``filters``, newest first, paginated
+    globally across the runs. Same WHERE clause as
+    :func:`aggregate_backtest`. Returns ``(total_matching, page)``.
+
+    Rows use the live history vocabulary (``recommended_at``,
+    ``price_at_recommendation``, ``status``) so the dashboard can render
+    both sources with one table; ``clv`` is None (see module docstring).
+    """
+    where_clause, params = _build_where(run_ids, filters)
+    with contextlib.closing(ml_db.connect(read_only=True)) as conn:
+        total = conn.execute(
+            f"""
+            SELECT COUNT(*)
+            FROM backtest_bets b
+            JOIN backtest_runs r ON r.id = b.run_id
+            LEFT JOIN match_event_summaries mes ON mes.event_id = b.event_id
+            WHERE {where_clause}
+            """,
+            params,
+        ).fetchone()[0]
+        # Many bets share a bet_ts, so the tail of the ORDER BY is the
+        # primary key: without it OFFSET pages could overlap or skip rows.
+        rows = conn.execute(
+            f"""
+            SELECT
+                b.*,
+                r.label AS run_label,
+                r.model AS model,
+                mes.home_team AS home_team,
+                mes.away_team AS away_team,
+                mes.sport AS sport,
+                mes.country AS country,
+                mes.competition AS competition,
+                mes.start_time_utc AS summary_kickoff
+            FROM backtest_bets b
+            JOIN backtest_runs r ON r.id = b.run_id
+            LEFT JOIN match_event_summaries mes ON mes.event_id = b.event_id
+            WHERE {where_clause}
+            ORDER BY b.bet_ts DESC, b.run_id, b.event_id, b.market, b.selection
+            LIMIT ? OFFSET ?
+            """,
+            [*params, -1 if limit is None else limit, offset],
+        ).fetchall()
+    return int(total or 0), [_history_row(row) for row in rows]
+
+
+def _history_row(row: sqlite3.Row) -> Dict[str, Any]:
+    return {
+        "id": f"{row['run_id']}_{row['event_id']}_{row['market']}_{row['selection']}",
+        "run_id": row["run_id"],
+        "run_label": row["run_label"],
+        "model": row["model"],
+        "event_id": row["event_id"],
+        "market": row["market"],
+        "selection": row["selection"],
+        "recommended_at": row["bet_ts"],
+        "kickoff": row["kickoff_ts"] or row["summary_kickoff"],
+        "price_at_recommendation": row["price_taken"],
+        "closing_price": row["closing_price"],
+        "model_prob": row["model_prob"],
+        "implied_prob": row["implied_prob"],
+        "devigged_prob": row["devigged_prob"],
+        "edge": row["edge"],
+        "stake_kelly_fraction": row["stake_kelly_fraction"],
+        "result": row["result"],
+        "pnl": row["pnl"],
+        "clv": None,
+        "status": "settled",
+        "home_team": row["home_team"],
+        "away_team": row["away_team"],
+        "sport": row["sport"],
+        "country": row["country"],
+        "competition": row["competition"],
+    }
+
+
+def fetch_backtest_bets_for_event(event_id: str) -> List[Dict[str, Any]]:
+    """Every backtest bet placed on ``event_id``, newest run first, as raw
+    ``backtest_bets`` rows plus the run's ``run_label`` and ``model``."""
+    with contextlib.closing(ml_db.connect(read_only=True)) as conn:
+        if not {"backtest_bets", "backtest_runs"} <= table_names(conn):
+            return []
+        rows = conn.execute(
+            """
+            SELECT b.*, r.label AS run_label, r.model AS model
+            FROM backtest_bets b
+            JOIN backtest_runs r ON r.id = b.run_id
+            WHERE b.event_id = ?
+            ORDER BY r.created_at DESC, b.run_id, b.market, b.selection
+            """,
+            (event_id,),
+        ).fetchall()
+    return [{**dict(row), "clv": None} for row in rows]

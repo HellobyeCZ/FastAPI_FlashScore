@@ -5,8 +5,10 @@ record/settle and avoid growing it into a query toolbox.
 """
 from __future__ import annotations
 
+import contextlib
 import sqlite3
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from app.ml import db as ml_db
@@ -28,7 +30,7 @@ ALLOWED_GROUP_BY = (
     "month",
 )
 
-ALLOWED_STATUS = ("settled", "pending", "all")
+ALLOWED_STATUS = ("settled", "pending", "voided", "all")
 
 
 @dataclass(frozen=True)
@@ -66,14 +68,50 @@ class StatsRequest:
             )
 
 
+# Event dimensions of a bet. Archive summaries (``mes``) win; fixtures
+# captured by discovery (``uf``) fill in events the archive has not seen
+# yet (most pending bets), so a bet is filtered, grouped and displayed by
+# the same values. ``upcoming_fixtures.country`` is lowercase, the
+# archive's is uppercase, so the fallback is upper-cased.
+EVENT_DIMENSIONS = {
+    "sport": "COALESCE(mes.sport, uf.sport)",
+    "country": "COALESCE(mes.country, UPPER(uf.country))",
+    "competition": "COALESCE(mes.competition, uf.competition)",
+}
+
+# upcoming_fixtures columns read through ``uf``.
+_FIXTURE_COLUMNS = (
+    "sport",
+    "country",
+    "competition",
+    "competition_path",
+    "home_team_raw",
+    "away_team_raw",
+    "start_time_utc",
+)
+
+
+def bets_source(conn: sqlite3.Connection) -> str:
+    """``FROM`` clause for every paper_bets query: the bet (``pb``), its
+    archive summary (``mes``) and its discovered fixture (``uf``).
+
+    Archive-only databases have no ``upcoming_fixtures`` table; ``uf`` is
+    then an all-NULL stand-in, so the expressions above reduce to the
+    archive values without a second set of queries.
+    """
+    source = "paper_bets pb LEFT JOIN match_event_summaries mes ON mes.event_id = pb.event_id"
+    if "upcoming_fixtures" in table_names(conn):
+        return f"{source} LEFT JOIN upcoming_fixtures uf ON uf.event_id = pb.event_id"
+    stub = ", ".join(f"NULL AS {column}" for column in _FIXTURE_COLUMNS)
+    return f"{source} LEFT JOIN (SELECT {stub}) uf ON 0"
+
+
 # Maps group_by token -> SQL SELECT expression. Keys are validated
 # against ALLOWED_GROUP_BY in StatsRequest.__post_init__.
 _GROUP_EXPR = {
     "model": "pb.model",
     "market": "pb.market",
-    "sport": "mes.sport",
-    "country": "mes.country",
-    "competition": "mes.competition",
+    **EVENT_DIMENSIONS,
     "selection": "pb.selection",
     "edge_bucket": (
         "CASE "
@@ -130,9 +168,9 @@ def _build_where(filters: StatsFilter) -> Tuple[str, List[Any]]:
     for col, values in [
         ("pb.model", filters.model),
         ("pb.market", filters.market),
-        ("mes.sport", filters.sport),
-        ("mes.country", filters.country),
-        ("mes.competition", filters.competition),
+        (EVENT_DIMENSIONS["sport"], filters.sport),
+        (EVENT_DIMENSIONS["country"], filters.country),
+        (EVENT_DIMENSIONS["competition"], filters.competition),
         ("pb.selection", filters.selection),
     ]:
         if values:
@@ -190,37 +228,35 @@ def aggregate(request: StatsRequest) -> List[Dict[str, Any]]:
     # HAVING requires GROUP BY in SQLite. When group_by is present we can use
     # HAVING directly; when there is no GROUP BY, wrap as a subquery and filter
     # on n in the outer WHERE.  Both produce the same result set.
-    final_params = list(where_params)
-    if request.min_n_per_group > 1:
-        final_params.append(request.min_n_per_group)
-        if group_parts:
-            sql = f"""
-                SELECT {select_clause}
-                FROM paper_bets pb
-                LEFT JOIN match_event_summaries mes ON mes.event_id = pb.event_id
-                WHERE {where_clause}
-                {group_clause}
-                HAVING n >= ?
-            """
-        else:
-            inner_sql = f"""
-                SELECT {select_clause}
-                FROM paper_bets pb
-                LEFT JOIN match_event_summaries mes ON mes.event_id = pb.event_id
-                WHERE {where_clause}
-            """
-            sql = f"SELECT * FROM ({inner_sql}) WHERE n >= ?"
-    else:
-        sql = f"""
-            SELECT {select_clause}
-            FROM paper_bets pb
-            LEFT JOIN match_event_summaries mes ON mes.event_id = pb.event_id
-            WHERE {where_clause}
-            {group_clause}
-        """
-
     with ml_db.connect(read_only=True) as conn:
         conn.row_factory = sqlite3.Row
+        source = bets_source(conn)
+        final_params = list(where_params)
+        if request.min_n_per_group > 1:
+            final_params.append(request.min_n_per_group)
+            if group_parts:
+                sql = f"""
+                    SELECT {select_clause}
+                    FROM {source}
+                    WHERE {where_clause}
+                    {group_clause}
+                    HAVING n >= ?
+                """
+            else:
+                inner_sql = f"""
+                    SELECT {select_clause}
+                    FROM {source}
+                    WHERE {where_clause}
+                """
+                sql = f"SELECT * FROM ({inner_sql}) WHERE n >= ?"
+        else:
+            sql = f"""
+                SELECT {select_clause}
+                FROM {source}
+                WHERE {where_clause}
+                {group_clause}
+            """
+
         rows = conn.execute(sql, final_params).fetchall()
         out: List[Dict[str, Any]] = []
         for row in rows:
@@ -231,10 +267,15 @@ def aggregate(request: StatsRequest) -> List[Dict[str, Any]]:
             pnl = entry.get("pnl_total", 0.0) or 0.0
             entry["hit_rate"] = (wins / n) if n > 0 else None
             entry["roi"] = (pnl / stake) if stake > 0 else None
+            if n == 0:
+                # An empty population has no hit rate, ROI, Brier or CLV —
+                # report "undefined", never a measured zero. Its sums are 0.
+                entry.update(hit_rate=None, roi=None, brier=None, mean_clv=None)
+                entry.update(wins=0, stake_total=0.0, pnl_total=0.0)
             out.append(entry)
 
         # Second pass: compute max_drawdown per group from individual bets.
-        out = _attach_max_drawdown(conn, out, request, where_clause, where_params)
+        out = _attach_max_drawdown(conn, out, request, source, where_clause, where_params)
     return out
 
 
@@ -242,6 +283,7 @@ def _attach_max_drawdown(
     conn: sqlite3.Connection,
     rows: List[Dict[str, Any]],
     request: StatsRequest,
+    source: str,
     where_clause: str,
     where_params: Sequence[Any],
 ) -> List[Dict[str, Any]]:
@@ -259,8 +301,7 @@ def _attach_max_drawdown(
         bets = conn.execute(
             f"""
             SELECT pb.pnl, COALESCE(pb.settled_at, pb.recommended_at) AS t
-            FROM paper_bets pb
-            LEFT JOIN match_event_summaries mes ON mes.event_id = pb.event_id
+            FROM {source}
             WHERE {where_clause}
             ORDER BY t ASC
             """,
@@ -277,8 +318,7 @@ def _attach_max_drawdown(
     bets = conn.execute(
         f"""
         SELECT {group_exprs}, pb.pnl, COALESCE(pb.settled_at, pb.recommended_at) AS t
-        FROM paper_bets pb
-        LEFT JOIN match_event_summaries mes ON mes.event_id = pb.event_id
+        FROM {source}
         WHERE {where_clause}
         ORDER BY t ASC
         """,
@@ -358,8 +398,7 @@ def calibration_buckets(
         rows = conn.execute(
             f"""
             SELECT pb.model_prob AS p, pb.result AS r
-            FROM paper_bets pb
-            LEFT JOIN match_event_summaries mes ON mes.event_id = pb.event_id
+            FROM {bets_source(conn)}
             WHERE {where_clause}
               AND pb.status = 'settled'
               AND pb.result IS NOT NULL
@@ -387,4 +426,169 @@ def calibration_buckets(
             "mean_pred": mean_pred,
             "hit_rate": hit_rate,
         })
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Bet history (/picks/history, /events/{id}/picks) and pipeline freshness
+# ---------------------------------------------------------------------------
+
+# A pending bet whose kickoff is older than this should have been settled.
+SETTLE_GRACE = timedelta(hours=6)
+
+# Display columns for history rows, merged from archive and fixture like
+# EVENT_DIMENSIONS. ``kickoff``/``home_team_raw``/``away_team_raw``/
+# ``competition_path`` keep the keys the dashboard already reads.
+_HISTORY_DISPLAY = f"""
+    COALESCE(mes.start_time_utc, uf.start_time_utc) AS kickoff,
+    uf.home_team_raw AS home_team_raw,
+    uf.away_team_raw AS away_team_raw,
+    uf.competition_path AS competition_path,
+    COALESCE(mes.home_team, uf.home_team_raw) AS home_team,
+    COALESCE(mes.away_team, uf.away_team_raw) AS away_team,
+    {EVENT_DIMENSIONS["sport"]} AS sport,
+    {EVENT_DIMENSIONS["country"]} AS country,
+    {EVENT_DIMENSIONS["competition"]} AS competition
+"""
+
+
+def table_names(conn: sqlite3.Connection) -> frozenset:
+    """Names of the tables in ``conn``'s main schema."""
+    return frozenset(
+        row[0]
+        for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+    )
+
+
+def parse_timestamp(value: Any) -> Optional[datetime]:
+    """Parse the ISO-8601 strings stored across the archive into aware UTC
+    datetimes. Columns mix ``...Z`` and ``...+00:00`` (and a few naive
+    values written as UTC), so string comparison is not reliable across
+    tables. Returns None for empty or unparseable input."""
+    if not value:
+        return None
+    text = str(value).strip()
+    if text.endswith(("Z", "z")):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def format_timestamp(value: Any) -> Optional[str]:
+    """Normalise a stored timestamp (or datetime) to ISO-8601 UTC for API
+    responses; unparseable text is passed through unchanged."""
+    if isinstance(value, datetime):
+        parsed: Optional[datetime] = (
+            value.replace(tzinfo=timezone.utc) if value.tzinfo is None
+            else value.astimezone(timezone.utc)
+        )
+    else:
+        parsed = parse_timestamp(value)
+    if parsed is not None:
+        return parsed.isoformat()
+    return str(value) if value else None
+
+
+def fetch_history(
+    filters: StatsFilter,
+    *,
+    limit: Optional[int],
+    offset: int = 0,
+    event_id: Optional[str] = None,
+) -> Tuple[int, List[Dict[str, Any]]]:
+    """Live paper bets matching ``filters``, newest recommendation first.
+
+    Uses the exact FROM and WHERE clauses of :func:`aggregate`, so a
+    history page and the /picks/stats panels always describe the same
+    population, and a row matches a sport/country/competition filter on the
+    value it displays. Returns ``(total_matching, page)``; ``limit=None``
+    returns every match. Each row is the full ``paper_bets`` row plus the
+    display columns above.
+    """
+    where_clause, params = _build_where(filters)
+    if event_id is not None:
+        where_clause = f"{where_clause} AND pb.event_id = ?"
+        params.append(event_id)
+
+    with contextlib.closing(ml_db.connect(read_only=True)) as conn:
+        if "paper_bets" not in table_names(conn):
+            return 0, []
+        source = bets_source(conn)
+        total = conn.execute(
+            f"SELECT COUNT(*) FROM {source} WHERE {where_clause}",
+            params,
+        ).fetchone()[0]
+        rows = conn.execute(
+            f"""
+            SELECT pb.*, {_HISTORY_DISPLAY.strip()}
+            FROM {source}
+            WHERE {where_clause}
+            ORDER BY pb.recommended_at DESC, pb.id DESC
+            LIMIT ? OFFSET ?
+            """,
+            [*params, -1 if limit is None else limit, offset],
+        ).fetchall()
+    return int(total or 0), [dict(row) for row in rows]
+
+
+def pipeline_freshness(
+    conn: sqlite3.Connection,
+    *,
+    now: datetime,
+    settle_grace: timedelta = SETTLE_GRACE,
+) -> Dict[str, Any]:
+    """When the picks pipeline last recorded and settled, and how far
+    behind settlement is. Shared by /picks/summary and /ops/status.
+
+    ``paper_bets`` is small (tens of rows), so pending kickoffs are parsed
+    in Python rather than compared as mixed-format strings in SQL. Pending
+    bets whose kickoff is unknown are never counted as overdue.
+    """
+    out: Dict[str, Any] = {
+        "last_recommended_at": None,
+        "last_settled_at": None,
+        "pending_bets": 0,
+        "oldest_pending_recommended_at": None,
+        "oldest_pending_kickoff": None,
+        "overdue_pending_bets": 0,
+        "oldest_overdue_kickoff": None,
+    }
+    if "paper_bets" not in table_names(conn):
+        return out
+
+    totals = conn.execute(
+        """
+        SELECT
+            MAX(recommended_at),
+            MAX(settled_at),
+            SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END),
+            MIN(CASE WHEN status = 'pending' THEN recommended_at END)
+        FROM paper_bets
+        """
+    ).fetchone()
+    out["last_recommended_at"] = totals[0]
+    out["last_settled_at"] = totals[1]
+    out["pending_bets"] = int(totals[2] or 0)
+    out["oldest_pending_recommended_at"] = totals[3]
+    if not out["pending_bets"]:
+        return out
+
+    kickoff_sql = f"""
+        SELECT COALESCE(mes.start_time_utc, uf.start_time_utc)
+        FROM {bets_source(conn)}
+        WHERE pb.status = 'pending'
+    """
+    parsed_kickoffs = (parse_timestamp(raw) for (raw,) in conn.execute(kickoff_sql))
+    kickoffs = [k for k in parsed_kickoffs if k is not None]
+    if kickoffs:
+        out["oldest_pending_kickoff"] = min(kickoffs).isoformat()
+    overdue = [k for k in kickoffs if k <= now - settle_grace]
+    out["overdue_pending_bets"] = len(overdue)
+    if overdue:
+        out["oldest_overdue_kickoff"] = min(overdue).isoformat()
     return out
