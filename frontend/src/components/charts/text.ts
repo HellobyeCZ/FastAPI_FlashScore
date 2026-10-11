@@ -124,9 +124,12 @@ function makeText(locale: Locale): ChartText {
   };
 }
 
-/** Chart copy for the current locale plus the shared formatters. */
+/**
+ * Chart copy for the current locale plus the shared formatters. `appT` is the
+ * app catalog, for the enum labels in lib/labels (model names etc.).
+ */
 export function useChartText() {
   const { locale, fmt, t: appT } = useLocale();
   const text = useMemo(() => makeText(locale), [locale]);
-  return { ...text, locale, fmt, noData: appT("common.noData") };
+  return { ...text, locale, fmt, appT, noData: appT("common.noData") };
 }

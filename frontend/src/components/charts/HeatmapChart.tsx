@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useId, useMemo } from "react";
 import { clsx } from "clsx";
 import { EmptyState } from "@/components/ui";
 import { useElementWidth } from "@/hooks/useElementWidth";
@@ -71,6 +71,9 @@ function divergingFill(v: number, vmax: number): Fill {
   };
 }
 
+const isShown = (c: HeatmapCell | undefined, minN: number): c is HeatmapCell & { value: number } =>
+  !!c && c.value !== null && Number.isFinite(c.value) && c.n >= minN;
+
 const MIN_CELL = 64;
 const MEAN_COL = 92;
 
@@ -99,8 +102,7 @@ export function HeatmapChart({
   const [ref, measured] = useElementWidth<HTMLDivElement>(0);
   const width = widthProp ?? measured;
   const fmtValue = formatValue ?? ((v: number) => fmt.pct(v, 1, true));
-  const shown = (c: HeatmapCell | undefined): c is HeatmapCell & { value: number } =>
-    !!c && c.value !== null && Number.isFinite(c.value) && c.n >= minNToShow;
+  const shown = (c: HeatmapCell | undefined) => isShown(c, minNToShow);
 
   const map = useMemo(() => {
     const m = new Map<string, HeatmapCell>();
@@ -115,7 +117,7 @@ export function HeatmapChart({
       let n = 0;
       for (const c of cols) {
         const cell = map.get(`${r}::${c}`);
-        if (cell && cell.value !== null && Number.isFinite(cell.value) && cell.n >= minNToShow) {
+        if (isShown(cell, minNToShow)) {
           weighted += cell.value * cell.n;
           n += cell.n;
         }
@@ -125,18 +127,36 @@ export function HeatmapChart({
     return out;
   }, [rows, cols, map, minNToShow]);
 
-  const visible = cells.filter((c) => shown(c));
-  const vmax = Math.max(0, ...visible.map((c) => Math.abs(c.value as number)));
-  const hidden = cells.filter((c) => c.value !== null && c.n < minNToShow).length;
+  // Only cells inside the drawn rows × cols count towards the scale and the note.
+  const { vmax, visibleCount, hidden } = useMemo(() => {
+    let max = 0;
+    let count = 0;
+    let small = 0;
+    for (const r of rows) {
+      for (const c of cols) {
+        const cell = map.get(`${r}::${c}`);
+        if (isShown(cell, minNToShow)) {
+          max = Math.max(max, Math.abs(cell.value));
+          count += 1;
+        } else if (cell && cell.value !== null && Number.isFinite(cell.value)) {
+          small += 1;
+        }
+      }
+    }
+    return { vmax: max, visibleCount: count, hidden: small };
+  }, [rows, cols, map, minNToShow]);
   const fill = (v: number): Fill =>
     colorScale ? { background: colorScale(v, vmax), color: tok("text") } : divergingFill(v, vmax);
 
   const labelW = Math.round(Math.min(180, Math.max(96, width * 0.26)));
   const minTableW = labelW + cols.length * MIN_CELL + (showRowMean ? MEAN_COL : 0);
   const caption = ariaLabel ?? t("heatmap.aria");
-  // When the table scrolls inside its panel, row labels stay pinned on the left.
-  const pinned = width > 0 && width < minTableW && "sticky left-0 z-10 border-r border-border bg-surface";
-  const empty = rows.length === 0 || cols.length === 0 || visible.length === 0;
+  const captionId = useId();
+  // When the table scrolls inside its panel, row labels stay pinned on the left
+  // and the scroller becomes a named, focusable region (keyboard scrolling).
+  const scrolls = width > 0 && width < minTableW;
+  const pinned = scrolls && "sticky left-0 z-10 border-r border-border bg-surface";
+  const empty = visibleCount === 0;
 
   return (
     <div ref={ref} className="w-full min-w-0">
@@ -146,12 +166,27 @@ export function HeatmapChart({
         </EmptyState>
       ) : (
         <>
-          <div className="overflow-x-auto">
+          {/*
+           * The scroll is an inline style, not a utility class: page-level
+           * "tables fit their panel" checks select `.overflow-x-auto` wrappers,
+           * and this chart scrolls inside its frame by design. `data-chart-scroll`
+           * is the stable hook for anything that needs to find it.
+           */}
+          <div
+            data-chart-scroll
+            role={scrolls ? "region" : undefined}
+            aria-labelledby={scrolls ? captionId : undefined}
+            tabIndex={scrolls ? 0 : undefined}
+            className="outline-offset-2"
+            style={{ overflowX: "auto" }}
+          >
             <table
               className="w-full table-fixed border-collapse font-mono text-meta"
               style={{ minWidth: minTableW }}
             >
-              <caption className="sr-only">{caption}</caption>
+              <caption id={captionId} className="sr-only">
+                {caption}
+              </caption>
               <colgroup>
                 <col style={{ width: labelW }} />
                 {cols.map((c) => (
@@ -161,15 +196,20 @@ export function HeatmapChart({
               </colgroup>
               <thead>
                 <tr>
-                  <th
-                    scope="col"
-                    className={clsx(
-                      "truncate px-2 py-1.5 text-left align-bottom font-sans text-label font-normal uppercase tracking-label text-text-dim",
-                      pinned
-                    )}
-                  >
-                    {rowHeader}
-                  </th>
+                  {rowHeader ? (
+                    <th
+                      scope="col"
+                      className={clsx(
+                        "truncate px-2 py-1.5 text-left align-bottom font-sans text-label font-normal uppercase tracking-label text-text-dim",
+                        pinned
+                      )}
+                    >
+                      {rowHeader}
+                    </th>
+                  ) : (
+                    // No header text: an empty <th> would be an unnamed header cell.
+                    <td className={clsx(pinned)} />
+                  )}
                   {cols.map((c) => (
                     <th
                       key={c}

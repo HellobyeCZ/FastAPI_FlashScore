@@ -2,7 +2,7 @@
 
 import { useMemo } from "react";
 import { scaleLinear } from "@visx/scale";
-import { modelColor } from "@/lib/labels";
+import { modelColor, modelLabel } from "@/lib/labels";
 import {
   ChartFrame,
   ChartSvg,
@@ -39,7 +39,10 @@ interface ScatterChartProps {
   xLabel?: string;
   yLabel?: string;
   ariaLabel?: string;
-  /** Legend text per category (default: the category key). */
+  /**
+   * Legend text per category. The default reads categories as model keys
+   * (`modelLabel`), which leaves unknown keys readable as they are.
+   */
   categoryLabel?: (category: string) => string;
   formatX?: (v: number) => string;
   formatY?: (v: number) => string;
@@ -89,7 +92,7 @@ function ScatterPlot({
   xLabel,
   yLabel,
   ariaLabel,
-  categoryLabel = (c) => c,
+  categoryLabel: categoryLabelProp,
   formatX,
   formatY,
   jitterX = 0,
@@ -97,7 +100,8 @@ function ScatterPlot({
   xDomain,
   yDomain
 }: ScatterChartProps & { width: number; height: number }) {
-  const { t, fmt } = useChartText();
+  const { t, fmt, appT } = useChartText();
+  const categoryLabel = categoryLabelProp ?? ((c: string) => modelLabel(c, appT));
 
   const categories = useMemo(() => {
     const counts = new Map<string, number>();

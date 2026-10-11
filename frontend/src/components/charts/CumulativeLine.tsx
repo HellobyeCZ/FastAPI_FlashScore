@@ -48,6 +48,11 @@ interface CumulativeLineChartProps {
   formatX?: (x: number) => string;
   /** Dashed reference line at y = 0 (default true; the domain then includes 0). */
   zeroLine?: boolean;
+  /**
+   * Built-in legend under the plot when there is more than one series
+   * (default true). Pass false when the caller renders a richer legend.
+   */
+  legend?: boolean;
   emptyLabel?: string;
 }
 
@@ -56,6 +61,10 @@ type Styled = Series & { color: string; dash?: string; shape: MarkerShape };
 const DAY = 86_400_000;
 /** Series with at most this many points get a marker on every observation. */
 const MARKER_LIMIT = 40;
+/** Readout box metrics (text-meta line, py-1, border) for placing it clear of markers. */
+const READOUT_LINE = 18;
+const READOUT_CHROME = 10;
+const READOUT_GAP = 4;
 
 export function CumulativeLineChart(props: CumulativeLineChartProps) {
   const { noData } = useChartText();
@@ -89,10 +98,13 @@ function LinePlot({
   ariaLabel,
   formatY,
   formatX,
-  zeroLine = true
+  zeroLine = true,
+  legend = true
 }: Omit<CumulativeLineChartProps, "series"> & { series: Styled[]; width: number; height: number }) {
   const { t, tp, locale, fmt } = useChartText();
   const [hover, setHover] = useState<number | null>(null);
+  // Keyboard steps are announced; pointer moves are not (they would flood a screen reader).
+  const [viaKeyboard, setViaKeyboard] = useState(false);
   const isTime = xType === "time";
 
   const xs = useMemo(() => {
@@ -183,6 +195,7 @@ function LinePlot({
     const rect = e.currentTarget.getBoundingClientRect();
     if (rect.width <= 0) return;
     const px = ((e.clientX - rect.left) / rect.width) * innerW;
+    setViaKeyboard(false);
     setHover(nearestIndex(xInvert(Math.max(0, Math.min(innerW, px)))));
   };
 
@@ -200,6 +213,7 @@ function LinePlot({
     const next = keys[e.key];
     if (!next) return;
     e.preventDefault();
+    setViaKeyboard(true);
     setHover(next());
   };
 
@@ -219,7 +233,27 @@ function LinePlot({
     .join("; ");
 
   const showZero = zeroLine && yScale.domain()[0] <= 0 && yScale.domain()[1] >= 0;
+
+  // Readout: on the side away from the crosshair, and in whichever corner
+  // (top or bottom) leaves the hovered markers uncovered.
+  const hovered = hoverX === null ? [] : series.map((s) => ({ s, p: valueAt(s, hoverX) }));
   const readoutLeft = hoverX !== null && xPos(hoverX) > innerW / 2;
+  const readoutH = READOUT_LINE * (1 + series.length) + READOUT_CHROME;
+  const covered = (top: number) =>
+    hovered.filter(({ p }) => {
+      if (!p) return false;
+      const py = yScale(p.y);
+      return py >= top - 6 && py <= top + readoutH + 6;
+    }).length;
+  const readoutBottom = covered(READOUT_GAP) > covered(innerH - READOUT_GAP - readoutH);
+  const readoutStyle: React.CSSProperties = {
+    ...(readoutLeft ? { left: margin.left + 6 } : { right: margin.right + 6 }),
+    top: margin.top + (readoutBottom ? Math.max(READOUT_GAP, innerH - READOUT_GAP - readoutH) : READOUT_GAP)
+  };
+  const readoutText =
+    hoverX === null
+      ? ""
+      : `${fmtXValue(hoverX)}: ${hovered.map(({ s, p }) => `${s.label} ${p ? fmtYValue(p.y) : "—"}`).join(", ")}`;
 
   return (
     <>
@@ -294,9 +328,8 @@ function LinePlot({
                 stroke={tok("text-dim")}
                 strokeDasharray="2 2"
               />
-              {series.map((s, i) => {
-                const p = valueAt(s, hoverX);
-                return p ? (
+              {hovered.map(({ s, p }, i) =>
+                p ? (
                   <circle
                     key={i}
                     cx={xPos(p.x)}
@@ -306,8 +339,8 @@ function LinePlot({
                     stroke={s.color}
                     strokeWidth={2}
                   />
-                ) : null;
-              })}
+                ) : null
+              )}
             </g>
           )}
           <rect
@@ -320,26 +353,26 @@ function LinePlot({
           />
         </g>
       </ChartSvg>
+      <div aria-live="polite" className="sr-only">
+        {viaKeyboard ? readoutText : ""}
+      </div>
       {hoverX !== null && (
         <div
           aria-hidden
           className="pointer-events-none absolute z-10 max-w-[70%] border border-border-strong bg-bg/95 px-2 py-1 text-meta"
-          style={readoutLeft ? { left: margin.left + 6, top: margin.top + 4 } : { right: margin.right + 6, top: margin.top + 4 }}
+          style={readoutStyle}
         >
           <div className="text-text-dim">{fmtXValue(hoverX)}</div>
-          {series.map((s, i) => {
-            const p = valueAt(s, hoverX);
-            return (
-              <div key={i} className="flex min-w-0 items-center gap-1.5">
-                <span aria-hidden className="inline-block h-0.5 w-3 shrink-0" style={{ background: s.color }} />
-                {series.length > 1 && <span className="truncate text-text-dim">{s.label}</span>}
-                <span className="ml-auto pl-2 font-mono text-text">{p ? fmtYValue(p.y) : "—"}</span>
-              </div>
-            );
-          })}
+          {hovered.map(({ s, p }, i) => (
+            <div key={i} className="flex min-w-0 items-center gap-1.5">
+              <span aria-hidden className="inline-block h-0.5 w-3 shrink-0" style={{ background: s.color }} />
+              {series.length > 1 && <span className="truncate text-text-dim">{s.label}</span>}
+              <span className="ml-auto pl-2 font-mono text-text">{p ? fmtYValue(p.y) : "—"}</span>
+            </div>
+          ))}
         </div>
       )}
-      {series.length > 1 && (
+      {legend && series.length > 1 && (
         <Legend
           label={t("legend")}
           items={series.map((s, i) => ({
@@ -367,17 +400,23 @@ function readoutFormat(locale: string, span: number): Intl.DateTimeFormat {
 
 /**
  * Tick labels at the granularity the time scale chose: year ticks show the
- * year, month ticks the month (plus the year on January and the first tick
- * when the axis crosses a year), day ticks day + month, anything finer the
- * time of day.
+ * year, month ticks the month, day ticks day + month, anything finer the
+ * time of day. The first tick, and every tick where the coarser unit changes,
+ * also carries that unit, so the axis can be read without the readout: the
+ * year on the first month/day tick and at a year change, the date on the
+ * first sub-day tick and at every midnight.
  */
 function timeTickFormatter(locale: string, ticks: number[]): (x: number) => string {
   const dates = ticks.map((x) => new Date(x));
-  const midnight = dates.every((d) => d.getHours() === 0 && d.getMinutes() === 0);
+  const isMidnight = (d: Date) => d.getHours() === 0 && d.getMinutes() === 0;
+  const midnight = dates.every(isMidnight);
   const monthStart = midnight && dates.every((d) => d.getDate() === 1);
   const yearStart = monthStart && dates.every((d) => d.getMonth() === 0);
-  const crossesYear = new Set(dates.map((d) => d.getFullYear())).size > 1;
   const f = (opts: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat(locale, opts);
+  /** Index of the tick, or -1 for a value that is not one of `ticks`. */
+  const at = (x: number) => ticks.indexOf(x);
+  const newYear = (i: number) => i === 0 || (i > 0 && dates[i].getFullYear() !== dates[i - 1].getFullYear());
+
   if (yearStart) {
     const year = f({ year: "numeric" });
     return (x) => year.format(x);
@@ -385,16 +424,19 @@ function timeTickFormatter(locale: string, ticks: number[]): (x: number) => stri
   if (monthStart) {
     const month = f({ month: "short" });
     const monthYear = f({ month: "short", year: "numeric" });
-    const first = ticks[0];
-    return (x) => {
-      const d = new Date(x);
-      return crossesYear && (x === first || d.getMonth() === 0) ? monthYear.format(x) : month.format(x);
-    };
+    return (x) => (newYear(at(x)) ? monthYear : month).format(x);
   }
   if (midnight) {
     const day = f({ day: "numeric", month: "short" });
-    return (x) => day.format(x);
+    const dayYear = f({ day: "numeric", month: "short", year: "numeric" });
+    return (x) => (newYear(at(x)) ? dayYear : day).format(x);
   }
   const time = f({ hour: "2-digit", minute: "2-digit" });
-  return (x) => time.format(x);
+  const day = f({ day: "numeric", month: "short" });
+  const dayTime = f({ day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  return (x) => {
+    const d = new Date(x);
+    if (isMidnight(d)) return day.format(x);
+    return (at(x) === 0 ? dayTime : time).format(x);
+  };
 }

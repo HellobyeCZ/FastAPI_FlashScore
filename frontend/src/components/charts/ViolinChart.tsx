@@ -106,20 +106,20 @@ function summary(values: number[]) {
 
 /**
  * Distribution per group: kernel density outline with a box plot inside,
- * n under every group label. Small groups fall back to a strip of points.
+ * n under every group label. Small groups fall back to a strip of points;
+ * groups without values keep their slot and read "n = 0", so "no data" is
+ * distinguishable from "not included".
  */
 export function ViolinChart(props: ViolinChartProps) {
   const { noData } = useChartText();
   const height = props.height ?? 260;
   const series = useMemo(
-    () =>
-      props.series
-        .map((s, i) => ({ ...s, color: s.color || seriesColor(i), values: s.values.filter(isFiniteNumber) }))
-        .filter((s) => s.values.length > 0),
+    () => props.series.map((s, i) => ({ ...s, color: s.color || seriesColor(i), values: s.values.filter(isFiniteNumber) })),
     [props.series]
   );
+  const empty = series.every((s) => s.values.length === 0);
   return (
-    <ChartFrame width={props.width} height={height} empty={series.length === 0} emptyLabel={props.emptyLabel ?? noData}>
+    <ChartFrame width={props.width} height={height} empty={empty} emptyLabel={props.emptyLabel ?? noData}>
       {(w) => <ViolinPlotArea {...props} series={series} width={w} height={height} />}
     </ChartFrame>
   );
@@ -188,7 +188,11 @@ function ViolinPlotArea({
   }));
 
   const groupText = (i: number) =>
-    t("violin.desc", { label: series[i].label, n: fmt.int(series[i].values.length), median: fmtValue(stats[i].median) });
+    t("violin.desc", {
+      label: series[i].label,
+      n: fmt.int(series[i].values.length),
+      median: series[i].values.length > 0 ? fmtValue(stats[i].median) : "—"
+    });
   const desc = series.map((_, i) => groupText(i)).join("; ");
 
   return (
@@ -224,6 +228,22 @@ function ViolinPlotArea({
           const cx = (x(String(i)) ?? 0) + band / 2;
           const st = stats[i];
           const dense = kdes[i].length > 0;
+          if (s.values.length === 0) {
+            return (
+              <Group key={i} left={cx}>
+                <title>{groupText(i)}</title>
+                <text
+                  y={innerH / 2}
+                  textAnchor="middle"
+                  dominantBaseline="middle"
+                  fontSize={TICK_FONT}
+                  fill={tok("text-faint")}
+                >
+                  —
+                </text>
+              </Group>
+            );
+          }
           return (
             <Group key={i} left={cx}>
               <title>{groupText(i)}</title>

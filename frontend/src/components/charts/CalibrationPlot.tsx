@@ -26,6 +26,8 @@ interface CalibrationPlotProps {
 
 const Z = 1.96;
 const MAX_SIDE = 440;
+/** Smallest drawn point radius, so tiny buckets stay visible. */
+const MIN_R = 2.5;
 
 /** Wilson score interval for a binomial proportion (95% by default). */
 export function wilson(p: number, n: number, z = Z): [number, number] {
@@ -90,7 +92,8 @@ export function CalibrationPlot({
         const yTicks: AxisTick[] = pctTicks.map((v) => ({ value: v, pos: y(v), label: fmt.pct(v, 0) }));
         const maxN = Math.max(...valid.map((b) => b.n));
         const rMax = Math.max(5, Math.min(11, innerW / 28));
-        const radius = (n: number) => 2.5 + (rMax - 2.5) * Math.sqrt(n / maxN);
+        // Area ∝ n (r ∝ √n); only buckets too small to see are lifted to the floor.
+        const radius = (n: number) => Math.max(MIN_R, rMax * Math.sqrt(n / maxN));
         const curve = valid.filter((b) => b.n >= minN);
         const drawCurve = !insufficient && curve.length >= 2;
 
