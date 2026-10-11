@@ -25,7 +25,7 @@ export function periodLabel(period: string, t: T): string {
     : humanize(period);
 }
 
-/** Stats period names come from FlashScore in English ("Match", "1st Half"). */
+/** Stats period names come from FlashScore in English ("Match", "1st Half", "1st Quarter"). */
 export function statsPeriodLabel(name: string, t: T): string {
   const known: Record<string, MessageKey> = {
     match: "matches.stats.period.match",
@@ -34,6 +34,10 @@ export function statsPeriodLabel(name: string, t: T): string {
     "1st period": "matches.stats.period.firstPeriod",
     "2nd period": "matches.stats.period.secondPeriod",
     "3rd period": "matches.stats.period.thirdPeriod",
+    "1st quarter": "matches.stats.period.firstQuarter",
+    "2nd quarter": "matches.stats.period.secondQuarter",
+    "3rd quarter": "matches.stats.period.thirdQuarter",
+    "4th quarter": "matches.stats.period.fourthQuarter",
     overtime: "matches.stats.period.overtime",
     "extra time": "matches.stats.period.extraTime",
     penalties: "matches.stats.period.shootout"
