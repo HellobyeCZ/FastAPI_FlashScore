@@ -428,3 +428,29 @@ def test_backfill_logs_completed_runs_once(mlflow_store, tmp_path, monkeypatch, 
         assert c.execute("SELECT mlflow_run_id FROM backtest_runs").fetchone()[0] == run_id
     experiment_id = run.info.experiment_id
     assert len(client.search_runs([experiment_id], "tags.purpose = 'backfill'")) == 1
+
+
+def test_logging_recovers_after_a_failed_run_close(mlflow_store, monkeypatch):
+    """If closing the MLflow run fails (server dropped mid-run), the
+    fluent active-run stack of that thread must not keep the dead run:
+    pool threads are reused, and a stale active run would make every
+    later start_run on the thread fail."""
+    import mlflow
+
+    real_set_terminated = mlflow.MlflowClient.set_terminated
+    calls = {"n": 0}
+
+    def flaky_set_terminated(self, *args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise ConnectionError("server went away while closing the run")
+        return real_set_terminated(self, *args, **kwargs)
+
+    monkeypatch.setattr(mlflow.MlflowClient, "set_terminated", flaky_set_terminated)
+    report = _report([_bet(result=1.0)])
+    assert _log_backtest(report) is None
+    assert mlflow.active_run() is None
+    second = _log_backtest(report)
+    assert second is not None
+    assert calls["n"] == 2  # the first close really failed, the second succeeded
+    assert _client(mlflow_store).get_run(second).info.status == "FINISHED"

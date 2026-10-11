@@ -119,21 +119,6 @@ def _input_columns(model_name: str, trained_model: Any) -> list[str]:
     return list(getattr(trained_model, "feature_columns", ()) or ())
 
 
-def _signature(model_name: str, trained_model: Any):
-    """Column-level signature. None for models without a fixed input
-    schema (Dixon–Coles keys on event_id)."""
-    from mlflow.models import ModelSignature
-    from mlflow.types import ColSpec, Schema
-
-    columns = _input_columns(model_name, trained_model)
-    if not columns:
-        return None
-    return ModelSignature(
-        inputs=Schema([ColSpec("double", c) for c in columns]),
-        outputs=Schema([ColSpec("double", s) for s in _SELECTIONS]),
-    )
-
-
 def _pip_requirements() -> list[str]:
     """Pinned to the logging environment. Explicit requirements also skip
     MLflow's dependency-inference subprocess (seconds per log)."""
@@ -188,12 +173,19 @@ def save_picks_model(
         )
 
         wrapper_cls = __getattr__("PicksModelWrapper")
+        # Expected inputs are recorded as metadata rather than an enforced
+        # signature: feature dtypes vary (counts arrive as int64 or float),
+        # and MLflow's schema check rejects int64 for a double column.
         info = mlflow.pyfunc.log_model(
             name=artifact_path,
             python_model=wrapper_cls(),
             artifacts={"model": str(model_pkl), "meta": str(meta_txt)},
             code_paths=[str(code_dir)],
-            signature=_signature(model_name, trained_model),
+            metadata={
+                "picks_model_name": model_name,
+                "input_columns": _input_columns(model_name, trained_model),
+                "output_columns": list(_SELECTIONS),
+            },
             pip_requirements=_pip_requirements(),
         )
 

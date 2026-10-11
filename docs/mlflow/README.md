@@ -98,7 +98,7 @@ Two honesty rules:
 
 - `artifacts/model.pkl` — the fitted object (`TrainedLogistic`, `TrainedHGB` — for `hgb_pca` its PCA preprocessor travels inside — Dixon–Coles rates, or `None` for analytic baselines),
 - `artifacts/meta.txt` — the model name,
-- `code/app/` — the app package (so the pickle resolves anywhere), a column signature and pinned pip requirements.
+- `code/app/` — the app package (so the pickle resolves anywhere), pinned pip requirements, and the expected input/output columns in the model metadata (no enforced signature: count features arrive as int64 or float).
 
 ---
 

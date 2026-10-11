@@ -11,8 +11,8 @@ def _row_logistic() -> dict:
     return {
         "home_elo": 1600.0, "away_elo": 1500.0, "elo_diff": 100.0,
         "home_form_ppg": 2.0, "away_form_ppg": 1.0,
-        "home_form_matches": 5.0, "away_form_matches": 5.0,
-        "home_days_rest": 7.0, "away_days_rest": 7.0,
+        "home_form_matches": 5, "away_form_matches": 5,
+        "home_days_rest": 7, "away_days_rest": 7,
     }
 
 
@@ -93,14 +93,17 @@ def test_analytic_vig_included_reads_market_implied_columns(mlflow_store):
     assert out.iloc[0].tolist() == pytest.approx([0.55 / s, 0.30 / s, 0.25 / s])
 
 
-def test_logistic_round_trip_with_signature_and_code_paths(mlflow_store):
+def test_logistic_round_trip_with_metadata_and_code_paths(mlflow_store):
     trained = _small_logistic()
     model_uri = _log("logistic", trained)
     loaded = _load(model_uri)
 
-    inputs = loaded.metadata.get_input_schema().input_names()
-    assert inputs == list(trained.feature_columns)
+    meta = loaded.metadata.metadata
+    assert meta["picks_model_name"] == "logistic"
+    assert meta["input_columns"] == list(trained.feature_columns)
+    assert loaded.metadata.signature is None  # int64 counts must not be rejected
 
+    # Integer feature columns (int64 in pandas) are accepted.
     out = loaded.predict(pd.DataFrame([_row_logistic()]))
     assert list(out.columns) == ["home", "draw", "away"]
     assert abs(out.iloc[0].sum() - 1.0) < 0.01
