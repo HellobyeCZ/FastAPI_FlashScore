@@ -45,11 +45,11 @@ curl -s 'http://127.0.0.1:5050/api/2.0/mlflow/experiments/get-by-name?experiment
   | jq -r .experiment.artifact_location
 ```
 
-`mlflow-artifacts:/2` is proxied (good). An absolute path means clients write straight into that directory — in the local store, `picks` (id 2) was created by an earlier server started from worktree `epic-saha-1c8754`, so its runs, logged models and registered versions live under that worktree's `mlflow/artifacts/2` and break if the worktree is removed. To move to proxied storage:
+`mlflow-artifacts:/<id>` is proxied (good). An absolute path means the experiment predates proxying and clients write straight into that directory. If it lies inside a checkout or worktree, its runs, logged models and registered versions break when that directory is removed. To move to proxied storage:
 
 1. In the MLflow UI, rename `picks` to `picks-legacy` (experiment page › ⋮ › Rename).
 2. Restart the API and any running scripts: the experiment id is resolved once per process, so a running API would keep logging into the renamed experiment. The next run creates a fresh `picks` under the server's `--artifacts-destination`.
-3. Register a fresh backtest from the new `picks` and move `@champion` to it before you remove the old worktree — versions registered from `picks-legacy` read their files from the old path.
+3. Register a fresh backtest from the new `picks` and move `@champion` to it before you remove the old directory — versions registered from `picks-legacy` read their files from the old path.
 
 ### 2. Point the backend at it
 
@@ -221,7 +221,7 @@ python scripts/backfill_mlflow_backtests.py                  # (same env) log + 
 
 Each completed row becomes a `purpose=backfill` run: params and metrics from the row, unit-stake Sharpe recomputed from `backtest_bets`, the reliability chart, original start/end times — and no model. The new run id is written to `backtest_runs.mlflow_run_id`. Re-running is safe: linked rows are skipped, and a fully logged run whose write-back was lost (crash) is re-linked instead of duplicated. A run that fails half-way is deleted and its row stays pending; the script exits `1` and stops early if the server went away.
 
-`--normalize-sqlite` also rewrites the metrics stored on every completed row (not only unlinked ones) to the definitions new backtests persist, so the app's runs table compares like with like: `sharpe_adjusted` on unit stakes (older rows hold NULL or a Kelly-scaled value), rate metrics `NULL` for runs without bets, `mean_clv` `NULL` when every bet was priced at the close. Combine it with `--dry-run` first to see each change. It needs no MLflow server.
+`--normalize-sqlite` also rewrites the metrics stored on every completed row (not only unlinked ones) to the definitions new backtests persist, so the app's runs table compares like with like: `sharpe_adjusted` on unit stakes (older rows hold NULL or a Kelly-scaled value), rate metrics `NULL` for runs without bets, `mean_clv` `NULL` when every bet was priced at the close. Combine it with `--dry-run` first to see each change. It needs no MLflow server and doesn't touch MLflow: runs logged before unit-stake Sharpe keep their Kelly-scaled `sharpe_adjusted` (and `mean_clv = 0`) there, so for those rows the Registry's source-run metrics and the app's runs table can differ.
 
 ---
 
