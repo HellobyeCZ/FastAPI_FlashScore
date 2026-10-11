@@ -9,6 +9,10 @@ import { stubJson, stubShell } from "./fixtures/stub";
 
 const NOW = new Date("2026-10-11T12:00:00Z");
 
+// Custom windows are local calendar days; pin the zone so their bounds (and
+// which fixture bets fall inside them) don't depend on the machine.
+test.use({ timezoneId: "UTC" });
+
 // ---------------------------------------------------------------------------
 // Fixtures (shapes of FastAPI /picks/*, /backtest/runs, /mlflow/registry)
 
@@ -505,9 +509,6 @@ function expectedBest(bets: Bet[], metric: "roi" | "brier"): string {
 // Leaderboard
 
 test.describe("leaderboard", () => {
-  // Custom windows are local calendar days; pin the zone so their ISO bounds are exact.
-  test.use({ timezoneId: "UTC" });
-
   test("ranks models, dims small samples, sorts via the URL and links to the model page", async ({ page }) => {
     const { unstubbed, requests } = await stubPerformance(page);
     await page.goto("/en/performance");
@@ -776,6 +777,18 @@ test.describe("bet explorer", () => {
     expect(unstubbed).toEqual([]);
   });
 
+  test("a heatmap of small cells explains itself and keeps its data table", async ({ page }) => {
+    const { unstubbed } = await stubPerformance(page);
+    await page.goto("/en/performance/explore?window=custom&from=2026-10-03&to=2026-10-05&edge_min=2.5&price_max=3");
+
+    const heatmap = page.getByRole("region", { name: "Mean CLV · competition × pick" });
+    await expect(heatmap.getByText("Every cell has fewer than 5 bets")).toBeVisible();
+    await expect(heatmap.getByRole("button", { name: "Show all time" })).toBeVisible();
+    await heatmap.getByRole("button", { name: "Show data" }).click();
+    await expect(heatmap.locator("tbody tr").first()).toBeVisible();
+    expect(unstubbed).toEqual([]);
+  });
+
   test("an older history endpoint is filtered and paged in the browser", async ({ page }) => {
     const { unstubbed } = await stubPerformance(page, { legacy: true });
     await page.goto("/en/performance/explore?window=all");
@@ -942,16 +955,25 @@ const SHOTS_DIR = process.env.PERF_SHOTS_DIR;
 test.describe("screenshots", () => {
   test.skip(!SHOTS_DIR, "set PERF_SHOTS_DIR to capture review screenshots");
 
+  const SHOTS: [name: string, path: string, opts: Options][] = [
+    ["leaderboard", "/performance", {}],
+    ["leaderboard-stale", "/performance", { lastSettled: "2026-05-13T20:41:26Z" }],
+    // Settled bets without closing prices, and one model's bets without a competition.
+    [
+      "leaderboard-gaps",
+      "/performance?window=all",
+      { mutate: (b) => ({ ...b, clv: null, closing_price: null, competition: b.model === "hgb" ? null : b.competition }) }
+    ],
+    ["explore", "/performance/explore?window=all", {}],
+    ["explore-custom", "/performance/explore?window=custom&from=2026-10-03&to=2026-10-05&edge_min=2.5&price_max=3", {}],
+    ["model", "/models/logistic?window=all", {}]
+  ];
+
   for (const locale of ["en", "cs"] as const) {
-    for (const [name, path] of [
-      ["leaderboard", "/performance"],
-      ["leaderboard-stale", "/performance"],
-      ["explore", "/performance/explore?window=all"],
-      ["model", "/models/logistic?window=all"]
-    ] as const) {
+    for (const [name, path, opts] of SHOTS) {
       test(`${locale} ${name}`, async ({ page }, info) => {
         const mobile = info.project.name === "mobile";
-        await stubPerformance(page, name === "leaderboard-stale" ? { lastSettled: "2026-05-13T20:41:26Z" } : {});
+        await stubPerformance(page, opts);
         await page.setViewportSize(mobile ? { width: 390, height: 844 } : { width: 1440, height: 900 });
         await page.goto(`/${locale}${path}`);
         await expect(page.locator("tbody tr:visible").first()).toBeVisible();

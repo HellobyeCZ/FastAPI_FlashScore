@@ -175,6 +175,8 @@ export const performance = {
   "performance.chart.price.summary": "Hit rate by price: {summary}.",
   "performance.chart.heatmap.title": "Mean CLV · competition × pick",
   "performance.chart.heatmap.description": "Mean closing-line value per cell. Cells with fewer than {min} bets are left blank; the data table lists every n.",
+  "performance.chart.heatmap.allSmall": "Every cell has fewer than {min} bets",
+  "performance.chart.heatmap.allSmallBody": "Too few bets per competition and pick to colour. Widen the window or loosen the filters; Show data lists each cell's n and mean CLV.",
   "performance.chart.calibration.title": "Calibration",
   "performance.chart.calibration.description": "Settled bets binned by model probability: predicted vs. observed hit rate. Only placed bets are included.",
   "performance.chart.calibration.insufficient": "Not enough settled bets for a calibration curve",

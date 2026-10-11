@@ -174,6 +174,8 @@ export const performance: Record<keyof typeof en, string> = {
   "performance.chart.price.summary": "Úspěšnost podle kurzu: {summary}.",
   "performance.chart.heatmap.title": "Průměrné CLV · soutěž × tip",
   "performance.chart.heatmap.description": "Průměrná hodnota vůči závěrečnému kurzu v každé buňce. Buňky s méně než {min} sázkami zůstávají prázdné; všechna n najdete v tabulce dat.",
+  "performance.chart.heatmap.allSmall": "Každá buňka má méně než {min} sázek",
+  "performance.chart.heatmap.allSmallBody": "Na obarvení je v jednotlivých soutěžích a tipech příliš málo sázek. Rozšiřte období nebo uvolněte filtry; Zobrazit data ukáže n a průměrné CLV každé buňky.",
   "performance.chart.calibration.title": "Kalibrace",
   "performance.chart.calibration.description": "Vypořádané sázky rozdělené podle pravděpodobnosti modelu: predikovaná vs. skutečná úspěšnost. Zahrnuje jen podané sázky.",
   "performance.chart.calibration.insufficient": "Na kalibrační křivku není dost vypořádaných sázek",

@@ -117,6 +117,30 @@ const EMPTY_TITLE = {
 } as const satisfies Record<string, MessageKey>;
 
 /**
+ * Ways to see more bets: a longer window, fewer filters, or (when the view is
+ * already as wide as it gets) the pipeline status.
+ */
+export function WidenActions({ state }: { state: PerformanceFilterState }) {
+  const { t } = useLocale();
+  const filtered = activeFilterCount(state.filters, state.keys) > 0;
+  return (
+    <>
+      {state.window !== "all" && (
+        <Button size="sm" variant="primary" onClick={() => state.update({ window: "all", from: null, to: null })}>
+          {t("performance.empty.showAll")}
+        </Button>
+      )}
+      {filtered && (
+        <Button size="sm" onClick={state.clearFilters}>
+          {t("performance.filter.clear")}
+        </Button>
+      )}
+      {state.window === "all" && !filtered && <OpsLink />}
+    </>
+  );
+}
+
+/**
  * Empty result for the current window/filters: says which window and filters
  * produced it and offers the action that widens the view.
  */
@@ -129,35 +153,12 @@ export function NoBetsEmpty({
   compact?: boolean;
   subject?: "settled" | "pending" | "any";
 }) {
-  const { t, locale } = useLocale();
+  const { t } = useLocale();
   const windowText = useWindowText(state);
   const filterText = useFilterSummary(state);
-  const filtered = activeFilterCount(state.filters, state.keys) > 0;
   const title = t(EMPTY_TITLE[subject], { window: windowText });
   return (
-    <EmptyState
-      compact={compact}
-      title={title}
-      action={
-        <>
-          {state.window !== "all" && (
-            <Button size="sm" variant="primary" onClick={() => state.update({ window: "all", from: null, to: null })}>
-              {t("performance.empty.showAll")}
-            </Button>
-          )}
-          {filtered && (
-            <Button size="sm" onClick={state.clearFilters}>
-              {t("performance.filter.clear")}
-            </Button>
-          )}
-          {state.window === "all" && !filtered && (
-            <ButtonLink href={routes.ops(locale)} size="sm">
-              {t("performance.stale.action")}
-            </ButtonLink>
-          )}
-        </>
-      }
-    >
+    <EmptyState compact={compact} title={title} action={<WidenActions state={state} />}>
       {filterText
         ? t("performance.empty.withFilters", { filters: filterText })
         : state.window === "all"

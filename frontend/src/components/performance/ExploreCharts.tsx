@@ -2,14 +2,23 @@
 import { useMemo } from "react";
 import { useLocale } from "@/contexts/LocaleContext";
 import { BinnedBarChart, HeatmapChart, type Bin, type HeatmapCell } from "@/components/charts";
-import { SampleSize, Table } from "@/components/ui";
+import { EmptyState, SampleSize, Table } from "@/components/ui";
 import { competitionRoot } from "@/lib/competition";
 import { selectionLabel } from "@/lib/labels";
 import { usePicksStats, type RowsResult } from "@/lib/performance/api";
 import { MIN_N, type PicksQuery } from "@/lib/performance/filters";
 import { edgeQuantileBins, foldStats, priceBuckets, type Interval } from "@/lib/performance/stats";
 import type { PerformanceFilterState } from "@/lib/performance/useFilters";
-import { ChartPanel, joinNotes, MissingDataEmpty, NoBetsEmpty, panelStatus, usePp, useRowsNote } from "./shared";
+import {
+  ChartPanel,
+  joinNotes,
+  MissingDataEmpty,
+  NoBetsEmpty,
+  panelStatus,
+  usePp,
+  useRowsNote,
+  WidenActions
+} from "./shared";
 
 const CHART_HEIGHT = 260;
 
@@ -207,6 +216,8 @@ export function ClvHeatmapPanel({
     n: f.n
   }));
   const title = t("performance.chart.heatmap.title");
+  // A grid of nothing but blanks reads as broken; say why and keep the data table.
+  const allSmall = !cells.some((c) => c.value !== null && c.n >= HEATMAP_MIN_N);
 
   return (
     <ChartPanel
@@ -254,12 +265,22 @@ export function ClvHeatmapPanel({
         />
       }
     >
-      <HeatmapChart
-        cells={cells}
-        rows={data.competitions}
-        cols={data.selections.map(colLabel)}
-        minNToShow={HEATMAP_MIN_N}
-      />
+      {allSmall ? (
+        <EmptyState
+          compact
+          title={t("performance.chart.heatmap.allSmall", { min: HEATMAP_MIN_N })}
+          action={<WidenActions state={state} />}
+        >
+          {t("performance.chart.heatmap.allSmallBody")}
+        </EmptyState>
+      ) : (
+        <HeatmapChart
+          cells={cells}
+          rows={data.competitions}
+          cols={data.selections.map(colLabel)}
+          minNToShow={HEATMAP_MIN_N}
+        />
+      )}
     </ChartPanel>
   );
 }
