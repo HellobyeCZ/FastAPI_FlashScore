@@ -38,12 +38,18 @@ function comboMatches(combo: string, e: KeyboardEvent, now: number): boolean {
 }
 
 function rootHandler(e: KeyboardEvent) {
+  // Never hijack browser/OS shortcuts (Cmd+/, Ctrl+F…) or keys already handled
+  // by a focused widget (dialogs stop propagation of their own Escape).
+  if (e.metaKey || e.ctrlKey || e.altKey || e.defaultPrevented) return;
   const target = e.target as HTMLElement | null;
   if (
     target &&
-    (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)
+    (target.tagName === "INPUT" ||
+      target.tagName === "TEXTAREA" ||
+      target.tagName === "SELECT" ||
+      target.isContentEditable)
   ) {
-    if (e.key !== "Escape") return;
+    return;
   }
   const now = Date.now();
   for (const b of registry.values()) {

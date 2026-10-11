@@ -1,12 +1,21 @@
-import { notFound } from "next/navigation";
-import { isLocale, locales } from "@/lib/i18n";
+import { Suspense } from "react";
+import type { Metadata } from "next";
+import { formatMessage, isLocale, locales } from "@/lib/i18n";
+import Loading from "@/app/[locale]/loading";
 import { TodayPage } from "@/components/today/TodayPage";
 
 export function generateStaticParams() {
   return locales.map((locale) => ({ locale }));
 }
 
-export default function Page({ params }: { params: { locale: string } }) {
-  if (!isLocale(params.locale)) notFound();
-  return <TodayPage />;
+export function generateMetadata({ params }: { params: { locale: string } }): Metadata {
+  return { title: formatMessage(isLocale(params.locale) ? params.locale : "en", "nav.today") };
+}
+
+export default function Page() {
+  return (
+    <Suspense fallback={<Loading />}>
+      <TodayPage />
+    </Suspense>
+  );
 }
