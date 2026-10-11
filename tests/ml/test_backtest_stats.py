@@ -131,3 +131,33 @@ def test_model_filter_reads_the_run_model(db):
     assert aggregate_backtest(BacktestStatsRequest(
         run_ids=("r1",), filters=BacktestStatsFilter(model=("logistic",)),
     ))[0]["n"] == 0
+
+
+def test_status_filter_uses_the_live_vocabulary(db):
+    def n(status: str) -> int:
+        return aggregate_backtest(BacktestStatsRequest(
+            run_ids=("r1",), filters=BacktestStatsFilter(status=status),
+        ))[0]["n"]
+
+    # Backtest bets are all settled.
+    assert (n("all"), n("settled"), n("pending"), n("voided")) == (2, 2, 0, 0)
+    with pytest.raises(ValueError, match="unknown status"):
+        BacktestStatsRequest(run_ids=("r1",), filters=BacktestStatsFilter(status="weird"))
+
+
+def test_group_by_run_id_lists_runs_without_bets(db):
+    with sqlite3.connect(db) as c:
+        c.execute(
+            "INSERT INTO backtest_runs (id, label, model, status, created_at) "
+            "VALUES ('r2', 'empty', 'logistic', 'completed', '2026-05-14T10:00:00Z')"
+        )
+    rows = aggregate_backtest(BacktestStatsRequest(run_ids=("r2", "r1"), group_by=("run_id",)))
+    assert [(r["run_id"], r["n"]) for r in rows] == [("r2", 0), ("r1", 2)]
+    assert rows[0]["run_label"] == "empty"
+    assert rows[0]["hit_rate"] is None and rows[0]["max_drawdown"] == 0.0
+
+    # A minimum group size hides the empty run like any other small group.
+    rows = aggregate_backtest(BacktestStatsRequest(
+        run_ids=("r2", "r1"), group_by=("run_id",), min_n_per_group=2,
+    ))
+    assert [r["run_id"] for r in rows] == ["r1"]

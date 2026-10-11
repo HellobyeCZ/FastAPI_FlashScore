@@ -1165,7 +1165,8 @@ def picks_history(
     clause), so a table always lists exactly the bets its panels aggregate.
     ``source=backtest`` reads ``run_ids=<csv>`` (or ``run_id``) and pages
     across all selected runs as one list; ``source=both`` merges live bets
-    with those runs by recommendation time. Backtest bets are all settled.
+    with those runs by recommendation time. Backtest bets are all settled,
+    so ``status=pending|voided`` matches none of them.
     """
     ids = _resolve_run_ids(run_ids, run_id)
     _require_source(source, ids)
@@ -1211,8 +1212,9 @@ def picks_history(
         )
         total += live_total
         rows.extend(live_rows)
-    if source in ("backtest", "both") and status_value in ("all", "settled"):
+    if source in ("backtest", "both"):
         bt_filter = backtest_stats.BacktestStatsFilter(
+            status=status_value,
             model=_csv(model),
             market=_csv(market),
             sport=_csv(sport),
@@ -1284,9 +1286,11 @@ def picks_stats(
     single run) to aggregate over one or more backtest runs instead of live
     paper bets. ``source=both`` overlays live with the named backtest runs.
     Backtest rows carry ``run_id``/``run_label`` (set for a single run or
-    with ``group_by=run_id``) and the run's ``model``; their ``mean_clv`` is
-    always null. ``hit_rate``/``roi``/``brier``/``mean_clv`` are null when a
-    row has ``n == 0``.
+    with ``group_by=run_id``, which lists every selected run even without
+    matching bets) and the run's ``model``; their ``mean_clv`` is always
+    null. ``status`` filters both sides like ``/picks/history`` does, and
+    backtest bets are all settled. ``hit_rate``/``roi``/``brier``/``mean_clv``
+    are null when a row has ``n == 0``.
     """
     ids = _resolve_run_ids(run_ids, run_id)
     _require_source(source, ids)
@@ -1326,6 +1330,7 @@ def picks_stats(
             bt_req = backtest_stats.BacktestStatsRequest(
                 run_ids=ids,
                 filters=backtest_stats.BacktestStatsFilter(
+                    status=status,
                     model=model_t,
                     market=market_t,
                     sport=sport_t,
@@ -1360,9 +1365,7 @@ def picks_stats(
     return {
         "group_by": list(gb_tuple),
         "filters": _filters_echo(
-            # Backtest bets are always settled; the live status filter does
-            # not apply to them.
-            status="settled" if source == "backtest" else status,
+            status=status,
             date_from=date_from,
             date_to=date_to,
             model=model_t,

@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from app.ml import db as ml_db
-from app.ml.paper_trade_stats import table_names
+from app.ml.paper_trade_stats import ALLOWED_STATUS, table_names
 
 
 ALLOWED_GROUP_BY = (
@@ -28,6 +28,9 @@ ALLOWED_GROUP_BY = (
 
 @dataclass(frozen=True)
 class BacktestStatsFilter:
+    # The live paper_bets status vocabulary. Backtest bets are settled by
+    # construction, so "pending"/"voided" match none of them.
+    status: str = "all"
     model: Tuple[str, ...] = ()
     market: Tuple[str, ...] = ()
     sport: Tuple[str, ...] = ()
@@ -57,6 +60,10 @@ class BacktestStatsRequest:
                 raise ValueError(
                     f"unknown group_by {t!r}. allowed: {ALLOWED_GROUP_BY}"
                 )
+        if self.filters.status not in ALLOWED_STATUS:
+            raise ValueError(
+                f"unknown status {self.filters.status!r}. allowed: {ALLOWED_STATUS}"
+            )
 
 
 _GROUP_EXPR = {
@@ -96,6 +103,11 @@ def _build_where(run_ids: Sequence[str], f: BacktestStatsFilter) -> Tuple[str, L
     placeholders = ",".join("?" for _ in run_ids)
     where: List[str] = [f"b.run_id IN ({placeholders})"]
     params: List[Any] = list(run_ids)
+
+    if f.status not in ("all", "settled"):
+        # Every backtest bet is settled: nothing matches, so stats and
+        # history agree with the live side's status semantics.
+        where.append("0 = 1")
 
     for col, values in [
         ("r.model", f.model),
@@ -207,8 +219,52 @@ def aggregate_backtest(req: BacktestStatsRequest) -> List[Dict[str, Any]]:
                 entry.update(wins=0, stake_total=0.0, pnl_total=0.0)
             out.append(entry)
 
+        if req.group_by == ("run_id",) and req.min_n_per_group <= 1:
+            out = _with_empty_runs(conn, out, req.run_ids)
+
         # Second pass: compute max_drawdown per group from ordered bets.
         out = _attach_max_drawdown(conn, out, req, where_clause, where_params)
+    return out
+
+
+def _with_empty_runs(
+    conn: sqlite3.Connection,
+    rows: List[Dict[str, Any]],
+    run_ids: Sequence[str],
+) -> List[Dict[str, Any]]:
+    """One row per requested run, in request order, for ``group_by=run_id``.
+
+    GROUP BY drops a run without matching bets, which would make it vanish
+    from a per-run comparison instead of reading ``n == 0`` with null
+    rates. Run ids that do not exist get no row.
+    """
+    by_run = {row["run_id"]: row for row in rows}
+    requested = list(dict.fromkeys(run_ids))
+    placeholders = ",".join("?" for _ in requested)
+    labels = {
+        run_id: label
+        for run_id, label in conn.execute(
+            f"SELECT id, label FROM backtest_runs WHERE id IN ({placeholders})",
+            requested,
+        )
+    }
+    out: List[Dict[str, Any]] = []
+    for run_id in requested:
+        if run_id in by_run:
+            out.append(by_run[run_id])
+        elif run_id in labels:
+            out.append({
+                "run_id": run_id,
+                "run_label": labels[run_id],
+                "n": 0,
+                "wins": 0,
+                "stake_total": 0.0,
+                "pnl_total": 0.0,
+                "brier": None,
+                "hit_rate": None,
+                "roi": None,
+                "mean_clv": None,
+            })
     return out
 
 

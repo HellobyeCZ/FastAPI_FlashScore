@@ -155,12 +155,17 @@ def test_live_history_filters(client: TestClient, params, expected):
         {"status": "settled", "model": "logistic"},
         {"status": "all", "country": "ENGLAND,GERMANY"},
         {"status": "settled", "edge_min": 0.05},
+        {"status": "pending", "source": "both", "run_ids": "ra,rb"},
+        {"status": "voided", "source": "backtest", "run_ids": "ra,rb"},
+        {"status": "all", "source": "both", "run_ids": "ra,rb"},
+        {"status": "settled", "source": "both", "run_id": "rb", "country": "GERMANY"},
     ],
 )
 def test_history_count_matches_stats_n(client: TestClient, params):
     history = client.get("/picks/history", params=params).json()
     stats = client.get("/picks/stats", params=params).json()
-    assert history["count"] == stats["rows"][0]["n"]
+    # source=both returns one live and one backtest row.
+    assert history["count"] == sum(row["n"] for row in stats["rows"])
 
 
 def test_backtest_history_pages_globally_across_runs(client: TestClient):
@@ -256,6 +261,32 @@ def test_backtest_stats_group_by_run_id(client: TestClient):
     assert by_run["ra"]["run_label"] == "logistic Aug"
     assert by_run["rb"]["model"] == "hgb"
     assert all(r["mean_clv"] is None for r in rows)
+
+
+def test_backtest_stats_group_by_run_id_keeps_runs_without_bets(client: TestClient):
+    params = {"source": "backtest", "run_ids": "rb,ra,nope", "group_by": "run_id"}
+    rows = client.get("/picks/stats", params={**params, "selection": "away"}).json()["rows"]
+    # Request order; the unknown run gets no row.
+    assert [r["run_id"] for r in rows] == ["rb", "ra"]
+    empty = rows[1]
+    assert (empty["n"], empty["wins"], empty["stake_total"], empty["pnl_total"]) == (0, 0, 0.0, 0.0)
+    for key in ("hit_rate", "roi", "brier", "mean_clv"):
+        assert empty[key] is None, key
+    assert empty["max_drawdown"] == 0.0
+    assert (empty["run_label"], empty["model"]) == ("logistic Aug", "logistic")
+    assert rows[0]["n"] == 1
+
+    pending = client.get("/picks/stats", params={**params, "status": "pending"}).json()["rows"]
+    assert [(r["run_id"], r["n"]) for r in pending] == [("rb", 0), ("ra", 0)]
+
+
+def test_backtest_stats_status_applies_and_is_validated(client: TestClient):
+    params = {"source": "backtest", "run_ids": "ra,rb"}
+    body = client.get("/picks/stats", params={**params, "status": "voided"}).json()
+    assert body["filters"]["status"] == "voided"
+    assert [r["n"] for r in body["rows"]] == [0]
+    assert client.get("/picks/stats", params={**params, "status": "all"}).json()["rows"][0]["n"] == 5
+    assert client.get("/picks/stats", params={**params, "status": "bogus"}).status_code == 422
 
 
 def test_backtest_stats_model_filter(client: TestClient):
