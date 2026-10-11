@@ -20,9 +20,9 @@ import {
 import { useSettings } from "@/hooks/useSettings";
 import { competitionRoot } from "@/lib/competition";
 import { DASH, parseDate } from "@/lib/format";
-import { marketLabel, selectionLabel } from "@/lib/labels";
+import { marketLabel, modelLabel, selectionLabel } from "@/lib/labels";
 import { asRoute, routes } from "@/lib/routes";
-import type { TodayPick, TodayResponse } from "@/hooks/useToday";
+import type { TodayPick, TodayResponse } from "./types";
 import { MatchName } from "./MatchName";
 import { EDGE_PRESETS, pipelineFreshness, passesEdge, snapEdge, type EdgePreset } from "./shared";
 
@@ -89,7 +89,7 @@ export function TodaySlate({ query }: { query: UseQueryResult<TodayResponse> }) 
                 {mode === "today" ? fmt.time(r.kickoff) : fmt.dateTime(r.kickoff)} ·{" "}
               </span>
               {league && <span className="md:hidden">{league} · </span>}
-              {marketLabel(r.market, t)}
+              {marketLabel(r.market, t)} · {modelLabel(r.model, t)}
             </span>
           </>
         );
@@ -108,6 +108,7 @@ export function TodaySlate({ query }: { query: UseQueryResult<TodayResponse> }) 
         <>
           <span className="whitespace-nowrap">{selectionLabel(r.selection, t)}</span>
           <span className="block whitespace-nowrap text-meta text-text-dim sm:hidden">@ {fmt.odds(r.price)}</span>
+          <StateBadge state={r.state} className="mt-1 sm:hidden" />
         </>
       )
     },

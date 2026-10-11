@@ -15,7 +15,7 @@ import {
 } from "@/components/ui";
 import { marketLabel, modelLabel, selectionLabel } from "@/lib/labels";
 import { routes } from "@/lib/routes";
-import type { TodayResponse, TodaySettled } from "@/hooks/useToday";
+import type { TodayResponse, TodaySettled } from "./types";
 import { MatchName } from "./MatchName";
 
 /**

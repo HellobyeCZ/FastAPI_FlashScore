@@ -6,7 +6,7 @@ import { Sparkline } from "@/components/charts";
 import { useElementWidth } from "@/hooks/useElementWidth";
 import { DASH, signTone } from "@/lib/format";
 import { routes } from "@/lib/routes";
-import type { TodayResponse } from "@/hooks/useToday";
+import type { TodayResponse } from "./types";
 import { FRESHNESS_TONE, pipelineFreshness } from "./shared";
 
 /** Below this many settled bets the 30-day P&L is flagged as noise. */

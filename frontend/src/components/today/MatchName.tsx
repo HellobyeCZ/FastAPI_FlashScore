@@ -1,4 +1,4 @@
-import type { TodayPick } from "@/hooks/useToday";
+import type { TodayPick } from "./types";
 
 /**
  * "Home – Away" for a pick. The event id is only a last resort for bets

@@ -250,7 +250,7 @@ test.describe("Today cockpit", () => {
     await page.goto("/en/today");
 
     const panel = slate(page, "Next 72 hours");
-    await expect(panel).toContainText("Nothing kicks off today — open picks until");
+    await expect(panel).toContainText("No picks kick off today — open picks until");
     await expect(panel.locator("tbody tr")).toHaveCount(2);
     await expect(panel.getByRole("link", { name: /Inter – Napoli/ })).toHaveAttribute("href", "/en/matches/Ib3Sv9fa");
     await expect(panel).toContainText("Oct 13, 2026");

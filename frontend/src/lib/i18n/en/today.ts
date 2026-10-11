@@ -34,10 +34,13 @@ export const today = {
   "today.kpi.pipeline.ops": "Data ops",
   "today.kpi.unavailable": "Couldn't load",
 
+  "today.error.busy": "The database is busy (another job is writing to it). Try again in a moment.",
+  "today.error.failed": "The database query failed; the server log has the details.",
+
   "today.slate.title": "Today's slate",
   "today.slate.title72h": "Next 72 hours",
   "today.slate.window": "Kick-offs on {date}, local time ({tz})",
-  "today.slate.window72h": "Nothing kicks off today — open picks until {end}, local time ({tz})",
+  "today.slate.window72h": "No picks kick off today — open picks until {end}, local time ({tz})",
   "today.slate.edge": "Minimum edge",
   "today.slate.edgeAtLeast": "≥ {value}",
   "today.slate.edgeTitle": "Edge = model probability minus de-vigged market probability",

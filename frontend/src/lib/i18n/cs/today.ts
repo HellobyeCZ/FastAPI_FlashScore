@@ -33,10 +33,13 @@ export const today: Record<keyof typeof en, string> = {
   "today.kpi.pipeline.ops": "Správa dat",
   "today.kpi.unavailable": "Nepodařilo se načíst",
 
+  "today.error.busy": "Databáze je zaneprázdněná (zapisuje do ní jiná úloha). Zkuste to za chvíli znovu.",
+  "today.error.failed": "Dotaz do databáze selhal; podrobnosti jsou v logu serveru.",
+
   "today.slate.title": "Dnešní tipy",
   "today.slate.title72h": "Příštích 72 hodin",
   "today.slate.window": "Výkopy {date}, místní čas ({tz})",
-  "today.slate.window72h": "Dnes se nic nehraje — otevřené tipy do {end}, místní čas ({tz})",
+  "today.slate.window72h": "Dnes nezačíná žádný tip — otevřené tipy do {end}, místní čas ({tz})",
   "today.slate.edge": "Minimální výhoda",
   "today.slate.edgeAtLeast": "≥ {value}",
   "today.slate.edgeTitle": "Výhoda = pravděpodobnost modelu minus pravděpodobnost trhu bez marže",
