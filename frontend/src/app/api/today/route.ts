@@ -226,6 +226,15 @@ export async function GET(request: NextRequest) {
   const overdueIso = new Date(now.getTime() - OVERDUE_HOURS * HOUR_MS).toISOString();
 
   try {
+    // paper_bets is created by FastAPI the first time a pick is recorded, so a
+    // fresh database has none: that is "no picks yet", not an error.
+    const tables = await prisma.$queryRaw<{ name: string }[]>`
+      SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'paper_bets'
+    `;
+    if (tables.length === 0) {
+      return NextResponse.json(emptyToday(nowIso, day));
+    }
+
     // One read transaction: every count is taken from the same snapshot as
     // the rows beside it, and a locked database fails the batch once instead
     // of once per query (better-sqlite3 waits out its busy timeout blocking).
@@ -314,6 +323,21 @@ export async function GET(request: NextRequest) {
       ? errorResponse(503, "today_db_busy", "The database is busy; try again in a moment")
       : errorResponse(500, "today_query_failed", "Today's data could not be loaded; see the server log");
   }
+}
+
+function emptyToday(nowIso: string, day: { start: Date; end: Date; tz: string }): TodayResponse {
+  return {
+    generated_at: nowIso,
+    window: { today_start: day.start.toISOString(), today_end: day.end.toISOString(), tz: day.tz },
+    slate: [],
+    upcoming72h: [],
+    open72h: { count: 0, today_count: 0 },
+    pnl30d: { n: 0, pnl: null, series: [] },
+    last_settled_at: null,
+    pending: { count: 0, overdue_count: 0, unscheduled_count: 0, oldest_kickoff: null },
+    last_recommended_at: null,
+    recent_settled: []
+  };
 }
 
 function errorResponse(status: number, code: TodayErrorCode, message: string) {

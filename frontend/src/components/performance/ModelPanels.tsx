@@ -153,7 +153,7 @@ export function RegistryPanel({ model, className }: { model: string; className?:
         <Callout tone="info" title={t("performance.registry.disabled")} />
       </div>
     );
-  } else if (mlflow && !mlflow.reachable) {
+  } else if (mlflow && (!mlflow.reachable || (mlflow.error && (registry.data?.models.length ?? 0) === 0))) {
     body = (
       <div className="p-4">
         <Callout tone="warn" title={t("performance.registry.unreachable")}>

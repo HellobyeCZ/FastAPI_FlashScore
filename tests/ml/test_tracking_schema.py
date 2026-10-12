@@ -550,3 +550,14 @@ def test_logging_recovers_after_a_failed_run_close(mlflow_store, monkeypatch):
     assert second is not None
     assert calls["n"] == 2  # the first close really failed, the second succeeded
     assert _client(mlflow_store).get_run(second).info.status == "FINISHED"
+
+
+def test_redact_uri_strips_credentials(monkeypatch):
+    from app.ml import tracking
+
+    assert tracking.redact_uri("https://bob:s3cret@mlflow.example.com:8443/x?y=1") == "https://mlflow.example.com:8443/x?y=1"
+    assert tracking.redact_uri("http://127.0.0.1:5050") == "http://127.0.0.1:5050"
+    assert tracking.redact_uri(None) is None
+    monkeypatch.setenv("MLFLOW_TRACKING_URI", "http://u:p@127.0.0.1:1")
+    monkeypatch.delenv("APP_MLFLOW_UI_URL", raising=False)
+    assert tracking.ui_base_url() == "http://127.0.0.1:1"

@@ -301,6 +301,10 @@ export const lab: Record<keyof typeof en, string> = {
   "lab.serving.fallback.title": "Bez šampiona: servíruje se souborový artefakt",
   "lab.serving.unserved": "Nenasazeno",
   "lab.serving.unserved.title": "Bez šampiona a bez souborového artefaktu: model nedělá žádné živé tipy",
+  "lab.serving.unknown": "Registr nedostupný",
+  "lab.mlflow.failed.title": "MLflow odpovědělo, ale požadavek selhal",
+  "lab.mlflow.failed.body": "Server pro sledování běží, ale čtení z něj selhalo, takže seznam nemusí být úplný. Chyba níže pochází z MLflow.",
+  "lab.serving.unknown.title": "MLflow není dostupné, takže nasazení nelze porovnat s registrem. Nasazené modely zůstávají beze změny; opětovné načtení je vypnuté, dokud se MLflow nevrátí.",
   "lab.serving.untracked": "Jen sledováno",
   "lab.serving.untracked.title": "Servíruje se ze souborového artefaktu; verze v registru slouží jen k dohledatelnosti",
 

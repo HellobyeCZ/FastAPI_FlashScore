@@ -102,14 +102,16 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def _registry_champions() -> Dict[str, Any]:
-    """{model_name: LoadedVersion} for every servable model with an
-    `@champion`. Empty when MLflow is disabled or unreachable; a broken
-    version is skipped (that model falls back to its file)."""
+def _registry_champions() -> Tuple[Dict[str, Any], bool]:
+    """({model_name: LoadedVersion}, answered) for every servable model with
+    an `@champion`. ``answered`` is False when the registry could not be
+    asked (MLflow unreachable) — the champions are then *unknown*, not
+    absent. Disabled tracking answers "no champions". A broken version is
+    skipped (that model falls back to its file)."""
     from app.ml import tracking
 
     if not tracking.is_enabled():
-        return {}
+        return {}, True
     from app.ml.pyfunc_wrapper import SERVABLE_MODELS
     from app.ml.registry import MlflowUnavailable, load_champion
 
@@ -118,19 +120,20 @@ def _registry_champions() -> Dict[str, Any]:
         try:
             version = load_champion(name)
         except MlflowUnavailable as exc:
-            logger.info("model registry unavailable, serving from files: %s", exc)
-            return loaded
+            logger.info("model registry unavailable: %s", exc)
+            return loaded, False
         except Exception:
             logger.exception("failed to load %s@champion; falling back to file", name)
             continue
         if version is not None:
             loaded[name] = version
-    return loaded
+    return loaded, True
 
 
 def load_models(
     *,
     use_registry: bool = True,
+    previous: Optional["ModelArtifacts"] = None,
     logistic_label: str = "logistic_phase3a",
     hgb_label: str = "hgb_phase3b",
     dc_label: str = "dixon_coles_phase3c",
@@ -140,13 +143,24 @@ def load_models(
     ``$APP_ML_MODELS_DIR/<label>/model.pkl``; Dixon-Coles always from
     ``$APP_ML_MODELS_DIR/<dc_label>/``. Each loader is independent; if
     one artifact is missing the others are still returned. Provenance is
-    recorded in ``ModelArtifacts.served``."""
+    recorded in ``ModelArtifacts.served``.
+
+    ``previous`` is the currently served set: when the registry can't be
+    reached, models it served from the registry are kept as they are rather
+    than silently swapped for file fallbacks (or nothing) by a reload."""
     from app.ml.dixon_coles import DCConfig
     from app.ml.training import TrainedHGB, TrainedLogistic
 
     base = _resolve_artifact_dir()
     out = ModelArtifacts()
-    champions = _registry_champions() if use_registry else {}
+    champions, answered = _registry_champions() if use_registry else ({}, True)
+
+    if not answered and previous is not None:
+        for name, info in previous.served.items():
+            if info.loaded and info.source == "registry":
+                setattr(out, name, getattr(previous, name))
+                out.served[name] = info
+                logger.info("registry unreachable; keeping %s v%s", name, info.version)
 
     for name, champion in champions.items():
         setattr(out, name, champion.trained)
@@ -251,7 +265,7 @@ def reload_models() -> ModelArtifacts:
     previous set until the swap. Blocking — call from a thread."""
     global _served
     with _served_lock:
-        fresh = load_models()
+        fresh = load_models(previous=_served)
         _served = fresh
     logger.info(
         "served_models_reloaded",

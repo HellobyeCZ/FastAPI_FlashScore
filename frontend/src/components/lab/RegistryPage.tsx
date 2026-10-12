@@ -33,6 +33,7 @@ import { useMlflowRun } from "@/lib/lab/mlflow";
 import {
   MIN_PROMOTION_BETS,
   aliasVersion,
+  mlflowListFailed,
   servingState,
   sortVersions,
   useReloadServedModels,
@@ -51,6 +52,7 @@ const STATE_TONE: Record<ServingState, Tone> = {
   orphaned: "warn",
   fallback: "neutral",
   unserved: "neutral",
+  unknown: "neutral",
   untracked: "neutral"
 };
 
@@ -60,7 +62,8 @@ export function RegistryPage() {
   const registry = useRegistry();
   const ops = useOpsStatus();
   const status = registry.data?.status;
-  const down = Boolean(status && !(status.enabled && status.reachable));
+  const listFailed = mlflowListFailed(status, registry.data?.models.length ?? 0);
+  const down = Boolean(status && !(status.enabled && status.reachable)) || listFailed;
   // Servable models first: those are the ones whose aliases change live picks.
   const models = [...(registry.data?.models ?? [])].sort(
     (a, b) => Number(b.servable) - Number(a.servable) || a.model_name.localeCompare(b.model_name)
@@ -80,10 +83,15 @@ export function RegistryPage() {
 
       <div className="flex flex-col gap-6">
         {down && (
-          <MlflowStatusCallout status={status} onRetry={() => registry.refetch()} retrying={registry.isFetching} />
+          <MlflowStatusCallout
+            status={status}
+            listFailed={listFailed}
+            onRetry={() => registry.refetch()}
+            retrying={registry.isFetching}
+          />
         )}
 
-        <ServingPanel models={models} served={served} ops={ops} />
+        <ServingPanel models={models} served={served} ops={ops} registryDown={down || registry.isError} />
 
         {registry.isLoading ? (
           <Panel>
@@ -133,11 +141,14 @@ export function RegistryPage() {
 function ServingPanel({
   models,
   served,
-  ops
+  ops,
+  registryDown
 }: {
   models: RegisteredModel[];
   served: ServedModel[];
   ops: ReturnType<typeof useOpsStatus>;
+  /** Registry unknown: never infer a mismatch or suggest a reload from an empty answer. */
+  registryDown: boolean;
 }) {
   const { t, fmt } = useLocale();
   const reload = useReloadServedModels();
@@ -147,7 +158,7 @@ function ServingPanel({
   const rows: Row[] = names.map((name) => {
     const model = models.find((m) => m.model_name === name);
     const s = served.find((x) => x.name === name);
-    return { name, model, served: s, state: servingState(model, s) };
+    return { name, model, served: s, state: registryDown ? "unknown" : servingState(model, s) };
   });
 
   const columns: Column<Row>[] = [
@@ -205,7 +216,12 @@ function ServingPanel({
       description={t("lab.reg.serving.description")}
       padding="none"
       actions={
-        <Button size="sm" onClick={() => setConfirming(true)}>
+        <Button
+          size="sm"
+          onClick={() => setConfirming(true)}
+          disabled={registryDown}
+          title={registryDown ? t("lab.serving.unknown.title") : undefined}
+        >
           {t("lab.reg.reload")}
         </Button>
       }
@@ -371,7 +387,7 @@ function ModelPanel({ model, served }: { model: RegisteredModel; served: ServedM
       align: "right",
       cell: (v) => (
         <span className="inline-flex flex-wrap justify-end gap-1">
-          {ALIASES.map((alias) =>
+          {ALIASES.filter((alias) => model.servable || alias !== "champion" || v.aliases.includes(alias)).map((alias) =>
             v.aliases.includes(alias) ? (
               <Button
                 key={alias}

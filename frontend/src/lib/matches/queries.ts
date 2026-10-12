@@ -1,7 +1,7 @@
 "use client";
 import { useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ApiError, appGet, backendGet, errorMessage } from "@/lib/api/http";
+import { ApiError, appGet, appPost, backendGet, errorMessage } from "@/lib/api/http";
 import { parseDate } from "@/lib/format";
 import { matchesListKey } from "@/hooks/useMatchesQuery";
 import { boardFromLive, boardFromStored, type OddsBoard } from "./odds";
@@ -181,7 +181,7 @@ export type FetchLatestResult = {
 };
 
 /**
- * Explicit upstream refresh: GET /api/odds/{id} and /api/match-stats/{id}
+ * Explicit upstream refresh: POST /api/odds/{id} and /api/match-stats/{id}
  * scrape FlashScore and store new snapshots. Throws only when both fail.
  * Afterwards every query of this match (and the matches list) is refetched.
  */
@@ -190,8 +190,8 @@ export function useFetchLatest(eventId: string) {
   return useMutation({
     mutationFn: async (): Promise<FetchLatestResult> => {
       const [odds, stats] = await Promise.allSettled([
-        appGet<OddsResponse>(`odds/${enc(eventId)}`),
-        appGet<MatchStatsResponse>(`match-stats/${enc(eventId)}`)
+        appPost<OddsResponse>(`odds/${enc(eventId)}`),
+        appPost<MatchStatsResponse>(`match-stats/${enc(eventId)}`)
       ]);
       const failed: FetchLatestResult["failed"] = [];
       if (odds.status === "rejected") failed.push({ feed: "odds", message: errorMessage(odds.reason) });

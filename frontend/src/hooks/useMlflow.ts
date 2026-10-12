@@ -44,11 +44,15 @@ export function useRegistry() {
   });
 }
 
+// Served models changed: cached match predictions came from the old ones.
+const isPrediction = (q: { queryKey: readonly unknown[] }) => q.queryKey[0] === "match" && q.queryKey[2] === "predict";
+
 function useInvalidateMlflow() {
   const qc = useQueryClient();
   return () => {
     qc.invalidateQueries({ queryKey: ["mlflow"] });
     qc.invalidateQueries({ queryKey: opsStatusKey });
+    qc.invalidateQueries({ predicate: isPrediction });
   };
 }
 

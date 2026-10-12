@@ -1,6 +1,7 @@
 "use client";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { backendGet } from "@/lib/api/http";
+import { backtestRunsQuery } from "@/lib/lab/backtests";
 import { isLegacyHistory, matchesQuery, type PicksQuery } from "./filters";
 import type {
   BacktestRunsResponse,
@@ -73,11 +74,11 @@ export function useCalibration(model: string, q: PicksQuery, enabled = true) {
   });
 }
 
+/** The Lab's run list (same cache, so Lab actions refresh model pages too). */
 export function useBacktestRuns() {
   return useQuery({
-    queryKey: key("backtest-runs"),
-    queryFn: () => backendGet<BacktestRunsResponse>("backtest/runs"),
-    staleTime: 60_000
+    ...backtestRunsQuery,
+    select: (items: BacktestRunsResponse["items"]): BacktestRunsResponse => ({ items })
   });
 }
 

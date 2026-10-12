@@ -43,6 +43,7 @@ export const shell = {
   "health.issue.settle_overdue": "{count} bets still unsettled; oldest from {age}.",
   "health.issue.no_models_loaded": "No trained models are being served — new picks only come from baselines.",
   "health.issue.live_odds_stale": "Live odds last refreshed {age}.",
+  "health.issue.live_odds_never": "Fixtures are coming up, but no live odds have been captured yet.",
   "health.issue.mlflow_unreachable": "MLflow tracking server is unreachable — runs are not being logged.",
   "health.issue.mlflow_disabled": "MLflow logging is disabled.",
   "health.issue.unknown": "{message}",

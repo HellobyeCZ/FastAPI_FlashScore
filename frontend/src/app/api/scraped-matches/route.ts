@@ -367,7 +367,10 @@ export async function GET(request: Request) {
     };
     return NextResponse.json(body, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to load stored matches.";
-    return NextResponse.json({ error: { code: "scraped_matches_load_failed", message } }, { status: 500 });
+    // Driver messages can carry SQL and file paths: log them, return a generic one.
+    console.error("[/api/scraped-matches] failed:", error);
+    const busy = error instanceof Error && /SQLITE_BUSY|database is locked/i.test(error.message);
+    const message = busy ? "The database is busy; try again in a moment" : "Failed to load stored matches.";
+    return NextResponse.json({ error: { code: "scraped_matches_load_failed", message } }, { status: busy ? 503 : 500 });
   }
 }

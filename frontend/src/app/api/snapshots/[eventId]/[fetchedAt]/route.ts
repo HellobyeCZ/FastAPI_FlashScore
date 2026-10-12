@@ -35,7 +35,10 @@ export async function GET(_req: Request, { params }: { params: { eventId: string
     };
     return NextResponse.json(body, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to load the live capture.";
-    return NextResponse.json({ error: { code: "snapshot_load_failed", message } }, { status: 500 });
+    // Driver messages can carry SQL and file paths: log them, return a generic one.
+    console.error("[/api/snapshots/[eventId]/[fetchedAt]] failed:", error);
+    const busy = error instanceof Error && /SQLITE_BUSY|database is locked/i.test(error.message);
+    const message = busy ? "The database is busy; try again in a moment" : "Failed to load the live capture.";
+    return NextResponse.json({ error: { code: "snapshot_load_failed", message } }, { status: busy ? 503 : 500 });
   }
 }

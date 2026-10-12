@@ -15,8 +15,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const { settings } = useSettings();
   const { t, locale } = useLocale();
   const pathname = usePathname();
-  // Data ops lists every issue in full; the slim banner would repeat it.
-  const onOps = pathname === `/${locale}/ops`;
+  // Today and Data ops list every issue in full; the slim banner would repeat it.
+  const fullBannerPage = pathname === `/${locale}/ops` || pathname === `/${locale}/today`;
   return (
     <>
       <a
@@ -28,7 +28,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
       <TopBar onMenu={() => setMenu((v) => !v)} menuOpen={menu} />
       <Rail open={menu} onClose={closeMenu} />
       <main id="main" tabIndex={-1} className="pb-shell-bottom pt-shell-top focus:outline-none md:pl-rail">
-        {!onOps && <HealthBanner variant="slim" />}
+        {!fullBannerPage && <HealthBanner variant="slim" />}
         <div className="mx-auto w-full max-w-[1680px] px-4 py-6 sm:px-6 lg:px-8">{children}</div>
       </main>
       <StatusBar />

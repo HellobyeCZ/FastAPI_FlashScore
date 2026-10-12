@@ -19,6 +19,7 @@ const KNOWN = new Set([
   "settle_overdue",
   "no_models_loaded",
   "live_odds_stale",
+  "live_odds_never",
   "mlflow_unreachable",
   "mlflow_disabled"
 ]);
@@ -45,7 +46,9 @@ export function useShellHealth(): ShellHealth & { isLoading: boolean } {
       string,
       string | number
     >;
-    const key = (KNOWN.has(i.code) ? `health.issue.${i.code}` : "health.issue.unknown") as MessageKey;
+    // live_odds_stale without a timestamp means live odds were never captured.
+    const code = i.code === "live_odds_stale" && !since ? "live_odds_never" : i.code;
+    const key = (KNOWN.has(code) ? `health.issue.${code}` : "health.issue.unknown") as MessageKey;
     return { code: i.code, level: i.level, text: t(key, values) };
   });
   return { level: q.data.health.level, issues, isLoading: false };

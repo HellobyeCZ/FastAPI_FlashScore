@@ -1,4 +1,4 @@
-import { proxyToBackend } from "@/lib/server/backend";
+import { proxyToBackend, rejectCrossSite } from "@/lib/server/backend";
 
 export const dynamic = "force-dynamic";
 
@@ -9,6 +9,10 @@ export const dynamic = "force-dynamic";
  * stored odds come from /api/backend/events/{id}/odds — only the confirmed
  * action on the match page does.
  */
-export async function GET(_req: Request, { params }: { params: { eventId: string } }) {
+// POST (not GET) so a cross-site <img> or link can never trigger an upstream
+// scrape; same-origin only.
+export async function POST(req: Request, { params }: { params: { eventId: string } }) {
+  const refused = rejectCrossSite(req);
+  if (refused) return refused;
   return proxyToBackend(`odds/${encodeURIComponent(params.eventId)}`, { timeoutMs: 45_000 });
 }

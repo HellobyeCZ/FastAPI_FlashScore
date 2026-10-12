@@ -81,14 +81,29 @@ def _is_http(uri: str) -> bool:
     return uri.startswith(("http://", "https://"))
 
 
+def redact_uri(uri: Optional[str]) -> Optional[str]:
+    """The URI without user:password@ — anything shown to a browser or
+    written into an error message goes through this (a hosted tracking
+    server may be configured with basic-auth credentials in the URI)."""
+    if not uri:
+        return uri
+    from urllib.parse import urlsplit, urlunsplit
+
+    parts = urlsplit(uri)
+    if "@" not in parts.netloc:
+        return uri
+    host = parts.netloc.rsplit("@", 1)[1]
+    return urlunsplit((parts.scheme, host, parts.path, parts.query, parts.fragment))
+
+
 def ui_base_url() -> Optional[str]:
     """Browser-facing MLflow UI base: `APP_MLFLOW_UI_URL`, else the
     tracking URI when it is an http(s) server. None for local stores."""
     explicit = os.getenv("APP_MLFLOW_UI_URL")
     if explicit:
-        return explicit.rstrip("/")
+        return redact_uri(explicit.rstrip("/"))
     uri = tracking_uri()
-    return uri.rstrip("/") if _is_http(uri) else None
+    return redact_uri(uri.rstrip("/")) if _is_http(uri) else None
 
 
 def import_mlflow():
@@ -174,7 +189,7 @@ def require_client():
     uri = tracking_uri()
     status = probe()
     if not status.reachable:
-        raise MlflowUnavailable(f"MLflow tracking server unreachable at {uri}: {status.error}")
+        raise MlflowUnavailable(f"MLflow tracking server unreachable at {redact_uri(uri)}: {status.error}")
     try:
         mlflow = import_mlflow()
     except Exception as exc:
@@ -276,7 +291,7 @@ def get_status() -> Dict[str, Any]:
     status: Dict[str, Any] = {
         "enabled": is_enabled(),
         "reachable": False,
-        "tracking_uri": uri,
+        "tracking_uri": redact_uri(uri),
         "ui_url": ui_base_url(),
         "experiment_name": EXPERIMENT_NAME,
         "experiment_id": cached_experiment_id(),

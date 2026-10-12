@@ -43,6 +43,7 @@ export const shell: Record<keyof typeof en, string> = {
   "health.issue.settle_overdue": "{count} sázek stále nevyhodnoceno; nejstarší {age}.",
   "health.issue.no_models_loaded": "Nejsou nasazeny žádné natrénované modely — nové tipy vznikají jen ze základních modelů.",
   "health.issue.live_odds_stale": "Živé kurzy naposledy obnoveny {age}.",
+  "health.issue.live_odds_never": "Blíží se zápasy, ale zatím nebyly zachyceny žádné živé kurzy.",
   "health.issue.mlflow_unreachable": "Server MLflow je nedostupný — běhy se nezaznamenávají.",
   "health.issue.mlflow_disabled": "Zaznamenávání do MLflow je vypnuté.",
   "health.issue.unknown": "{message}",

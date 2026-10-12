@@ -4,22 +4,40 @@ import { Button, Callout } from "@/components/ui";
 import type { MlflowStatus } from "@/types/ops";
 
 /**
- * Explains why MLflow data is missing (disabled vs unreachable) and how to
- * fix it. Renders nothing while the tracking server is reachable.
+ * Explains why MLflow data is missing (disabled, unreachable, or reachable
+ * but the listing failed) and how to fix it. Renders nothing while the
+ * tracking server answers normally.
  */
 export function MlflowStatusCallout({
   status,
   onRetry,
   retrying,
-  className
+  className,
+  listFailed
 }: {
   status: MlflowStatus | null | undefined;
   onRetry?: () => void;
   retrying?: boolean;
   className?: string;
+  /** The server is up but the listing came back empty with an error. */
+  listFailed?: boolean;
 }) {
   const { t } = useLocale();
-  if (!status || (status.enabled && status.reachable)) return null;
+  if (!status) return null;
+  const retry = onRetry && (
+    <Button size="sm" onClick={onRetry} loading={retrying}>
+      {t("common.retry")}
+    </Button>
+  );
+  if (status.enabled && status.reachable) {
+    if (!listFailed || !status.error) return null;
+    return (
+      <Callout tone="neg" title={t("lab.mlflow.failed.title")} className={className} action={retry}>
+        <p>{t("lab.mlflow.failed.body")}</p>
+        <p className="mt-1 break-words font-mono text-meta text-text-faint">{status.error}</p>
+      </Callout>
+    );
+  }
   if (!status.enabled) {
     return (
       <Callout tone="info" title={t("lab.mlflow.disabled.title")} className={className}>

@@ -211,6 +211,17 @@ def _served_models() -> List[ServedModel]:
     ]
 
 
+def _redact(uri: Optional[str]) -> Optional[str]:
+    """Strip user:password@ from a URI before it reaches the browser."""
+    if not uri or "@" not in uri:
+        return uri
+    from urllib.parse import urlsplit, urlunsplit
+
+    parts = urlsplit(uri)
+    host = parts.netloc.rsplit("@", 1)[-1]
+    return urlunsplit((parts.scheme, host, parts.path, parts.query, parts.fragment))
+
+
 def _mlflow_status() -> MlflowStatus:
     """Tracking status from ``app.ml.tracking.get_status()``. Without it,
     MLflow counts as enabled unless ``APP_MLFLOW_DISABLED=1`` and its
@@ -229,12 +240,12 @@ def _mlflow_status() -> MlflowStatus:
         except Exception:
             _logger.exception("mlflow_status_failed")
 
-    tracking_uri = os.getenv("MLFLOW_TRACKING_URI")
+    tracking_uri = _redact(os.getenv("MLFLOW_TRACKING_URI"))
     return MlflowStatus(
         enabled=os.getenv("APP_MLFLOW_DISABLED") != "1",
         reachable=False,
         tracking_uri=tracking_uri,
-        ui_url=os.getenv("APP_MLFLOW_UI_URL") or tracking_uri,
+        ui_url=_redact(os.getenv("APP_MLFLOW_UI_URL")) or tracking_uri,
         experiment_name="picks",
         error="status unavailable",
     )

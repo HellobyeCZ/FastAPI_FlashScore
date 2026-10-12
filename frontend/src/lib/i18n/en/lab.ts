@@ -300,6 +300,10 @@ export const lab = {
   "lab.serving.fallback.title": "No champion: serving uses the file artifact",
   "lab.serving.unserved": "Not served",
   "lab.serving.unserved.title": "No champion and no file artifact: this model makes no live picks",
+  "lab.serving.unknown": "Registry unavailable",
+  "lab.mlflow.failed.title": "MLflow answered, but the request failed",
+  "lab.mlflow.failed.body": "The tracking server is up, but reading from it failed, so this list may be incomplete. The error below comes from MLflow.",
+  "lab.serving.unknown.title": "MLflow can't be reached, so serving can't be compared with the registry. Served models stay as they are; reloading is disabled until it is back.",
   "lab.serving.untracked": "Tracked only",
   "lab.serving.untracked.title": "Served from its file artifact; registry versions are for lineage only",
 

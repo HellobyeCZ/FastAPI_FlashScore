@@ -30,6 +30,7 @@ import { useSearchState } from "@/lib/lab/hooks";
 import { formatSort, parseSort, sortRows } from "@/lib/lab/sort";
 import { LabTabs } from "./LabTabs";
 import { MlflowStatusCallout } from "./MlflowStatusCallout";
+import { mlflowListFailed } from "@/lib/lab/serving";
 import { PURPOSES, PurposeBadge, isPurpose, type Purpose } from "./PurposeBadge";
 
 type PurposeFilter = Purpose | "all";
@@ -54,7 +55,8 @@ export function ExperimentsPage() {
   const sort = parseSort(params.get("sort"));
   const runs = useMlflowRuns({ purpose: purpose === "all" ? null : purpose, model: model || null });
   const status = runs.data?.status;
-  const down = Boolean(status && !(status.enabled && status.reachable));
+  const listFailed = mlflowListFailed(status, runs.data?.runs.length ?? 0);
+  const down = Boolean(status && !(status.enabled && status.reachable)) || listFailed;
   const training = isTraining(purpose);
   const filtered = purpose !== "all" || Boolean(model);
 
@@ -255,7 +257,14 @@ export function ExperimentsPage() {
       <LabTabs active="experiments" />
 
       <div className="flex flex-col gap-4">
-        {down && <MlflowStatusCallout status={status} onRetry={() => runs.refetch()} retrying={runs.isFetching} />}
+        {down && (
+          <MlflowStatusCallout
+            status={status}
+            listFailed={listFailed}
+            onRetry={() => runs.refetch()}
+            retrying={runs.isFetching}
+          />
+        )}
 
         <div className="flex flex-wrap items-end gap-3">
           <div className="max-w-full overflow-x-auto">

@@ -17,6 +17,8 @@ export function useReloadServedModels() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: opsStatusKey });
       qc.invalidateQueries({ queryKey: mlflowKeys.registry });
+      // Match predictions were computed by the previously served models.
+      qc.invalidateQueries({ predicate: (q) => q.queryKey[0] === "match" && q.queryKey[2] === "predict" });
     }
   });
 }
@@ -44,8 +46,9 @@ export function aliasVersion(model: RegisteredModel, alias: "champion" | "challe
  * - "fallback": no champion; serving uses the file artifact
  * - "unserved": no champion and nothing loaded (no file artifact either)
  * - "untracked": the model can't be served from the registry
+ * - "unknown": the registry couldn't be read, so no comparison is possible
  */
-export type ServingState = "synced" | "stale" | "orphaned" | "fallback" | "unserved" | "untracked";
+export type ServingState = "synced" | "stale" | "orphaned" | "fallback" | "unserved" | "untracked" | "unknown";
 
 export function servingState(model: RegisteredModel | undefined, served: ServedModel | undefined): ServingState {
   if (!served?.loaded && !model?.aliases.champion) return "unserved";
@@ -55,3 +58,13 @@ export function servingState(model: RegisteredModel | undefined, served: ServedM
   if (champion) return fromRegistry && served?.version === champion ? "synced" : "stale";
   return fromRegistry ? "orphaned" : "fallback";
 }
+
+/**
+ * The tracking server answered its health check but a listing failed: the
+ * backend then returns reachable=true, an error and an empty list. Treat
+ * that as an error, never as "nothing registered yet".
+ */
+export function mlflowListFailed(status: { reachable: boolean; error: string | null } | undefined, count: number): boolean {
+  return Boolean(status?.reachable && status.error && count === 0);
+}
+

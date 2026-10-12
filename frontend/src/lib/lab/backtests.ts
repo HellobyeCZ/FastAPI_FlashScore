@@ -3,6 +3,7 @@ import { useMutation, useQueries, useQuery, useQueryClient, keepPreviousData } f
 import { backendGet, backendSend } from "@/lib/api/http";
 import { parseDate } from "@/lib/format";
 import { opsStatusKey } from "@/hooks/useOpsStatus";
+import { useSettledEffect } from "@/hooks/useSettledEffect";
 
 /**
  * Backtest API surface (FastAPI /backtest/* and the backtest branch of
@@ -156,12 +157,25 @@ function pollInterval(runs: BacktestRunSummary[]): number | false {
  * briefly while a just-finished run is being logged to MLflow.
  */
 export function useBacktestRuns() {
-  return useQuery({
-    queryKey: backtestKeys.runs,
-    queryFn: () => backendGet<{ items: BacktestRunSummary[] }>("backtest/runs", { limit: 200 }).then((r) => r.items),
+  const qc = useQueryClient();
+  const query = useQuery({
+    ...backtestRunsQuery,
     refetchInterval: (q) => pollInterval(q.state.data ?? [])
   });
+  // A run that just finished changes the queue count on Data ops and adds
+  // an MLflow run; refresh those views once instead of waiting for staleness.
+  useSettledEffect(query.data, (r) => r.id, isActiveRun, () => {
+    qc.invalidateQueries({ queryKey: opsStatusKey });
+    qc.invalidateQueries({ queryKey: ["mlflow"] });
+  });
+  return query;
 }
+
+/** Shared by every view of the run list (Lab, model pages) so one cache stays current. */
+export const backtestRunsQuery = {
+  queryKey: backtestKeys.runs,
+  queryFn: () => backendGet<{ items: BacktestRunSummary[] }>("backtest/runs", { limit: 200 }).then((r) => r.items)
+};
 
 export function backtestRunQuery(id: string) {
   return {

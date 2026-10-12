@@ -91,3 +91,27 @@ def test_served_models_info_and_reload(mlflow_store, models_dir, fresh_holder):
     assert serving.get_served_artifacts() is reloaded is not first
     logistic = _info(serving.served_models_info(), "logistic")
     assert (logistic["source"], logistic["version"], logistic["run_id"]) == ("registry", "1", run_id)
+
+
+def test_reload_keeps_registry_champion_when_registry_goes_down(
+    mlflow_store, models_dir, fresh_holder, monkeypatch
+):
+    """An outage must not demote a served champion to the file fallback:
+    the registry's answer is unknown, not 'no champion'."""
+    from app.ml import registry, tracking
+
+    serving = fresh_holder
+    run_id = log_backtest("logistic", small_logistic(seed=5))
+    registry.register_run(run_id, alias="champion")
+    served = serving.reload_models()
+    assert served.served["logistic"].source == "registry"
+
+    monkeypatch.setenv("MLFLOW_TRACKING_URI", "http://127.0.0.1:1")
+    tracking._reset_state()
+    try:
+        after = serving.reload_models()
+    finally:
+        tracking._reset_state()
+    info = after.served["logistic"]
+    assert (info.source, info.version, info.run_id) == ("registry", "1", run_id)
+    assert after.logistic is served.logistic

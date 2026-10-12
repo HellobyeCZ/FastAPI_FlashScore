@@ -98,7 +98,7 @@ def translate_errors() -> Iterator[None]:
             raise RegistryError(str(getattr(exc, "message", exc))) from exc
         if tracking.connection_lost():
             raise MlflowUnavailable(
-                f"MLflow tracking server unreachable at {tracking.tracking_uri()}: {exc}"
+                f"MLflow tracking server unreachable at {tracking.redact_uri(tracking.tracking_uri())}: {exc}"
             ) from exc
         raise
 

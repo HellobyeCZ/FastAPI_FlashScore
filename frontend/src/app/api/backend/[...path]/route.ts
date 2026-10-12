@@ -1,4 +1,4 @@
-import { proxyToBackend } from "@/lib/server/backend";
+import { proxyToBackend, rejectCrossSite } from "@/lib/server/backend";
 
 /**
  * Catch-all proxy: /api/backend/<path> → FastAPI /<path>.
@@ -32,7 +32,7 @@ const RULES: Rule[] = [
   { method: "GET", pattern: /^mlflow\/runs\/[^/]+$/ },
   { method: "POST", pattern: /^mlflow\/registry\/register$/, timeoutMs: 120_000 },
   { method: "POST", pattern: /^mlflow\/registry\/[^/]+\/aliases$/, timeoutMs: 120_000 },
-  { method: "DELETE", pattern: /^mlflow\/registry\/[^/]+\/aliases\/[^/]+$/ },
+  { method: "DELETE", pattern: /^mlflow\/registry\/[^/]+\/aliases\/[^/]+$/, timeoutMs: 120_000 },
   { method: "POST", pattern: /^ml\/reload$/, timeoutMs: 120_000 }
 ];
 
@@ -45,8 +45,20 @@ async function handle(req: Request, params: { path: string[] }): Promise<Respons
       { status: 404 }
     );
   }
+  if (req.method !== "GET") {
+    const refused = rejectCrossSite(req);
+    if (refused) return refused;
+  }
   const url = new URL(req.url);
   const body = req.method === "GET" || req.method === "DELETE" ? null : await req.text();
+  // Bodies are forwarded as JSON, so only accept JSON (no text/plain or
+  // form posts relabelled on the way through).
+  if (body && !(req.headers.get("content-type") ?? "").toLowerCase().startsWith("application/json")) {
+    return Response.json(
+      { error: { code: "unsupported_media_type", message: "Request body must be application/json" } },
+      { status: 415 }
+    );
+  }
   return proxyToBackend(path, {
     method: req.method as "GET" | "POST" | "DELETE",
     search: url.search,

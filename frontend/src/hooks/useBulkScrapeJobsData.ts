@@ -2,6 +2,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { backendGet, backendSend } from "@/lib/api/http";
 import { opsStatusKey } from "@/hooks/useOpsStatus";
+import { matchesListKey } from "@/hooks/useMatchesQuery";
+import { useSettledEffect } from "@/hooks/useSettledEffect";
 import type {
   BulkScrapeJobCreate,
   BulkScrapeJobDetailRow,
@@ -26,12 +28,19 @@ export function isActiveJob(job: Pick<BulkScrapeJobRow, "status">): boolean {
 
 /** Newest jobs first. Polls every 3 s only while a job is queued or running. */
 export function useBulkScrapeJobs(limit = 50) {
-  return useQuery({
+  const qc = useQueryClient();
+  const query = useQuery({
     queryKey: bulkScrapeKeys.list(limit),
     queryFn: () => backendGet<BulkScrapeJobList>("bulk-scrape/jobs", { limit }),
     staleTime: 5_000,
     refetchInterval: (query) => (query.state.data?.jobs.some(isActiveJob) ? 3_000 : false)
   });
+  // A finished job changes freshness on Data ops and adds stored matches.
+  useSettledEffect(query.data?.jobs, (j) => j.id, isActiveJob, () => {
+    qc.invalidateQueries({ queryKey: opsStatusKey });
+    qc.invalidateQueries({ queryKey: matchesListKey });
+  });
+  return query;
 }
 
 /**

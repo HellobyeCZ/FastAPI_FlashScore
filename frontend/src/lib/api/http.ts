@@ -80,6 +80,11 @@ export function backendSend<T>(
   });
 }
 
+/** POST to a Next.js-owned API route with no body (explicit actions). */
+export function appPost<T>(path: string): Promise<T> {
+  return request<T>(`/api/${path.replace(/^\//, "")}`, { method: "POST" });
+}
+
 /** GET a Next.js-owned API route (Prisma-backed): /api/<path>. */
 export function appGet<T>(path: string, params?: Params, init?: RequestInit): Promise<T> {
   return request<T>(`/api/${path.replace(/^\//, "")}${toSearch(params)}`, init);
