@@ -149,7 +149,7 @@ export const matches = {
   "matches.model.emptyBody":
     "The served models ({models}) need a live odds capture of a supported market for this match.",
   "matches.model.finishedNote":
-    "Predictions are made before kick-off from live odds. This match is finished, so the models return nothing for it — see the bets below for what was predicted at the time.",
+    "Predictions are only shown before kick-off. Scored now, a finished match would use data from after it was played (its result already moves Elo and form). The bets below show what the models said at the time.",
 
   "matches.bets.title": "Picks & bets",
   "matches.bets.description": "Live paper bets and backtest bets placed on this match",

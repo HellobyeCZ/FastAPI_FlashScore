@@ -519,6 +519,15 @@ type DetailOptions = {
   captures?: string[];
 };
 
+/** Event overrides for a match that hasn't kicked off: the only case with live predictions. */
+const UPCOMING = {
+  is_terminal: false,
+  outcome: null,
+  score: null,
+  status: "scheduled",
+  start_time_utc: "2026-10-18T14:30:00Z"
+} as const;
+
 async function stubDetail(page: Page, opts: DetailOptions = {}) {
   const id = String(opts.event?.event_id ?? EVENT_ID);
   const base = `**/api/backend/events/${id}`;
@@ -778,11 +787,12 @@ test.describe("Match detail", () => {
     // Terminal: no upstream action is offered.
     await expect(page.getByRole("button", { name: /Fetch latest from FlashScore/ })).toHaveCount(0);
 
+    // Finished: no fresh predictions (they would leak the result); /predict is not called.
     const model = page.locator("#model");
     await expect(model.getByRole("heading", { name: "Model view" })).toBeVisible();
-    const logisticHome = model.getByRole("row").filter({ hasText: "Logistic" }).filter({ hasText: "Sparta Prague" });
-    await expect(logisticHome).toContainText("84.2%");
-    await expect(logisticHome).toContainText("+8.1%");
+    await expect(model.getByText(/Predictions are only shown before kick-off/)).toBeVisible();
+    await expect(model.getByRole("table")).toHaveCount(0);
+    expect(requests.some((p) => p.startsWith("/api/backend/predict/"))).toBe(false);
 
     const bets = page.locator("#bets");
     await expect(bets.getByRole("link", { name: "Run of May 18, 2026, 23:27" })).toHaveAttribute(
@@ -847,6 +857,17 @@ test.describe("Match detail", () => {
     await expect(odds.getByRole("row").filter({ hasText: "Draw" }).getByRole("cell").nth(1)).toHaveText("6.10");
   });
 
+  test("an upcoming match shows each served model against the market", async ({ page }) => {
+    await setup(page);
+    await stubDetail(page, { event: UPCOMING });
+    await page.goto(`/en/matches/${EVENT_ID}`);
+    const model = page.locator("#model");
+    await expect(model.getByRole("heading", { name: "Model view" })).toBeVisible();
+    const logisticHome = model.getByRole("row").filter({ hasText: "Logistic" }).filter({ hasText: "Sparta Prague" });
+    await expect(logisticHome).toContainText("84.2%");
+    await expect(logisticHome).toContainText("+8.1%");
+  });
+
   test("fetching from FlashScore needs confirmation and only exists before the result", async ({ page }) => {
     const requests = await setup(page);
     await stubDetail(page, {
@@ -892,12 +913,11 @@ test.describe("Match detail", () => {
 
   test("no served model explains itself and links to the registry", async ({ page }) => {
     await setup(page);
-    await stubDetail(page, { predict: NO_MODELS });
+    await stubDetail(page, { predict: NO_MODELS, event: UPCOMING });
     await page.goto(`/en/matches/${EVENT_ID}`);
     const model = page.locator("#model");
     await expect(model.getByText("No trained model is being served")).toBeVisible();
     await expect(model.getByRole("link", { name: "Open model registry" })).toHaveAttribute("href", "/en/lab/registry");
-    await expect(model.getByText(/This match is finished/)).toBeVisible();
   });
 
   test("an unknown event shows a not-found state", async ({ page }) => {
@@ -930,7 +950,7 @@ test.describe("Match detail", () => {
 
   test("without a stored snapshot the newest live capture is the board and the price source", async ({ page }) => {
     await setup(page);
-    await stubDetail(page, { odds: null });
+    await stubDetail(page, { odds: null, event: UPCOMING });
     await page.goto(`/en/matches/${EVENT_ID}`);
     const odds = page.locator("#odds");
     await expect(odds.getByText(/Live capture · May 13, 2026, 22:40/)).toBeVisible();
@@ -1013,7 +1033,7 @@ test.describe("Match detail", () => {
 
   test("model and bet tables fit a 390px phone in Czech without sideways scrolling", async ({ page }) => {
     await setup(page);
-    await stubDetail(page);
+    await stubDetail(page, { event: UPCOMING });
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(`/cs/matches/${EVENT_ID}`);
     await expect(page.locator("#bets").getByText("Výhra").filter({ visible: true }).first()).toBeVisible();

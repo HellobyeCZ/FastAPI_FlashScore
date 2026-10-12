@@ -113,7 +113,10 @@ export function MatchDetailPage({ eventId }: { eventId: string }) {
           </ul>
         </nav>
 
-        <ModelViewPanel eventId={eventId} teams={teams} finished={status === "finished"} />
+        {/* Predictions depend on the match status; without the event (error above) there is nothing safe to show. */}
+        {!event.isError && (
+          <ModelViewPanel eventId={eventId} teams={teams} finished={status === null ? null : status === "finished"} />
+        )}
         <BetsPanel eventId={eventId} />
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(20rem,26rem)] xl:items-start">
           <OddsPanel eventId={eventId} teams={teams} terminal={e?.is_terminal} />

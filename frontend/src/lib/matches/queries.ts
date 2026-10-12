@@ -89,10 +89,15 @@ export function useEventPicks(eventId: string) {
   });
 }
 
-export function usePrediction(eventId: string) {
+/**
+ * Current model predictions. Disabled for finished matches: /predict scores
+ * with today's features, which already include the match's own result.
+ */
+export function usePrediction(eventId: string, enabled = true) {
   return useQuery({
     queryKey: matchKeys.predict(eventId),
-    queryFn: () => backendGet<PredictResponse>(`predict/${enc(eventId)}`)
+    queryFn: () => backendGet<PredictResponse>(`predict/${enc(eventId)}`),
+    enabled
   });
 }
 

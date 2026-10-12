@@ -149,7 +149,7 @@ export const matches: Record<keyof typeof en, string> = {
   "matches.model.emptyBody":
     "Nasazené modely ({models}) potřebují pro tento zápas živý záznam kurzů podporovaného trhu.",
   "matches.model.finishedNote":
-    "Predikce vznikají před výkopem ze živých kurzů. Tento zápas je odehraný, takže pro něj modely nic nevracejí — co tehdy předpověděly, ukazují sázky níže.",
+    "Predikce se zobrazují jen před výkopem. Kdyby se odehraný zápas hodnotil teď, použila by se data až z doby po něm (jeho výsledek už ovlivnil Elo i formu). Co modely říkaly v té době, ukazují sázky níže.",
 
   "matches.bets.title": "Tipy a sázky",
   "matches.bets.description": "Živé papírové sázky a sázky z backtestů na tento zápas",

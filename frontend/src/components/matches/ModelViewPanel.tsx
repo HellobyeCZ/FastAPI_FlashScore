@@ -26,9 +26,18 @@ function bestPrice(board: OddsBoard | null, p: Prediction): Row["best"] {
  * What each served model thinks of this match: model vs de-vigged market
  * probability, edge, fair odds and the best price currently stored.
  */
-export function ModelViewPanel({ eventId, teams, finished }: { eventId: string; teams: Teams; finished: boolean }) {
+export function ModelViewPanel({
+  eventId,
+  teams,
+  finished
+}: {
+  eventId: string;
+  teams: Teams;
+  /** null while the event is still loading: predictions wait until it's known. */
+  finished: boolean | null;
+}) {
   const { t, fmt, locale } = useLocale();
-  const prediction = usePrediction(eventId);
+  const prediction = usePrediction(eventId, finished === false);
   const reference = useReferenceBoard(eventId);
 
   const served = Object.entries(prediction.data?.available_models ?? {})
@@ -147,7 +156,13 @@ export function ModelViewPanel({ eventId, teams, finished }: { eventId: string; 
       }
       padding={rows.length > 0 ? "none" : "md"}
     >
-      {prediction.isLoading ? (
+      {finished === null ? (
+        <Skeleton lines={4} />
+      ) : finished ? (
+        // Scoring a finished match now would leak its own result into the
+        // features (Elo, form); the bets panel shows what was said beforehand.
+        <Callout tone="info">{t("matches.model.finishedNote")}</Callout>
+      ) : prediction.isLoading ? (
         <Skeleton lines={4} />
       ) : prediction.isError ? (
         <Callout
@@ -180,7 +195,6 @@ export function ModelViewPanel({ eventId, teams, finished }: { eventId: string; 
               {t("matches.model.emptyBody", { models: served.map((m) => modelLabel(m, t)).join(", ") })}
             </EmptyState>
           )}
-          {finished && <Callout tone="info">{t("matches.model.finishedNote")}</Callout>}
         </div>
       ) : (
         <Table<Row>
