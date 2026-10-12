@@ -7,6 +7,7 @@ import { PrismaClient } from "@prisma/client";
 import { NextRequest } from "next/server";
 import type { TodayResponse } from "../../src/components/today/types";
 import { OPS_STATUS_OK, OPS_STATUS_STALE, stubJson, stubShell } from "./fixtures/stub";
+import { bindDatabase } from "./fixtures/database";
 
 // Every relative time, KPI tone and the viewer's local day hang off "now", so
 // the clock and zone are pinned: 12:00 UTC = 14:00 in Prague, matching the
@@ -183,7 +184,7 @@ test.describe("Today cockpit", () => {
     await page.goto("/en/today");
 
     await expect(page.getByRole("heading", { level: 1, name: "Today" })).toBeVisible();
-    await expect(page.getByText("as of 02:00 PM")).toBeVisible();
+    await expect(page.getByText("as of 14:00")).toBeVisible();
     // The local-day window is computed for the zone the browser reports.
     expect(todayRequests.length).toBeGreaterThan(0);
     for (const url of todayRequests) expect(url.searchParams.get("tz")).toBe("Europe/Prague");
@@ -446,7 +447,7 @@ function seededRoute(): Promise<RouteContext> {
   routeContext ??= (async () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), "today-route-"));
     const dbUrl = `file:${path.join(dir, "today.sqlite3")}`;
-    process.env.DATABASE_URL = dbUrl;
+    bindDatabase(dbUrl);
     // Loaded only now that DATABASE_URL points at the seeded file, and through
     // require(), which Playwright transpiles (a dynamic import() of TS isn't).
     const { prisma } = require("../../src/server/prisma") as typeof import("../../src/server/prisma");
@@ -501,8 +502,7 @@ function seededRoute(): Promise<RouteContext> {
         VALUES (${id}, ${event}, 'logistic', '1X2_FT', ${selection}, ${pyIso(now - (60 - id) * HOUR)},
           2.0, ${edge}, ${result}, ${pnl}, ${status}, ${settledAt})`;
     }
-    // Summaries and labels carry the real orientation; upcoming_fixtures
-    // stores it reversed (see the route), so its rows here are crossed.
+    // Summaries, labels and fixture rows all use the same (home, away) order.
     for (const [event, id, home, away] of [
       ["EvMes001", 1, "Slavia Prague", "Sparta Prague"],
       ["EvOver06", 6, "Plzen", "Ostrava"],
@@ -517,10 +517,10 @@ function seededRoute(): Promise<RouteContext> {
       INSERT INTO bet_labels (event_id, home_team, away_team, country, competition, start_time_utc)
       VALUES ('EvLbl003', 'Hradec Kralove', 'Liberec', 'CZECH REPUBLIC', 'Chance Liga', ${jsIso(k(3))})`;
     for (const [event, id, homeRaw, awayRaw] of [
-      ["EvMes001", 1, "Sparta Prague", "Slavia Prague"],
-      ["EvFix002", 2, "Arsenal", "Liverpool"],
-      ["EvLbl003", 3, "Liberec", "Hradec Kralove"],
-      ["EvLate07", 7, "Napoli", "Inter"]
+      ["EvMes001", 1, "Slavia Prague", "Sparta Prague"],
+      ["EvFix002", 2, "Liverpool", "Arsenal"],
+      ["EvLbl003", 3, "Hradec Kralove", "Liberec"],
+      ["EvLate07", 7, "Inter", "Napoli"]
     ] as const) {
       await prisma.$executeRaw`
         INSERT INTO upcoming_fixtures (event_id, home_team_raw, away_team_raw, country, competition, start_time_utc)
@@ -579,7 +579,7 @@ test.describe("GET /api/today (seeded database)", () => {
       today_count: [1, 2].filter((id) => ctx.kickoffs.get(id)! < Date.parse(today_end)).length
     });
 
-    // Names: summary, then label, then the fixture row read crossed.
+    // Names: summary, then label, then the fixture row.
     const upcoming = new Map(res.upcoming72h.map((p) => [p.id, p]));
     expect(upcoming.get(1)).toMatchObject({ home_team: "Slavia Prague", away_team: "Sparta Prague", state: "open" });
     expect(upcoming.get(2)).toMatchObject({ home_team: "Liverpool", away_team: "Arsenal", competition: "Premier League" });

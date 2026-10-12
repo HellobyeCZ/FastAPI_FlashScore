@@ -18,11 +18,10 @@ export const dynamic = "force-dynamic";
 // match_event_summaries (canonical FlashScore metadata, also what the match
 // page shows), bet_labels, then upcoming_fixtures (future fixtures only). The
 // same order supplies team names, so the slate agrees with the match page it
-// links to. upcoming_fixtures stores every fixture with home and away
-// reversed (bulk_scrape.py:747-748 writes the feed's away field AF into
-// home_team_raw and the home field AE into away_team_raw), so its fallback
-// reads them crossed. Revert that in the same change that fixes the scraper
-// and rewrites the stored rows. Bets with no kick-off fall outside every
+// links to. (Fixture rows scraped before 2026-10 had home and away swapped;
+// the scraper is fixed and each refresh rewrites the names, so rows still
+// inside the discovery window heal on the next refresh.) Bets with no kick-off
+// fall outside every
 // window; pending ones are counted separately so they never vanish from the
 // cockpit.
 //
@@ -55,8 +54,8 @@ const BETS = Prisma.sql`
     strftime(${ISO}, julianday(pb.settled_at)) AS settled_at,
     julianday(pb.settled_at) AS settled_jd,
     julianday(COALESCE(mes.start_time_utc, bl.start_time_utc, uf.start_time_utc)) AS kickoff_jd,
-    COALESCE(mes.home_team, bl.home_team, uf.away_team_raw) AS home_team,
-    COALESCE(mes.away_team, bl.away_team, uf.home_team_raw) AS away_team,
+    COALESCE(mes.home_team, bl.home_team, uf.home_team_raw) AS home_team,
+    COALESCE(mes.away_team, bl.away_team, uf.away_team_raw) AS away_team,
     COALESCE(mes.competition, bl.competition, uf.competition) AS competition,
     COALESCE(mes.country, bl.country, uf.country) AS country
   FROM paper_bets pb

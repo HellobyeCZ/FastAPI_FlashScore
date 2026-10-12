@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { stubJson, stubShell } from "./fixtures/stub";
+import { bindDatabase } from "./fixtures/database";
 
 // Relative times ("5 months ago") and local kick-offs hang off "now", so the
 // clock and zone are pinned: 12:00 UTC = 14:00 in Prague.
@@ -784,7 +785,7 @@ test.describe("Match detail", () => {
     await expect(logisticHome).toContainText("+8.1%");
 
     const bets = page.locator("#bets");
-    await expect(bets.getByRole("link", { name: "Run of May 18, 2026, 11:27 PM" })).toHaveAttribute(
+    await expect(bets.getByRole("link", { name: "Run of May 18, 2026, 23:27" })).toHaveAttribute(
       "href",
       "/en/lab/backtests/0fe2009fdb43494683fedb86956c2d2a"
     );
@@ -837,9 +838,9 @@ test.describe("Match detail", () => {
     await stubDetail(page);
     await page.goto(`/en/matches/${EVENT_ID}`);
     const odds = page.locator("#odds");
-    await odds.getByRole("radio", { name: /May 13, 2026, 10:40 PM/i }).click();
+    await odds.getByRole("radio", { name: /May 13, 2026, 22:40/i }).click();
     await expect(page).toHaveURL(/snap=2026-05-13/);
-    await expect(odds.getByText(/Live capture · May 13, 2026, 10:40 PM/)).toBeVisible();
+    await expect(odds.getByText(/Live capture · May 13, 2026, 22:40/)).toBeVisible();
     await expect(odds.getByRole("row").filter({ hasText: "Draw" }).getByRole("cell").nth(1)).toHaveText("9.40");
     await odds.getByRole("radio", { name: /Stored/i }).click();
     await expect(page).not.toHaveURL(/snap=/);
@@ -932,10 +933,10 @@ test.describe("Match detail", () => {
     await stubDetail(page, { odds: null });
     await page.goto(`/en/matches/${EVENT_ID}`);
     const odds = page.locator("#odds");
-    await expect(odds.getByText(/Live capture · May 13, 2026, 10:40 PM/)).toBeVisible();
+    await expect(odds.getByText(/Live capture · May 13, 2026, 22:40/)).toBeVisible();
     await expect(odds.getByRole("row").filter({ hasText: "Draw" }).getByRole("cell").nth(1)).toHaveText("9.40");
     const model = page.locator("#model");
-    await expect(model.getByText(/best prices from the live capture of May 13, 2026, 10:40 PM/)).toBeVisible();
+    await expect(model.getByText(/best prices from the live capture of May 13, 2026, 22:40/)).toBeVisible();
     // Best draw price in that capture: Betano 9.45 (Tipsport 9.40).
     await expect(model.getByRole("row").filter({ hasText: "Logistic" }).filter({ hasText: "Draw" })).toContainText(
       "9.45"
@@ -947,7 +948,7 @@ test.describe("Match detail", () => {
     await stubDetail(page, { odds: { ...storedOdds(), fetched_at: "2026-05-01T08:00:00.000000+00:00" } });
     await page.goto(`/en/matches/${EVENT_ID}`);
     const odds = page.locator("#odds");
-    await expect(odds.getByText(/Live capture · May 13, 2026, 10:40 PM/)).toBeVisible();
+    await expect(odds.getByText(/Live capture · May 13, 2026, 22:40/)).toBeVisible();
     await odds.getByRole("radio", { name: /Stored/i }).click();
     await expect(page).toHaveURL(/snap=stored/);
     await expect(odds.getByText(/Stored snapshot · fetched May 1, 2026/)).toBeVisible();
@@ -1086,7 +1087,7 @@ test.describe("Stored-matches index API", () => {
     // Read once, when the Prisma client module is first loaded. Specs compile
     // to CommonJS, so require() goes through Playwright's TypeScript loader
     // (a dynamic import() would reach Node's own ESM loader instead).
-    process.env.DATABASE_URL = `file:${path.join(dir, "index.sqlite")}`;
+    bindDatabase(`file:${path.join(dir, "index.sqlite")}`);
     const { prisma } = require("@/server/prisma") as typeof import("@/server/prisma");
     for (const sql of INDEX_SCHEMA) await prisma.$executeRawUnsafe(sql);
     for (const [id, teams, sport, country, competition, kickoff, outcome] of INDEX_ROWS) {
