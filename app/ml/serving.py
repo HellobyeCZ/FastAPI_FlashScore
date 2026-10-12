@@ -84,6 +84,9 @@ class ModelArtifacts:
     served: Dict[str, ServedModelInfo] = field(
         default_factory=lambda: {name: ServedModelInfo(name=name) for name in SERVED_MODELS}
     )
+    # False when the registry couldn't be asked while building this set: the
+    # champions are unknown, so the set is re-resolved once MLflow is back.
+    registry_answered: bool = True
 
     def model_version(self, model: str) -> Optional[str]:
         """What produced `model`'s predictions, as recorded on paper_bets:
@@ -102,32 +105,35 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def _registry_champions() -> Tuple[Dict[str, Any], bool]:
-    """({model_name: LoadedVersion}, answered) for every servable model with
-    an `@champion`. ``answered`` is False when the registry could not be
-    asked (MLflow unreachable) — the champions are then *unknown*, not
-    absent. Disabled tracking answers "no champions". A broken version is
-    skipped (that model falls back to its file)."""
+def _registry_champions() -> Tuple[Dict[str, Any], bool, set]:
+    """({model_name: LoadedVersion}, answered, failed) for every servable
+    model with an `@champion`. ``answered`` is False when the registry could
+    not be asked (MLflow unreachable) — the champions are then *unknown*,
+    not absent. ``failed`` names models whose champion exists but couldn't
+    be loaded (download or unpickling error). Disabled tracking answers
+    "no champions"."""
     from app.ml import tracking
 
     if not tracking.is_enabled():
-        return {}, True
+        return {}, True, set()
     from app.ml.pyfunc_wrapper import SERVABLE_MODELS
     from app.ml.registry import MlflowUnavailable, load_champion
 
     loaded: Dict[str, Any] = {}
+    failed: set = set()
     for name in sorted(SERVABLE_MODELS):
         try:
             version = load_champion(name)
         except MlflowUnavailable as exc:
             logger.info("model registry unavailable: %s", exc)
-            return loaded, False
+            return loaded, False, failed
         except Exception:
-            logger.exception("failed to load %s@champion; falling back to file", name)
+            logger.exception("failed to load %s@champion", name)
+            failed.add(name)
             continue
         if version is not None:
             loaded[name] = version
-    return loaded, True
+    return loaded, True, failed
 
 
 def load_models(
@@ -153,14 +159,20 @@ def load_models(
 
     base = _resolve_artifact_dir()
     out = ModelArtifacts()
-    champions, answered = _registry_champions() if use_registry else ({}, True)
+    champions, answered, failed = _registry_champions() if use_registry else ({}, True, set())
+    out.registry_answered = answered
 
-    if not answered and previous is not None:
+    # Keep what was served from the registry when its champion is unknown
+    # (registry unreachable) or couldn't be loaded this time, rather than
+    # silently swapping it for a file fallback or nothing.
+    if previous is not None:
         for name, info in previous.served.items():
-            if info.loaded and info.source == "registry":
+            if not (info.loaded and info.source == "registry"):
+                continue
+            if not answered or (name in failed and name not in champions):
                 setattr(out, name, getattr(previous, name))
                 out.served[name] = info
-                logger.info("registry unreachable; keeping %s v%s", name, info.version)
+                logger.info("keeping %s v%s (registry unavailable or load failed)", name, info.version)
 
     for name, champion in champions.items():
         setattr(out, name, champion.trained)
@@ -248,15 +260,29 @@ _served_lock = threading.Lock()
 
 
 def get_served_artifacts() -> ModelArtifacts:
-    """The models this process serves, loaded on first use."""
+    """The models this process serves, loaded on first use. A set built
+    while the registry was unreachable is re-resolved once MLflow answers
+    again (the reachability probe is cached, so this stays cheap)."""
     global _served
     current = _served
-    if current is not None:
+    if current is not None and (current.registry_answered or not _registry_back()):
         return current
     with _served_lock:
         if _served is None:
             _served = load_models()
+        elif not _served.registry_answered and _registry_back():
+            _served = load_models(previous=_served)
         return _served
+
+
+def _registry_back() -> bool:
+    """MLflow is enabled and its (TTL-cached) health probe answers."""
+    from app.ml import tracking
+
+    try:
+        return tracking.is_enabled() and tracking.probe().reachable
+    except Exception:
+        return False
 
 
 def reload_models() -> ModelArtifacts:

@@ -872,7 +872,8 @@ async def list_backtest_bets(
             model_prob=r.model_prob, implied_prob=r.implied_prob,
             devigged_prob=r.devigged_prob, edge=r.edge,
             stake_kelly_fraction=r.stake_kelly_fraction,
-            result=r.result, pnl=r.pnl, clv=r.clv,
+            # Priced at the close: CLV is undefined (older rows stored 0.0).
+            result=r.result, pnl=r.pnl, clv=None,
         ) for r in rows],
         total=total,
         offset=offset,

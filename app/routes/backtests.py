@@ -7,6 +7,7 @@ module so both serialize runs identically.
 from __future__ import annotations
 
 import dataclasses
+import sys
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -21,10 +22,15 @@ router = APIRouter(tags=["backtests"])
 
 
 def _backtest_manager() -> BacktestManager:
-    # Resolved lazily: src.py owns the singleton and imports this module.
-    from src import backtest_manager_dependency
-
-    return backtest_manager_dependency()
+    # src.py owns the singleton and includes this router, so read it from the
+    # running app module. Under ``python src.py`` that module is __main__;
+    # ``import src`` would load a second, never-started copy whose manager
+    # the worker never consults (a cancel would silently do nothing).
+    app_module = sys.modules.get("src") or sys.modules.get("__main__")
+    dependency = getattr(app_module, "backtest_manager_dependency", None)
+    if dependency is None:
+        from src import backtest_manager_dependency as dependency
+    return dependency()
 
 
 def run_row_to_summary(
@@ -38,6 +44,9 @@ def run_row_to_summary(
             row, hit_rate=None, roi=None, mean_clv=None, brier=None,
             log_loss=None, max_drawdown=None, sharpe_adjusted=None,
         )
+    # Backtest bets are priced at the close, so CLV is undefined for every
+    # run; older rows stored it as 0.0.
+    row = dataclasses.replace(row, mean_clv=None)
     return BacktestRunSummary(
         id=row.id,
         label=row.label,

@@ -115,3 +115,50 @@ def test_reload_keeps_registry_champion_when_registry_goes_down(
     info = after.served["logistic"]
     assert (info.source, info.version, info.run_id) == ("registry", "1", run_id)
     assert after.logistic is served.logistic
+
+
+def test_set_built_without_registry_is_re_resolved_when_mlflow_returns(
+    mlflow_store, models_dir, fresh_holder, monkeypatch
+):
+    """Backend started before MLflow: the champion is picked up later
+    without a manual reload."""
+    from app.ml import registry, tracking
+
+    serving = fresh_holder
+    run_id = log_backtest("logistic", small_logistic(seed=9))
+    registry.register_run(run_id, alias="champion")
+    store_uri = tracking.tracking_uri()
+
+    monkeypatch.setenv("MLFLOW_TRACKING_URI", "http://127.0.0.1:1")
+    tracking._reset_state()
+    first = serving.get_served_artifacts()
+    assert first.registry_answered is False
+    assert first.served["logistic"].source == "file"
+
+    monkeypatch.setenv("MLFLOW_TRACKING_URI", store_uri)
+    tracking._reset_state()
+    again = serving.get_served_artifacts()
+    assert again.registry_answered is True
+    assert (again.served["logistic"].source, again.served["logistic"].version) == ("registry", "1")
+
+
+def test_failed_champion_download_keeps_the_served_version(
+    mlflow_store, models_dir, fresh_holder, monkeypatch
+):
+    from app.ml import registry
+
+    serving = fresh_holder
+    registry.register_run(log_backtest("logistic", small_logistic(seed=2)), alias="champion")
+    served = serving.reload_models()
+    assert served.served["logistic"].version == "1"
+
+    registry.register_run(log_backtest("logistic", small_logistic(seed=4)), alias="champion")
+
+    def broken(name):
+        raise RuntimeError("artifact download timed out")
+
+    monkeypatch.setattr(registry, "load_champion", broken)
+    after = serving.reload_models()
+    info = after.served["logistic"]
+    assert (info.source, info.version) == ("registry", "1")
+    assert after.logistic is served.logistic

@@ -105,15 +105,22 @@ def _degraded_status(exc: Exception) -> Dict[str, Any]:
     return status
 
 
-def _reload_after_champion_change() -> bool:
+def _reload_after_champion_change(model_name: Optional[str] = None, version: Optional[str] = None) -> bool:
     """Swap the served models after @champion moved. The alias change has
-    already succeeded, so a failed reload is reported, not raised."""
+    already succeeded, so a failed reload is reported, not raised. With a
+    model and version, ``True`` means serving actually picked that version
+    up (a failed download keeps the previous one and reports False)."""
     try:
-        serving.reload_models()
-        return True
+        fresh = serving.reload_models()
     except Exception:
         _log.exception("served_models_reload_failed")
         return False
+    if model_name is None:
+        return True
+    info = fresh.served.get(model_name)
+    if version is None:  # alias removed: the registry version must be gone
+        return not (info and info.source == "registry")
+    return bool(info and info.source == "registry" and info.version == str(version))
 
 
 @router.get("/mlflow/status")
@@ -208,7 +215,9 @@ def mlflow_register(body: RegisterRequest) -> Dict[str, Any]:
     Registering straight to @champion reloads serving."""
     with _http_errors():
         out = registry.register_run(body.run_id, alias=body.alias, description=body.description)
-    reloaded = body.alias == "champion" and _reload_after_champion_change()
+    reloaded = body.alias == "champion" and _reload_after_champion_change(
+        registry.app_model_name(out["name"]), out["version"]
+    )
     return {**out, "reloaded": reloaded}
 
 
@@ -218,7 +227,9 @@ def mlflow_set_alias(model_name: str, body: SetAliasRequest) -> Dict[str, Any]:
     `model_name` may be `logistic` or `picks-logistic`."""
     with _http_errors():
         out = registry.set_alias(model_name, body.version, body.alias)
-    reloaded = body.alias == "champion" and _reload_after_champion_change()
+    reloaded = body.alias == "champion" and _reload_after_champion_change(
+        registry.app_model_name(out["name"]), out["version"]
+    )
     return {**out, "reloaded": reloaded}
 
 
@@ -228,7 +239,7 @@ def mlflow_delete_alias(model_name: str, alias: str) -> Dict[str, Any]:
     back to $APP_ML_MODELS_DIR)."""
     with _http_errors():
         out = registry.delete_alias(model_name, alias)
-    reloaded = alias == "champion" and _reload_after_champion_change()
+    reloaded = alias == "champion" and _reload_after_champion_change(registry.app_model_name(out["name"]))
     return {"ok": True, **out, "reloaded": reloaded}
 
 
