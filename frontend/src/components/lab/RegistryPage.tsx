@@ -50,6 +50,7 @@ const STATE_TONE: Record<ServingState, Tone> = {
   stale: "warn",
   orphaned: "warn",
   fallback: "neutral",
+  unserved: "neutral",
   untracked: "neutral"
 };
 

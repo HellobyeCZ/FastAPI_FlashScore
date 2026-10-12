@@ -41,12 +41,14 @@ export function aliasVersion(model: RegisteredModel, alias: "champion" | "challe
  * - "synced": serving loaded the registry champion
  * - "stale": a champion exists but serving loaded something else (reload needed)
  * - "orphaned": serving still uses a registry version although no champion is set
- * - "fallback": no champion; serving uses the file artifact (or nothing)
+ * - "fallback": no champion; serving uses the file artifact
+ * - "unserved": no champion and nothing loaded (no file artifact either)
  * - "untracked": the model can't be served from the registry
  */
-export type ServingState = "synced" | "stale" | "orphaned" | "fallback" | "untracked";
+export type ServingState = "synced" | "stale" | "orphaned" | "fallback" | "unserved" | "untracked";
 
 export function servingState(model: RegisteredModel | undefined, served: ServedModel | undefined): ServingState {
+  if (!served?.loaded && !model?.aliases.champion) return "unserved";
   if (model && !model.servable) return "untracked";
   const champion = model?.aliases.champion ?? null;
   const fromRegistry = Boolean(served?.loaded && served.source === "registry");

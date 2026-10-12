@@ -297,7 +297,9 @@ export const lab = {
   "lab.serving.orphaned": "Mismatch",
   "lab.serving.orphaned.title": "Serving a registry version although no champion is set — reload served models",
   "lab.serving.fallback": "File fallback",
-  "lab.serving.fallback.title": "No champion: serving uses the file artifact, if any",
+  "lab.serving.fallback.title": "No champion: serving uses the file artifact",
+  "lab.serving.unserved": "Not served",
+  "lab.serving.unserved.title": "No champion and no file artifact: this model makes no live picks",
   "lab.serving.untracked": "Tracked only",
   "lab.serving.untracked.title": "Served from its file artifact; registry versions are for lineage only",
 

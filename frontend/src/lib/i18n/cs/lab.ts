@@ -298,7 +298,9 @@ export const lab: Record<keyof typeof en, string> = {
   "lab.serving.orphaned": "Nesoulad",
   "lab.serving.orphaned.title": "Servíruje se verze z registru, i když šampion není nastaven — znovu načtěte modely",
   "lab.serving.fallback": "Záloha ze souboru",
-  "lab.serving.fallback.title": "Bez šampiona: servíruje se souborový artefakt, pokud existuje",
+  "lab.serving.fallback.title": "Bez šampiona: servíruje se souborový artefakt",
+  "lab.serving.unserved": "Nenasazeno",
+  "lab.serving.unserved.title": "Bez šampiona a bez souborového artefaktu: model nedělá žádné živé tipy",
   "lab.serving.untracked": "Jen sledováno",
   "lab.serving.untracked.title": "Servíruje se ze souborového artefaktu; verze v registru slouží jen k dohledatelnosti",
 
