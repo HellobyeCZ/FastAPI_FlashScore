@@ -84,6 +84,7 @@ export function PnlChart({ series, height = 260 }: { series: PnlSeries[]; height
             width={w}
             height={height}
             xType="time"
+            timeUnit="day"
             legend={false}
             series={series.map((s) => ({
               label: s.label,

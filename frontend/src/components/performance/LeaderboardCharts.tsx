@@ -5,7 +5,7 @@ import { CumulativeLineChart, HBarChart, ViolinChart, type LineSeries, type Viol
 import { Table } from "@/components/ui";
 import { modelColor, modelLabel } from "@/lib/labels";
 import { usePicksStats, type RowsResult } from "@/lib/performance/api";
-import type { PicksQuery } from "@/lib/performance/filters";
+import { MIN_N, type PicksQuery } from "@/lib/performance/filters";
 import { addDays, competitionKey, cumulativeByModel, dropFloatNoise, foldStats, pnlLine } from "@/lib/performance/stats";
 import type { PerformanceFilterState } from "@/lib/performance/useFilters";
 import {
@@ -94,6 +94,7 @@ export function PnlOverTimePanel({
             width={width}
             height={CHART_HEIGHT}
             xType="time"
+            timeUnit="day"
             xLabel={t("performance.chart.pnl.xLabel")}
             yLabel={t("performance.chart.pnl.yLabel")}
           />
@@ -186,7 +187,7 @@ export function CompetitionPanel({
         />
       }
     >
-      <HBarChart bars={bars} ariaLabel={title} />
+      <HBarChart bars={bars} ariaLabel={title} minN={MIN_N} />
     </ChartPanel>
   );
 }

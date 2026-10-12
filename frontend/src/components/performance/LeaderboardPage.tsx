@@ -85,7 +85,7 @@ export function LeaderboardPage() {
         )}
       </Panel>
 
-      <div className="grid gap-5 lg:grid-cols-2">
+      <div className="grid gap-5 lg:grid-cols-2 lg:items-start">
         <PnlOverTimePanel state={state} q={q} className="lg:col-span-2" />
         <CompetitionPanel state={state} q={q} metric="roi" />
         <ClvDistributionPanel state={state} settled={settled} />

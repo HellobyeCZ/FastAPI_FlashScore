@@ -40,6 +40,11 @@ interface CumulativeLineChartProps {
    * milliseconds and labels ticks with locale dates.
    */
   xType?: "index" | "time";
+  /**
+   * With xType "time": "day" for daily data — ticks only on day boundaries and
+   * a date-only readout (no hours for points that are one per day).
+   */
+  timeUnit?: "auto" | "day";
   /** Accessible name; a per-series summary is generated as the description. */
   ariaLabel?: string;
   /** Formats y ticks and readout values (default: locale number). */
@@ -101,7 +106,8 @@ function LinePlot({
   formatY,
   formatX,
   zeroLine = true,
-  legend = true
+  legend = true,
+  timeUnit = "auto"
 }: Omit<CumulativeLineChartProps, "series"> & { series: Styled[]; width: number; height: number }) {
   const { t, tp, locale, fmt } = useChartText();
   const [hover, setHover] = useState<number | null>(null);
@@ -150,7 +156,7 @@ function LinePlot({
     xHi += pad;
   }
   const span = xHi - xLo;
-  const readoutFmt = isTime ? readoutFormat(locale, span) : null;
+  const readoutFmt = isTime ? readoutFormat(locale, timeUnit === "day" ? Infinity : span) : null;
   const integerX = xs.every((x) => Number.isInteger(x));
   const plainX = (x: number) => (integerX ? fmt.int(x) : fmt.num(x, stepDigits(span / 10)));
   const fmtXValue = formatX ?? ((x: number) => (readoutFmt ? readoutFmt.format(x) : plainX(x)));
@@ -162,7 +168,9 @@ function LinePlot({
 
   const nX = tickCount(innerW, 84, 8);
   const xTickValues = isTime
-    ? evenTimeTicks(timeScale.ticks(nX).map((d) => d.getTime()))
+    ? timeUnit === "day"
+      ? dayTicks(xLo, xHi, nX)
+      : evenTimeTicks(timeScale.ticks(nX).map((d) => d.getTime()))
     : linScale.ticks(nX).filter((v) => !integerX || Number.isInteger(v));
   const fmtXTick = formatX ?? (isTime ? timeTickFormatter(locale, xTickValues) : plainX);
   const xTicks: AxisTick[] = xTickValues.map((v) => ({ value: v, pos: xPos(v), label: fmtXTick(v) }));
@@ -417,9 +425,25 @@ function readoutFormat(locale: string, span: number): Intl.DateTimeFormat {
   return new Intl.DateTimeFormat(
     locale,
     span <= 2 * DAY
-      ? { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }
+      ? { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }
       : { day: "numeric", month: "short", year: "numeric" }
   );
+}
+
+/** Local midnights inside [lo, hi], every k days so at most `max` ticks remain. */
+function dayTicks(lo: number, hi: number, max: number): number[] {
+  const first = new Date(lo);
+  first.setHours(0, 0, 0, 0);
+  if (first.getTime() < lo) first.setDate(first.getDate() + 1);
+  const days: number[] = [];
+  for (const d = new Date(first); d.getTime() <= hi; d.setDate(d.getDate() + 1)) days.push(d.getTime());
+  if (days.length === 0) {
+    const d = new Date(lo);
+    d.setHours(0, 0, 0, 0);
+    return [d.getTime()];
+  }
+  const step = Math.max(1, Math.ceil(days.length / Math.max(1, max)));
+  return days.filter((_, i) => i % step === 0);
 }
 
 /**
@@ -455,9 +479,9 @@ function timeTickFormatter(locale: string, ticks: number[]): (x: number) => stri
     const dayYear = f({ day: "numeric", month: "short", year: "numeric" });
     return (x) => (newYear(at(x)) ? dayYear : day).format(x);
   }
-  const time = f({ hour: "2-digit", minute: "2-digit" });
+  const time = f({ hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
   const day = f({ day: "numeric", month: "short" });
-  const dayTime = f({ day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  const dayTime = f({ day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
   return (x) => {
     const d = new Date(x);
     if (isMidnight(d)) return day.format(x);
