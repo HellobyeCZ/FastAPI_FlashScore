@@ -1,101 +1,63 @@
 /*
- * Terminal redesign tokens.
- * Coexists with the legacy `globals.css` + `design-tokens.css` (which still
- * power unmigrated pages and Tailwind's `brand.*` palette). New terminal
- * components consume the vars defined here. Both files are loaded; this one
- * is imported first so legacy rules in globals.css win for unmigrated chrome.
- * Phases 4+ migrate pages off the legacy tokens; once that's complete the
- * `--color-brand-*` vars and the legacy globals can be removed.
+ * Terminal design tokens — the single source of truth for color, type and
+ * spacing. Colors are stored as space-separated RGB channels so Tailwind can
+ * apply alpha modifiers (`bg-bg/80`, `border-neg/40`) via
+ * `rgb(var(--x) / <alpha-value>)` in tailwind.config.ts. Read a token in plain
+ * CSS as `rgb(var(--accent))`.
+ *
+ * Contrast (WCAG 2.1, measured on --bg #0a0a0a / --surface #111111):
+ *   --text        #e8e8e8  16.2 / 15.5   body text
+ *   --text-dim    #a3a3a3   7.8 /  7.4   secondary text, labels
+ *   --text-faint  #7c7c7c   4.7 /  4.5   metadata only (never on surface-2+)
+ *   --border      #262626   decorative dividers only (no contrast requirement)
+ *   --border-strong #606060 3.2 / 3.0   control outlines (WCAG 1.4.11)
+ *   --accent      #c8f000  15.0          focus, selection, primary action
+ *   --neg         #ff5577   6.4          losses / errors
+ *   --warn        #f5a623   9.8          stale / pending / caution
+ *   --info        #7cc4ff  10.6          neutral information
  */
 :root {
-  /* color */
-  --bg: #0a0a0a;
-  --surface: #111111;
-  --surface-2: #161616;
-  --border: #1f1f1f;
-  --border-hot: #2a2a2a;
-  --text: #e8e8e8;
-  --text-dim: #7a7a7a;
-  --text-faint: #4a4a4a;
-  --accent: #c8f000;
-  --pos: #c8f000;
-  --neg: #ff5577;
-  --warn: #f5a623;
+  color-scheme: dark;
 
-  /* spacing */
-  --sp-1: 4px;
-  --sp-2: 8px;
-  --sp-3: 12px;
-  --sp-4: 16px;
-  --sp-5: 20px;
-  --sp-6: 24px;
-  --sp-7: 32px;
-  --sp-8: 48px;
+  /* surfaces */
+  --bg: 10 10 10;
+  --surface: 17 17 17;
+  --surface-2: 24 24 24;
+  --surface-3: 32 32 32;
 
-  /* type scale */
-  --fs-10: 10px;
-  --fs-11: 11px;
-  --fs-12: 12px;
-  --fs-13: 13px;
-  --fs-16: 16px;
-  --fs-20: 20px;
-  --fs-28: 28px;
-  --fs-40: 40px;
+  /* lines */
+  --border: 38 38 38;
+  --border-strong: 96 96 96;
 
-  /* tracking */
-  --track-wide: 0.18em;
-}
+  /* text */
+  --text: 232 232 232;
+  --text-dim: 163 163 163;
+  --text-faint: 124 124 124;
 
-html, body {
-  background: var(--bg);
-  color: var(--text);
-  font-family: var(--font-mono), ui-monospace, monospace;
-  font-size: var(--fs-13);
-  line-height: 1.5;
-  margin: 0;
-  padding: 0;
-}
+  /* semantic */
+  --accent: 200 240 0;
+  --accent-ink: 10 10 10; /* text placed on an accent fill */
+  --pos: 200 240 0;
+  --neg: 255 85 119;
+  --warn: 245 166 35;
+  --info: 124 196 255;
 
-body {
-  background-image:
-    linear-gradient(rgba(200, 240, 0, 0.025) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(200, 240, 0, 0.025) 1px, transparent 1px);
-  background-size: 14px 14px;
-  background-attachment: fixed;
-  min-height: 100vh;
-}
+  /*
+   * Categorical palette for models/series. Deliberately disjoint from the
+   * status colors above so a model line never reads as "won"/"lost".
+   * Based on Okabe–Ito (color-blind safe), lightened for a near-black ground.
+   */
+  --cat-1: 86 180 233;   /* sky      */
+  --cat-2: 230 159 0;    /* orange   */
+  --cat-3: 32 190 140;   /* green    */
+  --cat-4: 214 132 182;  /* purple   */
+  --cat-5: 240 228 66;   /* yellow   */
+  --cat-6: 236 112 48;   /* vermilion*/
+  --cat-7: 163 163 163;  /* neutral (baselines) */
+  --cat-8: 124 124 124;  /* neutral dim */
 
-*, *::before, *::after {
-  box-sizing: border-box;
-}
-
-button {
-  background: transparent;
-  border: 1px solid var(--border);
-  color: var(--text);
-  font: inherit;
-  padding: var(--sp-2) var(--sp-3);
-  cursor: pointer;
-  border-radius: 0;
-}
-
-button:hover { border-color: var(--border-hot); }
-button:focus-visible { outline: 1px solid var(--accent); outline-offset: 0; }
-
-a { color: inherit; text-decoration: none; }
-
-input, select, textarea {
-  background: var(--bg);
-  border: 1px solid var(--border);
-  color: var(--text);
-  font: inherit;
-  padding: var(--sp-2) var(--sp-3);
-  border-radius: 0;
-}
-input:focus, select:focus, textarea:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
-
-::selection { background: var(--accent); color: var(--bg); }
-
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { transition: none !important; animation: none !important; }
+  --track-wide: 0.14em;
+  --shell-top: 40px;
+  --shell-bottom: 28px;
+  --rail-w: 200px;
 }

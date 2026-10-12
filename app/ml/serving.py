@@ -1,11 +1,18 @@
 """Live-serving glue for Phase 4 predictions.
 
-Bridges trained Phase 3 models (logistic, HGB, Dixon-Coles) to the
-FastAPI endpoints `/predict/{event_id}` and `/picks/upcoming`. Provides:
+Bridges trained Phase 3 models (logistic, HGB, HGB+PCA, Dixon-Coles) to
+the FastAPI endpoints `/predict/{event_id}` and `/picks/upcoming`, the
+refresh-now predict stage and ``scripts.record_picks``. Provides:
 
-  - :class:`ServingModels` — loads all three trained artifacts at app
-    startup and exposes ``predict_event(event_id)`` that returns
-    per-(model, market, selection) records.
+  - :func:`load_models` — resolves each servable model from the MLflow
+    registry alias ``@champion`` (app.ml.registry), falling back to the
+    ``$APP_ML_MODELS_DIR/<label>/`` pickles when the registry is
+    disabled, unreachable, or has no champion. Dixon-Coles always loads
+    from files (its registry artifact doesn't bundle team rates).
+  - :func:`get_served_artifacts` / :func:`reload_models` — the process's
+    served set, swappable at runtime (``POST /ml/reload``, champion
+    changes) — and :func:`served_models_info` describing it.
+  - :func:`predict_event` — per-(model, market, selection) records.
   - :func:`devig_from_live_snapshot` — pull the freshest
     ``live_odds_snapshots`` rows for a fixture, average across
     bookmakers per (market, selection), and produce devigged
@@ -23,7 +30,8 @@ import json
 import logging
 import os
 import sqlite3
-from dataclasses import dataclass, field
+import threading
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
@@ -40,57 +48,167 @@ logger = logging.getLogger(__name__)
 # Loaded-model container
 # ---------------------------------------------------------------------------
 
+# Served model keys, in display order. Registry-servable ones are
+# app.ml.pyfunc_wrapper.SERVABLE_MODELS; dixon_coles is file-only.
+SERVED_MODELS = ("logistic", "hgb", "hgb_pca", "dixon_coles")
+
+
+@dataclass
+class ServedModelInfo:
+    """Provenance of one served model; shaped like `ServedModel` in
+    frontend/src/types/ops.ts."""
+    name: str
+    loaded: bool = False
+    source: Optional[str] = None      # "registry" | "file" | None
+    version: Optional[str] = None     # registry version; None for files
+    run_id: Optional[str] = None      # MLflow source run of that version
+    loaded_at: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
 @dataclass
 class ModelArtifacts:
     """All trained models we serve. Any can be None if its artifact is
     unavailable — the endpoint returns the available subset."""
     logistic: Optional[Any] = None              # TrainedLogistic
     hgb: Optional[Any] = None                   # TrainedHGB
+    hgb_pca: Optional[Any] = None               # TrainedHGB with a fitted preprocessor
     dc_rates: Optional[Dict[str, Dict]] = None  # event_id -> rate dict (per-event pre-match)
     dc_team_rates: Optional[Dict[str, Dict]] = None  # team_name -> rate dict (latest state)
     dc_config: Optional[Any] = None             # DCConfig
     dc_temperature: float = 1.0
     feature_columns_logistic: Tuple[str, ...] = ()
     feature_columns_hgb: Tuple[str, ...] = ()
+    served: Dict[str, ServedModelInfo] = field(
+        default_factory=lambda: {name: ServedModelInfo(name=name) for name in SERVED_MODELS}
+    )
+    # False when the registry couldn't be asked while building this set: the
+    # champions are unknown, so the set is re-resolved once MLflow is back.
+    registry_answered: bool = True
+
+    def model_version(self, model: str) -> Optional[str]:
+        """What produced `model`'s predictions, as recorded on paper_bets:
+        the registry version (e.g. "3"), "file", or None if not loaded."""
+        info = self.served.get(model)
+        if info is None or not info.loaded:
+            return None
+        return info.version if info.source == "registry" else "file"
 
 
 def _resolve_artifact_dir() -> Path:
     return Path(os.environ.get("APP_ML_MODELS_DIR", "reports"))
 
 
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _registry_champions() -> Tuple[Dict[str, Any], bool, set]:
+    """({model_name: LoadedVersion}, answered, failed) for every servable
+    model with an `@champion`. ``answered`` is False when the registry could
+    not be asked (MLflow unreachable) — the champions are then *unknown*,
+    not absent. ``failed`` names models whose champion exists but couldn't
+    be loaded (download or unpickling error). Disabled tracking answers
+    "no champions"."""
+    from app.ml import tracking
+
+    if not tracking.is_enabled():
+        return {}, True, set()
+    from app.ml.pyfunc_wrapper import SERVABLE_MODELS
+    from app.ml.registry import MlflowUnavailable, load_champion
+
+    loaded: Dict[str, Any] = {}
+    failed: set = set()
+    for name in sorted(SERVABLE_MODELS):
+        try:
+            version = load_champion(name)
+        except MlflowUnavailable as exc:
+            logger.info("model registry unavailable: %s", exc)
+            return loaded, False, failed
+        except Exception:
+            logger.exception("failed to load %s@champion", name)
+            failed.add(name)
+            continue
+        if version is not None:
+            loaded[name] = version
+    return loaded, True, failed
+
+
 def load_models(
     *,
+    use_registry: bool = True,
+    previous: Optional["ModelArtifacts"] = None,
     logistic_label: str = "logistic_phase3a",
     hgb_label: str = "hgb_phase3b",
     dc_label: str = "dixon_coles_phase3c",
 ) -> ModelArtifacts:
-    """Load the three Phase 3 model artifacts from
-    ``$APP_ML_MODELS_DIR/<label>/...``. Each loader is independent; if
-    one artifact is missing the others are still returned. Used by the
-    FastAPI startup hook in src.py."""
+    """Load every servable model. logistic / hgb / hgb_pca come from the
+    registry's ``@champion`` when available, else (logistic, hgb) from
+    ``$APP_ML_MODELS_DIR/<label>/model.pkl``; Dixon-Coles always from
+    ``$APP_ML_MODELS_DIR/<dc_label>/``. Each loader is independent; if
+    one artifact is missing the others are still returned. Provenance is
+    recorded in ``ModelArtifacts.served``.
+
+    ``previous`` is the currently served set: when the registry can't be
+    reached, models it served from the registry are kept as they are rather
+    than silently swapped for file fallbacks (or nothing) by a reload."""
     from app.ml.dixon_coles import DCConfig
     from app.ml.training import TrainedHGB, TrainedLogistic
 
     base = _resolve_artifact_dir()
     out = ModelArtifacts()
+    champions, answered, failed = _registry_champions() if use_registry else ({}, True, set())
+    out.registry_answered = answered
+
+    # Keep what was served from the registry when its champion is unknown
+    # (registry unreachable) or couldn't be loaded this time, rather than
+    # silently swapping it for a file fallback or nothing.
+    if previous is not None:
+        for name, info in previous.served.items():
+            if not (info.loaded and info.source == "registry"):
+                continue
+            if not answered or (name in failed and name not in champions):
+                setattr(out, name, getattr(previous, name))
+                out.served[name] = info
+                logger.info("keeping %s v%s (registry unavailable or load failed)", name, info.version)
+
+    for name, champion in champions.items():
+        setattr(out, name, champion.trained)
+        out.served[name] = ServedModelInfo(
+            name=name, loaded=True, source="registry", version=champion.version,
+            run_id=champion.run_id, loaded_at=_now_iso(),
+        )
+        logger.info("loaded %s v%s from the model registry", name, champion.version)
+
+    def _mark_file(name: str) -> None:
+        out.served[name] = ServedModelInfo(
+            name=name, loaded=True, source="file", loaded_at=_now_iso(),
+        )
 
     log_path = base / logistic_label / "model.pkl"
-    if log_path.exists():
+    if out.logistic is None and log_path.exists():
         try:
             out.logistic = TrainedLogistic.load(str(log_path))
-            out.feature_columns_logistic = tuple(out.logistic.feature_columns)
+            _mark_file("logistic")
             logger.info("loaded logistic model from %s", log_path)
         except Exception:
             logger.exception("failed to load logistic from %s", log_path)
 
     hgb_path = base / hgb_label / "model.pkl"
-    if hgb_path.exists():
+    if out.hgb is None and hgb_path.exists():
         try:
             out.hgb = TrainedHGB.load(str(hgb_path))
-            out.feature_columns_hgb = tuple(out.hgb.feature_columns)
+            _mark_file("hgb")
             logger.info("loaded hgb model from %s", hgb_path)
         except Exception:
             logger.exception("failed to load hgb from %s", hgb_path)
+
+    if out.logistic is not None:
+        out.feature_columns_logistic = tuple(out.logistic.feature_columns)
+    if out.hgb is not None:
+        out.feature_columns_hgb = tuple(out.hgb.feature_columns)
 
     dc_team_rates_path = base / dc_label / "team_latest_rates.json"
     if dc_team_rates_path.exists():
@@ -127,7 +245,69 @@ def load_models(
         except Exception:
             logger.exception("failed to load dc rates from %s", dc_rates_path)
 
+    if out.dc_config is not None and (out.dc_rates is not None or out.dc_team_rates is not None):
+        _mark_file("dixon_coles")
+
     return out
+
+
+# ---------------------------------------------------------------------------
+# Process-wide served set
+# ---------------------------------------------------------------------------
+
+_served: Optional[ModelArtifacts] = None
+_served_lock = threading.Lock()
+
+
+def get_served_artifacts() -> ModelArtifacts:
+    """The models this process serves, loaded on first use. A set built
+    while the registry was unreachable is re-resolved once MLflow answers
+    again (the reachability probe is cached, so this stays cheap)."""
+    global _served
+    current = _served
+    if current is not None and (current.registry_answered or not _registry_back()):
+        return current
+    with _served_lock:
+        if _served is None:
+            _served = load_models()
+        elif not _served.registry_answered and _registry_back():
+            _served = load_models(previous=_served)
+        return _served
+
+
+def _registry_back() -> bool:
+    """MLflow is enabled and its (TTL-cached) health probe answers."""
+    from app.ml import tracking
+
+    try:
+        return tracking.is_enabled() and tracking.probe().reachable
+    except Exception:
+        return False
+
+
+def reload_models() -> ModelArtifacts:
+    """Re-resolve every model (registry champion first, then files) and
+    atomically swap the served set. Concurrent readers keep using the
+    previous set until the swap. Blocking — call from a thread."""
+    global _served
+    with _served_lock:
+        fresh = load_models(previous=_served)
+        _served = fresh
+    logger.info(
+        "served_models_reloaded",
+        extra={"event": "served_models_reloaded",
+               "models": {k: v.to_dict() for k, v in fresh.served.items()}},
+    )
+    return fresh
+
+
+def served_models_info() -> List[Dict[str, Any]]:
+    """`ServedModel[]` for /ops/status and /ml/reload. Reads the current
+    served set only — never loads models or touches the network."""
+    current = _served
+    if current is None:
+        return [ServedModelInfo(name=name).to_dict() for name in SERVED_MODELS]
+    return [current.served[name].to_dict() for name in SERVED_MODELS]
 
 
 # ---------------------------------------------------------------------------
@@ -273,7 +453,7 @@ SELECTIONS_BTTS = ("yes", "no")
 
 @dataclass
 class PredictionRecord:
-    model: str          # "logistic" | "hgb" | "dixon_coles"
+    model: str          # "logistic" | "hgb" | "hgb_pca" | "dixon_coles"
     market: str         # "1X2_FT" | "OVER_UNDER_2.5_FT" | "BTTS_FT"
     selection: str
     model_prob: float
@@ -283,6 +463,9 @@ class PredictionRecord:
     edge: Optional[float]              # model_prob − market_devigged
     kelly_full: Optional[float]        # full-Kelly fraction at live price
     notes: Dict[str, Any] = field(default_factory=dict)
+    # Registry version that produced the prediction, "file" for
+    # $APP_ML_MODELS_DIR pickles. Recorded on paper_bets.model_version.
+    model_version: Optional[str] = None
 
 
 def _logistic_or_hgb_predict_1x2(
@@ -478,36 +661,29 @@ def predict_event(
 
     records: List[PredictionRecord] = []
 
-    # 1X2 — logistic + HGB + DC
-    if artifacts.logistic is not None:
-        probs = _logistic_or_hgb_predict_1x2(artifacts.logistic, features, market_devigged_1x2)
-        if probs is not None:
-            for i, sel in enumerate(SELECTIONS_1X2):
-                price = market_price_1x2[sel]
-                dv = market_dv_1x2[sel]
-                edge = probs[i] - dv if dv is not None else None
-                kelly = kelly_fraction(probs[i], price) if price is not None else None
-                records.append(PredictionRecord(
-                    model="logistic", market="1X2_FT", selection=sel,
-                    model_prob=probs[i],
-                    market_price=price, market_implied=market_implied_1x2[sel],
-                    market_devigged=dv, edge=edge, kelly_full=kelly,
-                ))
-
-    if artifacts.hgb is not None:
-        probs = _logistic_or_hgb_predict_1x2(artifacts.hgb, features, market_devigged_1x2)
-        if probs is not None:
-            for i, sel in enumerate(SELECTIONS_1X2):
-                price = market_price_1x2[sel]
-                dv = market_dv_1x2[sel]
-                edge = probs[i] - dv if dv is not None else None
-                kelly = kelly_fraction(probs[i], price) if price is not None else None
-                records.append(PredictionRecord(
-                    model="hgb", market="1X2_FT", selection=sel,
-                    model_prob=probs[i],
-                    market_price=price, market_implied=market_implied_1x2[sel],
-                    market_devigged=dv, edge=edge, kelly_full=kelly,
-                ))
+    # 1X2 — sklearn-backed models (hgb_pca projects inside TrainedHGB), then DC
+    for model_name, trained in (
+        ("logistic", artifacts.logistic),
+        ("hgb", artifacts.hgb),
+        ("hgb_pca", artifacts.hgb_pca),
+    ):
+        if trained is None:
+            continue
+        probs = _logistic_or_hgb_predict_1x2(trained, features, market_devigged_1x2)
+        if probs is None:
+            continue
+        for i, sel in enumerate(SELECTIONS_1X2):
+            price = market_price_1x2[sel]
+            dv = market_dv_1x2[sel]
+            edge = probs[i] - dv if dv is not None else None
+            kelly = kelly_fraction(probs[i], price) if price is not None else None
+            records.append(PredictionRecord(
+                model=model_name, market="1X2_FT", selection=sel,
+                model_prob=probs[i],
+                market_price=price, market_implied=market_implied_1x2[sel],
+                market_devigged=dv, edge=edge, kelly_full=kelly,
+                model_version=artifacts.model_version(model_name),
+            ))
 
     # Resolve home/away team names. Prefer values passed in by the
     # caller (e.g. upcoming_fixtures.home_team_raw); otherwise pull from
@@ -537,6 +713,7 @@ def predict_event(
         home_team=resolved_home, away_team=resolved_away,
     )
     if dc_probs is not None:
+        dc_version = artifacts.model_version("dixon_coles")
         # 1X2
         for i, sel in enumerate(SELECTIONS_1X2):
             p = dc_probs["1X2"][i]
@@ -549,6 +726,7 @@ def predict_event(
                 model_prob=p,
                 market_price=price, market_implied=market_implied_1x2[sel],
                 market_devigged=dv, edge=edge, kelly_full=kelly,
+                model_version=dc_version,
             ))
 
         # O/U 2.5
@@ -569,7 +747,7 @@ def predict_event(
                 model_prob=p,
                 market_price=price, market_implied=implied,
                 market_devigged=dv, edge=edge, kelly_full=kelly,
-                notes={"line": 2.5},
+                notes={"line": 2.5}, model_version=dc_version,
             ))
 
         # BTTS
@@ -590,6 +768,7 @@ def predict_event(
                 model_prob=p,
                 market_price=price, market_implied=implied,
                 market_devigged=dv, edge=edge, kelly_full=kelly,
+                model_version=dc_version,
             ))
 
     return records

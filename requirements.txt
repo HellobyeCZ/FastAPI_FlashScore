@@ -11,10 +11,11 @@ pydantic-settings
 
 # ML pipeline (Phase 3+). scikit-learn provides LogisticRegression,
 # IsotonicRegression, and StandardScaler used by app/ml/training.py.
-# mlflow tracks per-run params/metrics/artifacts in a local file-backed
-# store under mlruns/.
+# mlflow is the tracking + model-registry client (server: `make mlflow`).
+# MLflow 3 is required: models are logged as LoggedModels and the registry
+# uses aliases. The API boots without it (imports are lazy).
 scikit-learn>=1.4
-mlflow>=2.9
+mlflow>=3,<4
 
 # Add other dependencies here, e.g.:
 # sqlalchemy

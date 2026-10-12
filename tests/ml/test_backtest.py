@@ -46,7 +46,7 @@ def test_market_implied_baseline_forced_produces_zero_clv(backfilled_full):
         force_bets=True,
     )
     assert report.total_bets > 0
-    assert report.mean_clv == 0.0
+    assert report.mean_clv is None  # CLV is undefined for close-priced archive bets
 
 
 def test_market_implied_baseline_forced_roi_is_minus_vig(backfilled_full):
@@ -149,7 +149,7 @@ import math
 from app.ml.backtest import BacktestReport, BetRecord
 
 
-def _make_bet(pnl: float, price: float, result: float) -> BetRecord:
+def _make_bet(pnl: float, price: float, result) -> BetRecord:
     return BetRecord(
         event_id="E", bet_ts="2024-01-01T00:00:00Z",
         market="HOME_DRAW_AWAY:FULL_TIME", selection="home",
@@ -184,23 +184,41 @@ def test_sharpe_adjusted_zero_bets_safe():
     assert sharpe == 0.0
 
 
-def test_sharpe_adjusted_zero_rmse_constant_pnls():
-    """All bets with identical pnl produce non-zero return but zero RMSE.
-    Sharpe must fall through to 0.0 via the rmse_per_bet > 0 guard."""
+def test_sharpe_adjusted_constant_wins():
+    """Three wins at 1.5: every unit-stake return is +0.5, so RMSE equals
+    the mean return and Sharpe-adjusted is exactly 1."""
     from app.ml.backtest import _compute_sharpe_adjusted
     bets = [_make_bet(0.5, 1.5, 1.0) for _ in range(3)]
     r, rmse, sharpe = _compute_sharpe_adjusted(bets)
     assert r == pytest.approx(1.5, rel=1e-6)
-    # All pnls are +0.5, so mean(pnl^2) = 0.25, sqrt = 0.5 — NOT zero.
-    # The "zero RMSE" branch is only reached when all pnls are zero, which
-    # this test verifies separately:
     assert rmse == pytest.approx(0.5, rel=1e-6)
-    # Now the actual zero-RMSE case: a bet with pnl=0 (a void result).
-    void_bets = [_make_bet(0.0, 1.5, 0.0) for _ in range(3)]
-    r2, rmse2, sharpe2 = _compute_sharpe_adjusted(void_bets)
-    assert r2 == pytest.approx(1.0, abs=1e-9)
-    assert rmse2 == pytest.approx(0.0, abs=1e-9)
-    assert sharpe2 == 0.0  # exact, not approx — the guard returns the literal
+    assert sharpe == pytest.approx(1.0, rel=1e-6)
+
+
+def test_sharpe_adjusted_ignores_kelly_stake_size():
+    """Metrics use unit-stake returns, not the Kelly-scaled pnl: the same
+    win@2.5 / loss@2.0 / win@1.5 sequence staked at 4% of bankroll must
+    score exactly like the unit-stake fixture above."""
+    from app.ml.backtest import _compute_sharpe_adjusted
+    stake = 0.04
+    kelly = [_make_bet(1.5 * stake, 2.5, 1.0),
+             _make_bet(-1.0 * stake, 2.0, 0.0),
+             _make_bet(0.5 * stake, 1.5, 1.0)]
+    unit = [_make_bet(1.5, 2.5, 1.0),
+            _make_bet(-1.0, 2.0, 0.0),
+            _make_bet(0.5, 1.5, 1.0)]
+    assert _compute_sharpe_adjusted(kelly) == pytest.approx(_compute_sharpe_adjusted(unit))
+
+
+def test_sharpe_adjusted_zero_rmse_all_void():
+    """Voided bets (result None) return the stake: r_i = 0. With only
+    voids RMSE is zero and Sharpe falls through to the literal 0.0."""
+    from app.ml.backtest import _compute_sharpe_adjusted
+    void_bets = [_make_bet(0.0, 1.5, None) for _ in range(3)]
+    r, rmse, sharpe = _compute_sharpe_adjusted(void_bets)
+    assert r == pytest.approx(1.0, abs=1e-9)
+    assert rmse == pytest.approx(0.0, abs=1e-9)
+    assert sharpe == 0.0  # exact, not approx — the guard returns the literal
 
 
 def test_backtest_report_has_new_fields():

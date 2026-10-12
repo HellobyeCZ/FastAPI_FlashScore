@@ -8,8 +8,6 @@ Provides:
   - :func:`isotonic_calibrate` — fits per-class isotonic on the
     calibration block's predictions; returns a callable that calibrates
     raw model probs into a re-normalised dict.
-  - :func:`log_to_mlflow` — single-call helper that logs params,
-    metrics, artifacts, and SVGs for a training run.
 
 The trainers are stateless: caller supplies the chronological cutoffs.
 This module deliberately does *not* know about backtest semantics —
@@ -473,51 +471,3 @@ def train_hgb(
     )
     model.fit(train.X, train.y)
     return TrainedHGB(model=model, feature_columns=tuple(train.columns))
-
-
-# ---------------------------------------------------------------------------
-# MLflow logging
-# ---------------------------------------------------------------------------
-
-def log_run_to_mlflow(
-    *,
-    run_name: str,
-    params: Dict[str, object],
-    metrics_uncalibrated: Dict[str, float],
-    metrics_calibrated: Dict[str, float],
-    reliability_svg_uncalibrated: str,
-    reliability_svg_calibrated: str,
-    model_artifact_path: str,
-    tracking_uri: Optional[str] = None,  # ignored — kept for backward compat
-) -> Optional[str]:
-    """DEPRECATED: callers should switch to app.ml.tracking.log_training_run.
-    This shim forwards to the new entry point for one release of overlap.
-    """
-    import warnings
-    warnings.warn(
-        "log_run_to_mlflow is deprecated; use app.ml.tracking.log_training_run",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    from app.ml.tracking import log_training_run
-    from app.ml.market_spec import FOOTBALL_1X2_FT
-
-    model_name = str(params.get("model") or run_name.split("_")[0])
-    train_until = str(params.get("train_until") or "")
-    feature_columns = tuple(params.get("feature_columns") or ())
-    n_train_events = int(params.get("n_train") or 0)
-
-    return log_training_run(
-        model_name=model_name,
-        train_until=train_until,
-        market_spec=FOOTBALL_1X2_FT,
-        feature_columns=feature_columns,
-        n_train_events=n_train_events,
-        metrics_uncalibrated=metrics_uncalibrated,
-        metrics_calibrated=metrics_calibrated,
-        trained_model=None,  # legacy: caller already wrote the artifact to disk
-        artifact_extras={
-            "reliability_uncalibrated.svg": reliability_svg_uncalibrated,
-            "reliability_calibrated.svg": reliability_svg_calibrated,
-        },
-    )

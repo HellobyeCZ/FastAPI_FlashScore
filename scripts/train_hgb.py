@@ -214,6 +214,16 @@ def main() -> int:
                 "gated_roi": gated_cal.roi,
             },
             trained_model=cal_model,
+            extra_params={
+                "max_iter": args.max_iter,
+                "learning_rate": args.learning_rate,
+                "max_depth": args.max_depth,
+                "l2_regularization": args.l2_regularization,
+                "calib_until": args.calib_until,
+                "min_edge": args.min_edge,
+                "kelly_fraction": args.kelly_fraction,
+                "label": label,
+            },
             artifact_extras={
                 "reliability_uncalibrated.svg": render_reliability_svg(forced_uncal.reliability_buckets),
                 "reliability_calibrated.svg": render_reliability_svg(forced_cal.reliability_buckets),

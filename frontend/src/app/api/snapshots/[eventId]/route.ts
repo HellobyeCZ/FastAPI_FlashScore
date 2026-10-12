@@ -1,53 +1,40 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/server/prisma";
+import type { LiveSnapshotSummary } from "@/types/odds";
 
 export const dynamic = "force-dynamic";
 
-type SnapshotEntry = {
-  fetchedAt: string;
-  rowCount: number;
-  bookmakerCount: number;
-  marketCount: number;
-};
-
-export async function GET(
-  _req: Request,
-  { params }: { params: { eventId: string } }
-) {
+/**
+ * Live captures for one event (live_odds_snapshots, written by the live odds
+ * scheduler), newest first. Aggregated in SQL over the (event_id, fetched_at)
+ * index instead of pulling every row into Node.
+ */
+export async function GET(_req: Request, { params }: { params: { eventId: string } }) {
   try {
-    const rows = await prisma.liveOddsSnapshot.findMany({
-      where: { eventId: params.eventId },
-      orderBy: { fetchedAt: "desc" },
-      select: { fetchedAt: true, bookmaker: true, market: true }
-    });
+    const rows = (await prisma.$queryRawUnsafe(
+      `SELECT fetched_at,
+              COUNT(*) AS n_rows,
+              COUNT(DISTINCT bookmaker) AS n_books,
+              COUNT(DISTINCT market) AS n_markets
+       FROM live_odds_snapshots
+       WHERE event_id = ?
+       GROUP BY fetched_at
+       ORDER BY fetched_at DESC`,
+      params.eventId
+    )) as { fetched_at: string; n_rows: number | bigint; n_books: number | bigint; n_markets: number | bigint }[];
 
-    const buckets = new Map<
-      string,
-      { bookmakers: Set<string>; markets: Set<string>; rowCount: number }
-    >();
-    for (const r of rows) {
-      const b = buckets.get(r.fetchedAt) ?? {
-        bookmakers: new Set<string>(),
-        markets: new Set<string>(),
-        rowCount: 0
-      };
-      if (r.bookmaker) b.bookmakers.add(r.bookmaker);
-      b.markets.add(r.market);
-      b.rowCount += 1;
-      buckets.set(r.fetchedAt, b);
-    }
-
-    const entries: SnapshotEntry[] = Array.from(buckets.entries())
-      .map(([fetchedAt, b]) => ({
-        fetchedAt,
-        rowCount: b.rowCount,
-        bookmakerCount: b.bookmakers.size,
-        marketCount: b.markets.size
-      }))
-      .sort((a, b) => (a.fetchedAt < b.fetchedAt ? 1 : -1));
-
-    return NextResponse.json(entries);
-  } catch (err) {
-    return NextResponse.json({ error: String(err) }, { status: 500 });
+    const body: LiveSnapshotSummary[] = rows.map((r) => ({
+      fetched_at: r.fetched_at,
+      rows: Number(r.n_rows),
+      bookmakers: Number(r.n_books),
+      markets: Number(r.n_markets)
+    }));
+    return NextResponse.json(body, { headers: { "Cache-Control": "no-store" } });
+  } catch (error) {
+    // Driver messages can carry SQL and file paths: log them, return a generic one.
+    console.error("[/api/snapshots/[eventId]] failed:", error);
+    const busy = error instanceof Error && /SQLITE_BUSY|database is locked/i.test(error.message);
+    const message = busy ? "The database is busy; try again in a moment" : "Failed to load live snapshots.";
+    return NextResponse.json({ error: { code: "snapshots_load_failed", message } }, { status: busy ? 503 : 500 });
   }
 }

@@ -39,6 +39,7 @@ class RunRow:
     market_spec: str = "football_1x2_ft"
     sharpe_adjusted: Optional[float] = None
     mlflow_run_id: Optional[str] = None
+    n_train_events: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -69,6 +70,11 @@ _RUN_COLS = (
     "sharpe_adjusted mlflow_run_id"
 ).split()
 
+# Columns added after the Phase A schema. Read when present so helpers keep
+# working against databases (and test fixtures) created before they existed;
+# written only through their dedicated setters.
+_RUN_OPTIONAL_COLS = ("n_train_events",)
+
 _BET_COLS = (
     "run_id event_id bet_ts kickoff_ts market selection price_taken "
     "closing_price model_prob implied_prob devigged_prob edge "
@@ -85,19 +91,26 @@ def insert_run(conn: sqlite3.Connection, row: RunRow) -> None:
     conn.commit()
 
 
-def insert_bets(conn: sqlite3.Connection, bets: Sequence[BetRow]) -> None:
-    if not bets:
-        return
+def _execute_insert_bets(conn: sqlite3.Connection, bets: Sequence[BetRow]) -> None:
     placeholders = ",".join("?" * len(_BET_COLS))
     conn.executemany(
         f"INSERT INTO backtest_bets ({','.join(_BET_COLS)}) VALUES ({placeholders})",
         [tuple(getattr(b, c) for c in _BET_COLS) for b in bets],
     )
+
+
+def insert_bets(conn: sqlite3.Connection, bets: Sequence[BetRow]) -> None:
+    if not bets:
+        return
+    _execute_insert_bets(conn, bets)
     conn.commit()
 
 
 def _row_to_run(row: sqlite3.Row) -> RunRow:
-    return RunRow(**{c: row[c] for c in _RUN_COLS})
+    data = {c: row[c] for c in _RUN_COLS}
+    keys = row.keys()
+    data.update({c: row[c] for c in _RUN_OPTIONAL_COLS if c in keys})
+    return RunRow(**data)
 
 
 def _row_to_bet(row: sqlite3.Row) -> BetRow:
@@ -176,22 +189,43 @@ def finalize_run(
     *,
     finished_at: str,
     summary: Mapping[str, Any],
-) -> None:
-    """Mark run completed and persist summary metrics atomically."""
+    bets: Sequence[BetRow] = (),
+) -> bool:
+    """Mark a run completed with its summary metrics and bets, in one
+    transaction.
+
+    Only a run still in flight (queued/running) with no pending cancel
+    (stage ``cancelling``) is completed, and the stage is cleared in the
+    same UPDATE. Otherwise nothing is written and False is returned: a
+    cancelled or failed run is never overwritten, and a cancel that
+    landed after the worker's last checkpoint still wins.
+    """
     cols = (
         "test_events", "total_bets", "hit_rate", "roi", "mean_clv",
         "brier", "log_loss", "max_drawdown", "reliability_json",
         "sharpe_adjusted",
     )
-    sets = ["status = ?", "finished_at = ?"] + [f"{c} = ?" for c in cols]
+    sets = ["status = ?", "finished_at = ?", "stage = NULL"] + [f"{c} = ?" for c in cols]
     params: List[Any] = ["completed", finished_at]
     params.extend(summary.get(c) for c in cols)
     params.append(run_id)
-    conn.execute(
-        f"UPDATE backtest_runs SET {', '.join(sets)} WHERE id = ?",
-        params,
-    )
-    conn.commit()
+    try:
+        cur = conn.execute(
+            f"UPDATE backtest_runs SET {', '.join(sets)} "
+            "WHERE id = ? AND status IN ('queued', 'running') "
+            "AND (stage IS NULL OR stage != 'cancelling')",
+            params,
+        )
+        if cur.rowcount != 1:
+            conn.rollback()
+            return False
+        if bets:
+            _execute_insert_bets(conn, bets)
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    return True
 
 
 def update_mlflow_run_id(
@@ -204,6 +238,20 @@ def update_mlflow_run_id(
     conn.execute(
         "UPDATE backtest_runs SET mlflow_run_id = ? WHERE id = ?",
         (mlflow_run_id, run_id),
+    )
+    conn.commit()
+
+
+def update_n_train_events(
+    conn: sqlite3.Connection,
+    run_id: str,
+    n_train_events: Optional[int],
+) -> None:
+    """Record how many events the run's model was fitted on (0 for the
+    analytic baselines). Set once training finishes."""
+    conn.execute(
+        "UPDATE backtest_runs SET n_train_events = ? WHERE id = ?",
+        (n_train_events, run_id),
     )
     conn.commit()
 

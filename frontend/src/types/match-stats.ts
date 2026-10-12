@@ -1,65 +1,45 @@
-export interface RawMatchStatsResponse {
-  event?: {
-    event_id?: string;
-    home_team?: string;
-    away_team?: string;
-    sport?: string;
-    country?: string;
-    competition?: string;
-    competition_stage?: string;
-    competition_path?: string;
-    start_time_utc?: string;
-    status?: string;
-    status_detail?: string;
-    outcome?: string;
-    periods?: Array<{
-      name?: string;
-      categories?: Array<{
-        name?: string;
-        stats?: Array<{
-          code?: string;
-          label?: string;
-          home?: string;
-          away?: string;
-        }>;
-      }>;
-    }>;
-  };
-  retrieved_at?: string;
-  source?: string;
-}
+/**
+ * FastAPI `MatchStatsResponse` (app/schemas/match_stats.py). Served from
+ * storage by GET /events/{id}/stats and scraped on demand by
+ * GET /match-stats/{id}. Values are display strings ("57%", "85% (355/419)").
+ */
+export type MatchStat = {
+  code: string | null;
+  label: string | null;
+  home: string | null;
+  away: string | null;
+};
 
-export interface MatchStatItem {
-  code?: string;
-  label: string;
-  home: string;
-  away: string;
-}
-
-export interface MatchStatsCategory {
+export type MatchStatsCategory = {
   name: string;
-  stats: MatchStatItem[];
-}
+  stats: MatchStat[];
+};
 
-export interface MatchStatsPeriod {
+export type MatchStatsPeriod = {
+  /** "Match", "1st Half", "2nd Half", "1st Period", … */
   name: string;
   categories: MatchStatsCategory[];
-}
+};
 
-export interface MatchStatsSummary {
-  eventId: string;
-  homeTeam?: string;
-  awayTeam?: string;
-  sport?: string;
-  country?: string;
-  competition?: string;
-  competitionStage?: string;
-  competitionPath?: string;
-  startTimeUtc?: string;
-  status?: string;
-  statusDetail?: string;
-  outcome?: string;
-  periods: MatchStatsPeriod[];
-  lastUpdated?: string;
-  source?: string;
-}
+export type MatchStatsResponse = {
+  event: {
+    event_id: string;
+    home_team?: string | null;
+    away_team?: string | null;
+    sport?: string | null;
+    country?: string | null;
+    competition?: string | null;
+    competition_stage?: string | null;
+    competition_path?: string | null;
+    start_time_utc?: string | null;
+    status?: string | null;
+    status_detail?: string | null;
+    outcome?: string | null;
+    periods: MatchStatsPeriod[];
+  };
+  retrieved_at: string;
+  source?: string | null;
+};
+
+/** GET /events/{id}/stats: the latest stored snapshot (never scrapes). */
+export type StoredStatsResponse = MatchStatsResponse & { fetched_at: string };

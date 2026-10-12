@@ -344,7 +344,9 @@ def run_backtest(
                     stake_kelly_fraction=stake,
                     result=result,
                     pnl=pnl,
-                    clv=0.0,    # price_taken == closing_price for archive bets
+                    # Bets are priced at the averaged close, so CLV is undefined
+                    # (not zero). Stored as NULL; aggregates report null.
+                    clv=None,
                 ))
 
     metrics = _compute_metrics(bets, total_stake=total_stake, hits=hits, max_dd=max_dd)
@@ -397,20 +399,37 @@ def _valid_prob_dict(probs: Mapping[str, float], selections: Sequence[str] = SEL
     return 0.99 <= s <= 1.01
 
 
+def _unit_stake_return(bet: BetRecord) -> float:
+    """Net return of a 1-unit stake at the price taken: ``price - 1`` on a
+    win, ``-1`` on a loss, ``0`` on a void (``result is None``, stake
+    returned — the paper_bets convention for voided bets)."""
+    if bet.result is None:
+        return 0.0
+    if bet.result == 1.0:
+        return bet.price_taken - 1.0
+    return -1.0
+
+
 def _compute_sharpe_adjusted(bets: Sequence[BetRecord]) -> tuple[float, float, float]:
     """Return (return_per_bet, rmse_per_bet, sharpe_adjusted).
 
-    Definition: each bet contributes pnl = (k_i - 1) on win, -1 on loss for
-    a unit stake. Return-to-bettor = 1 + pnl (so 1.0 = breakeven).
-    Sharpe-adjusted = (R_p - 1) / RMSE_p with R_p = mean(1 + pnl) and
-    RMSE_p = sqrt(mean(pnl^2)).
+    Computed on UNIT-STAKE returns, independent of Kelly sizing, so the
+    numbers rank selection quality rather than staking aggressiveness.
+    Per bet ``r_i = price_i - 1`` if won, ``-1`` if lost, ``0`` if void
+    (the staked fraction lives in ``pnl`` and only drives ROI/drawdown).
+
+      - ``return_per_bet`` R_p = 1 + mean(r_i)   (1.0 = breakeven)
+      - ``rmse_per_bet``   RMSE_p = sqrt(mean(r_i^2))
+      - ``sharpe_adjusted`` = (R_p - 1) / RMSE_p
+
+    With no bets the run has no returns: (1.0, 0.0, 0.0).
     """
     n = len(bets)
     if n == 0:
         return 1.0, 0.0, 0.0
-    pnls = [b.pnl for b in bets]
-    return_per_bet = 1.0 + sum(pnls) / n
-    rmse_per_bet = math.sqrt(sum(p * p for p in pnls) / n)
+    returns = [_unit_stake_return(b) for b in bets]
+    return_per_bet = 1.0 + sum(returns) / n
+    rmse_per_bet = math.sqrt(sum(r * r for r in returns) / n)
     sharpe = (return_per_bet - 1.0) / rmse_per_bet if rmse_per_bet > 0 else 0.0
     return return_per_bet, rmse_per_bet, sharpe
 

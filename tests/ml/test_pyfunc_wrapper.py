@@ -1,22 +1,10 @@
 """Round-trip log → load → predict for each model type via the universal pyfunc."""
 from __future__ import annotations
 
-import os
 from pathlib import Path
-from typing import Iterator
 
-import mlflow
 import pandas as pd
 import pytest
-
-
-@pytest.fixture
-def tracking(tmp_path: Path, monkeypatch) -> Iterator[Path]:
-    monkeypatch.delenv("APP_MLFLOW_DISABLED", raising=False)
-    uri = f"sqlite:///{tmp_path / 'mlflow.db'}"
-    mlflow.set_tracking_uri(uri)
-    mlflow.set_experiment("picks")
-    yield tmp_path
 
 
 def _row_logistic() -> dict:
@@ -30,45 +18,105 @@ def _row_logistic() -> dict:
 
 def _row_with_market() -> dict:
     r = _row_logistic()
-    r.update({"market_prob_home": 0.5, "market_prob_draw": 0.25, "market_prob_away": 0.25})
+    r.update({
+        "market_prob_home": 0.5, "market_prob_draw": 0.25, "market_prob_away": 0.25,
+        "market_implied_home": 0.55, "market_implied_draw": 0.30, "market_implied_away": 0.25,
+    })
     return r
 
 
-def test_analytic_market_implied_round_trip(tracking):
+def _log(model_name: str, trained_model) -> str:
+    import mlflow
+
+    from app.ml import tracking
     from app.ml.pyfunc_wrapper import save_picks_model
-    with mlflow.start_run() as run:
-        save_picks_model(model_name="market_implied", trained_model=None)
-        model_uri = f"runs:/{run.info.run_id}/picks_model"
-    loaded = mlflow.pyfunc.load_model(model_uri)
-    df = pd.DataFrame([_row_with_market()])
-    out = loaded.predict(df)
-    assert list(out.columns) == ["home", "draw", "away"]
-    assert abs(out.iloc[0].sum() - 1.0) < 0.01
+
+    # Log into the fixture's `picks` experiment (artifacts under tmp_path),
+    # never MLflow's Default experiment (./mlruns in the working tree).
+    with mlflow.start_run(experiment_id=tracking.ensure_experiment_id()):
+        return save_picks_model(model_name=model_name, trained_model=trained_model)
 
 
-def test_logistic_round_trip(tracking):
-    """Train a small logistic, save, load, predict."""
+def _load(model_uri: str):
+    import mlflow
+
+    return mlflow.pyfunc.load_model(model_uri)
+
+
+def _small_logistic():
     import numpy as np
-    from app.ml.training import (
-        FeatureMatrix, train_logistic, BASE_FEATURE_COLUMNS,
-    )
-    from app.ml.pyfunc_wrapper import save_picks_model
+
+    from app.ml.training import BASE_FEATURE_COLUMNS, FeatureMatrix, train_logistic
 
     rng = np.random.default_rng(0)
     n = 60
-    X = rng.normal(size=(n, len(BASE_FEATURE_COLUMNS)))
-    y = rng.integers(0, 3, size=n)
     fm = FeatureMatrix(
-        X=X, y=y,
+        X=rng.normal(size=(n, len(BASE_FEATURE_COLUMNS))),
+        y=rng.integers(0, 3, size=n),
         event_ids=[f"E{i}" for i in range(n)],
         kickoffs=[f"2024-01-{(i % 28) + 1:02d}T00:00:00Z" for i in range(n)],
     )
-    trained = train_logistic(fm)
-    with mlflow.start_run() as run:
-        save_picks_model(model_name="logistic", trained_model=trained)
-        model_uri = f"runs:/{run.info.run_id}/picks_model"
-    loaded = mlflow.pyfunc.load_model(model_uri)
-    df = pd.DataFrame([_row_logistic()])
-    out = loaded.predict(df)
+    return train_logistic(fm)
+
+
+def test_module_does_not_import_mlflow_eagerly():
+    import importlib
+    import sys
+
+    saved = sys.modules.pop("app.ml.pyfunc_wrapper", None)
+    blocked = sys.modules.get("mlflow")
+    sys.modules["mlflow"] = None  # importing mlflow would raise
+    try:
+        module = importlib.import_module("app.ml.pyfunc_wrapper")
+        assert "logistic" in module.SERVABLE_MODELS
+    finally:
+        sys.modules.pop("app.ml.pyfunc_wrapper", None)
+        if blocked is None:
+            sys.modules.pop("mlflow", None)
+        else:
+            sys.modules["mlflow"] = blocked
+        if saved is not None:
+            sys.modules["app.ml.pyfunc_wrapper"] = saved
+
+
+def test_analytic_market_implied_round_trip(mlflow_store):
+    loaded = _load(_log("market_implied", None))
+    out = loaded.predict(pd.DataFrame([_row_with_market()]))
+    assert list(out.columns) == ["home", "draw", "away"]
+    assert out.iloc[0].tolist() == pytest.approx([0.5, 0.25, 0.25])
+
+
+def test_analytic_vig_included_reads_market_implied_columns(mlflow_store):
+    loaded = _load(_log("vig_included", None))
+    out = loaded.predict(pd.DataFrame([_row_with_market()]))
+    s = 0.55 + 0.30 + 0.25
+    assert out.iloc[0].tolist() == pytest.approx([0.55 / s, 0.30 / s, 0.25 / s])
+
+
+def test_logistic_round_trip_with_metadata_and_code_paths(mlflow_store):
+    trained = _small_logistic()
+    model_uri = _log("logistic", trained)
+    loaded = _load(model_uri)
+
+    meta = loaded.metadata.metadata
+    assert meta["picks_model_name"] == "logistic"
+    assert meta["input_columns"] == list(trained.feature_columns)
+    assert loaded.metadata.signature is None  # int64 counts must not be rejected
+
+    # Integer feature columns (int64 in pandas) are accepted.
+    out = loaded.predict(pd.DataFrame([_row_logistic()]))
     assert list(out.columns) == ["home", "draw", "away"]
     assert abs(out.iloc[0].sum() - 1.0) < 0.01
+
+    import mlflow
+
+    local = Path(mlflow.artifacts.download_artifacts(artifact_uri=model_uri))
+    assert (local / "code" / "app" / "ml" / "pyfunc_wrapper.py").exists()
+    assert not list((local / "code").rglob("__pycache__"))
+    assert (local / "artifacts" / "meta.txt").read_text() == "logistic"
+
+
+def test_dixon_coles_is_logged_but_not_predictable(mlflow_store):
+    loaded = _load(_log("dixon_coles", {"E1": {"home_attack": 1.0}}))
+    with pytest.raises(NotImplementedError, match="not servable"):
+        loaded.predict(pd.DataFrame([{"event_id": "E1"}]))

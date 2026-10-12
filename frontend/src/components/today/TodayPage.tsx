@@ -1,22 +1,49 @@
 "use client";
-import { PageHeader } from "@/components/terminal/PageHeader";
-import { HeroStrip } from "./HeroStrip";
+import { useLocale } from "@/contexts/LocaleContext";
+import { Button, PageHeader } from "@/components/ui";
+import { HealthBanner } from "@/components/shell/health";
+import { useOpsStatus } from "@/hooks/useOpsStatus";
+import { useToday } from "@/hooks/useToday";
+import { TodayKpis } from "./TodayKpis";
 import { TodaySlate } from "./TodaySlate";
 import { RecentSettled } from "./RecentSettled";
-import { ModelSnapshot } from "./ModelSnapshot";
-import { useToday } from "@/hooks/useToday";
+import { ServedModels } from "./ServedModels";
 
+/**
+ * The operator's landing page: is everything healthy (banner, KPIs, served
+ * models), what is on the slate, and what settled last. Each panel owns its
+ * loading / error / empty state, so one failed source never blanks the page.
+ */
 export function TodayPage() {
-  const { data, isLoading, isError } = useToday();
+  const { t, fmt } = useLocale();
+  const today = useToday();
+  const ops = useOpsStatus();
+
   return (
     <>
-      <PageHeader kicker="Today · Cockpit" />
-      <HeroStrip data={data} loading={isLoading} />
-      <div className="my-6 border-t border-border" />
-      <TodaySlate picks={data?.openPicks ?? []} loading={isLoading} error={isError} />
-      <div className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <RecentSettled picks={data?.settledPicks ?? []} loading={isLoading} />
-        <ModelSnapshot />
+      <PageHeader
+        title={t("today.title")}
+        description={t("today.description")}
+        meta={today.data ? t("common.asOf", { time: fmt.time(today.data.generated_at) }) : undefined}
+        actions={
+          <Button
+            size="sm"
+            loading={today.isRefetching}
+            onClick={() => {
+              void today.refetch();
+              void ops.refetch();
+            }}
+          >
+            {t("common.refresh")}
+          </Button>
+        }
+      />
+      <div className="flex flex-col gap-6">
+        <HealthBanner variant="full" />
+        <TodayKpis query={today} />
+        <TodaySlate query={today} />
+        <ServedModels />
+        <RecentSettled query={today} />
       </div>
     </>
   );

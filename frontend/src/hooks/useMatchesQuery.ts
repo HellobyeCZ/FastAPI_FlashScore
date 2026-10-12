@@ -1,77 +1,57 @@
 "use client";
+import { keepPreviousData, useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
+import { appGet } from "@/lib/api/http";
+import type { MatchesQuery, MatchesResponse } from "@/types/scraped-matches";
 
-import { useInfiniteQuery } from "@tanstack/react-query";
-import type { ScrapedMatchSummary } from "@/types/scraped-matches";
+export const MATCHES_PAGE_SIZE = 50;
 
-export type MatchesSort =
-  | "last_fetch_desc"
-  | "kickoff_desc"
-  | "kickoff_asc"
-  | "snaps_desc";
+export const matchesListKey = ["matches", "list"] as const;
 
-export type MatchesQueryParams = {
-  q?: string;
-  countries: string[];
-  sports: string[];
-  leagues: string[];
-  statuses: string[];
-  sort: MatchesSort;
-  limit?: number;
-};
+type ListFilters = Omit<MatchesQuery, "offset" | "limit">;
 
-export type MatchesPage = {
-  matches: ScrapedMatchSummary[];
-  nextCursor: string | null;
-  total: number;
-  facets?: {
-    country: { value: string; count: number }[];
-    sport: { value: string; count: number }[];
-    league: { value: string; count: number }[];
-    status: { value: string; count: number }[];
+function listParams(query: ListFilters) {
+  return {
+    q: query.q || undefined,
+    sport: query.sport ?? [],
+    country: query.country ?? [],
+    league: query.league ?? [],
+    status: query.status ?? [],
+    bets: query.bets ?? [],
+    sort: query.sort
   };
-};
-
-function buildQs(p: MatchesQueryParams, cursor?: string, withFacets?: boolean) {
-  const qs = new URLSearchParams();
-  if (p.q && p.q.trim()) qs.set("q", p.q.trim());
-  p.countries.forEach((c) => qs.append("country", c));
-  p.sports.forEach((s) => qs.append("sport", s));
-  p.leagues.forEach((l) => qs.append("league", l));
-  p.statuses.forEach((s) => qs.append("status", s));
-  qs.set("sort", p.sort);
-  qs.set("limit", String(p.limit ?? 50));
-  if (cursor) qs.set("cursor", cursor);
-  if (withFacets) qs.set("withFacets", "1");
-  return qs.toString();
 }
 
-export function useMatchesQuery(params: MatchesQueryParams) {
-  const queryKey = [
-    "matches",
-    params.q ?? "",
-    params.countries.slice().sort().join(","),
-    params.sports.slice().sort().join(","),
-    params.leagues.slice().sort().join(","),
-    params.statuses.slice().sort().join(","),
-    params.sort,
-    params.limit ?? 50,
-  ] as const;
+function listKey(query: ListFilters) {
+  return [...matchesListKey, listParams(query)] as const;
+}
 
-  return useInfiniteQuery<MatchesPage>({
-    queryKey,
-    queryFn: async ({ pageParam }) => {
-      // Facets only on the first page — they're computed from the filter
-      // set, not the page slice, so we don't need to re-request per page.
-      const withFacets = !pageParam;
-      const r = await fetch(
-        `/api/scraped-matches?${buildQs(params, pageParam as string | undefined, withFacets)}`,
-      );
-      if (!r.ok) throw new Error(`matches ${r.status}`);
-      return (await r.json()) as MatchesPage;
+/**
+ * Stored-matches index (GET /api/scraped-matches), paged by offset. Facets
+ * come with the first page only; the previous result stays on screen while a
+ * new filter combination loads.
+ */
+export function useMatchesQuery(query: ListFilters) {
+  const params = listParams(query);
+  return useInfiniteQuery({
+    queryKey: listKey(query),
+    queryFn: ({ pageParam }) =>
+      appGet<MatchesResponse>("scraped-matches", { ...params, offset: pageParam, limit: MATCHES_PAGE_SIZE }),
+    initialPageParam: 0,
+    getNextPageParam: (last) => {
+      const next = last.offset + last.items.length;
+      return last.items.length > 0 && next < last.total ? next : undefined;
     },
-    initialPageParam: undefined as string | undefined,
-    getNextPageParam: (last) => last.nextCursor ?? undefined,
-    staleTime: 15_000,
-    refetchOnWindowFocus: false,
+    placeholderData: keepPreviousData,
+    staleTime: 60_000
   });
+}
+
+/**
+ * Whether the list's latest failure was a "load more" rather than a refetch.
+ * react-query 5.28 has no isFetchNextPageError yet; the query keeps the failed
+ * fetch's meta, which records the paging direction.
+ */
+export function useNextPageFailed(query: ListFilters, isError: boolean): boolean {
+  const qc = useQueryClient();
+  return isError && qc.getQueryState(listKey(query))?.fetchMeta?.fetchMore?.direction === "forward";
 }

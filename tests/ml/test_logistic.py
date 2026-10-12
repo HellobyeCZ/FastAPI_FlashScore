@@ -104,7 +104,7 @@ def test_logistic_model_fn_integrates_with_backtester(backfilled_full):
     assert report.total_bets == 24
     assert 0.0 <= report.brier <= 1.0
     # CLV slot present and zero for archive bets.
-    assert report.mean_clv == 0.0
+    assert report.mean_clv is None  # CLV is undefined for close-priced archive bets
 
 
 def test_logistic_save_and_load_roundtrip(backfilled_full, tmp_path):
