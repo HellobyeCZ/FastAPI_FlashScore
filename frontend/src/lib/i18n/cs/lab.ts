@@ -148,7 +148,7 @@ export const lab: Record<keyof typeof en, string> = {
   "lab.pnl.title": "Kumulativní P&L",
   "lab.pnl.description": "Průběžný zisk v jednotkách při {kelly} Kellyho, podle data sázky.",
   "lab.pnl.span": "{from} → {to} · {total}",
-  "lab.pnl.axis": "x: dny od {start} · y: jednotky",
+  "lab.pnl.axis": "Kumulativní Z/Z v jednotkách podle dne sázky, od {start}",
   "lab.pnl.error": "Průběh P&L se nepodařilo načíst",
   "lab.pnl.noBets": "Žádné sázky, není co vykreslit",
 

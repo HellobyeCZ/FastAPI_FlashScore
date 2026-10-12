@@ -288,6 +288,9 @@ export function ClvHeatmapPanel({
           rows={data.competitions}
           cols={data.selections.map(colLabel)}
           minNToShow={HEATMAP_MIN_N}
+          ariaLabel={title}
+          rowHeader={t("performance.col.competition")}
+          formatValue={(v) => fmt.pct(v, 1, true)}
         />
       )}
     </ChartPanel>

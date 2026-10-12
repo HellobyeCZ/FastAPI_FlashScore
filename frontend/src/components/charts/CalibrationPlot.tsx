@@ -1,7 +1,7 @@
 "use client";
 
 import { scaleLinear } from "@visx/scale";
-import type { CalibrationBucket } from "@/lib/api-picks";
+import type { CalibrationBucket } from "@/lib/performance/types";
 import { seriesColor } from "@/lib/labels";
 import { ChartFrame, ChartSvg, TICK_FONT, charWidth, isFiniteNumber, tok } from "./frame";
 import { TerminalAxisBottom, TerminalAxisLeft, type AxisTick } from "./TerminalAxis";

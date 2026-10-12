@@ -6,6 +6,7 @@ import { performance } from "./performance";
 import { lab } from "./lab";
 import { ops } from "./ops";
 import { settings } from "./settings";
+import { charts } from "./charts";
 
 export const en = {
   ...common,
@@ -15,5 +16,6 @@ export const en = {
   ...performance,
   ...lab,
   ...ops,
-  ...settings
+  ...settings,
+  ...charts
 } as const;

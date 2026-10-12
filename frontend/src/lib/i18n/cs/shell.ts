@@ -50,11 +50,11 @@ export const shell: Record<keyof typeof en, string> = {
   "health.db": "DB {size}",
   "health.build": "build {sha}",
 
-  "model.market_implied": "Implikováno trhem",
+  "model.market_implied": "Implikovaná z kurzů",
   "model.vig_included": "Včetně marže",
   "model.logistic": "Logistická regrese",
-  "model.hgb": "Gradient boosting",
-  "model.hgb_pca": "Gradient boosting + PCA",
+  "model.hgb": "Gradientní boosting",
+  "model.hgb_pca": "Gradientní boosting + PCA",
   "model.dixon_coles": "Dixon–Coles",
   "model.baseline": "základní",
 

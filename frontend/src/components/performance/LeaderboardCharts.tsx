@@ -42,11 +42,13 @@ export function PnlOverTimePanel({
   // Day 0 is the day before the first settlement of any model; each line
   // starts at 0u the day before its own first settlement.
   const origin = data.firstDay ? addDays(data.firstDay, -1) : null;
+  const originMs = origin ? Date.parse(dayIso(origin)) : 0;
   const series: LineSeries[] = origin
     ? data.series.map((s, i) => ({
         label: modelLabel(s.model, t),
         color: modelColor(s.model, i),
-        points: pnlLine(s.points, origin)
+        // Day offsets → midday UTC timestamps for a real date axis.
+        points: pnlLine(s.points, origin).map((p) => ({ x: originMs + p.x * 86_400_000, y: p.y }))
       }))
     : [];
   const tableRows = data.series.flatMap((s) => s.points.map((p) => ({ model: s.model, ...p })));
@@ -91,7 +93,8 @@ export function PnlOverTimePanel({
             series={series}
             width={width}
             height={CHART_HEIGHT}
-            xLabel={t("performance.chart.pnl.xLabel", { date: originText })}
+            xType="time"
+            xLabel={t("performance.chart.pnl.xLabel")}
             yLabel={t("performance.chart.pnl.yLabel")}
           />
         )}

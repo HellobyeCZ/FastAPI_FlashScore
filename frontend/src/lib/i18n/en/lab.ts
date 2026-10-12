@@ -147,7 +147,7 @@ export const lab = {
   "lab.pnl.title": "Cumulative P&L",
   "lab.pnl.description": "Running profit in units at {kelly} Kelly, by bet date.",
   "lab.pnl.span": "{from} → {to} · {total}",
-  "lab.pnl.axis": "x: days since {start} · y: units",
+  "lab.pnl.axis": "Cumulative P&L in units, by bet day, from {start}",
   "lab.pnl.error": "Couldn't load the P&L series",
   "lab.pnl.noBets": "No bets, so there is no P&L to plot",
 

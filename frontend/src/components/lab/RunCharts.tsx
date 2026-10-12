@@ -60,6 +60,8 @@ export function ReliabilityPanel({ run }: { run: BacktestRunDetail }) {
   );
 }
 
+const DAY_MS = 86_400_000;
+
 export type PnlSeries = { key: string; label: string; title: string; color: string; curve: PnlCurve };
 
 /**
@@ -73,6 +75,7 @@ export function PnlChart({ series, height = 260 }: { series: PnlSeries[]; height
     .filter((d): d is string => Boolean(d))
     .sort()[0];
   if (!origin) return null;
+  const originMs = Date.parse(`${origin}T12:00:00Z`);
   return (
     <div className="flex flex-col gap-2">
       <ChartBox height={height}>
@@ -80,7 +83,14 @@ export function PnlChart({ series, height = 260 }: { series: PnlSeries[]; height
           <CumulativeLineChart
             width={w}
             height={height}
-            series={series.map((s) => ({ label: s.label, color: s.color, points: curvePoints(s.curve, origin) }))}
+            xType="time"
+            legend={false}
+            series={series.map((s) => ({
+              label: s.label,
+              color: s.color,
+              // Day offsets → midday UTC timestamps for a real date axis.
+              points: curvePoints(s.curve, origin).map((p) => ({ x: originMs + p.x * DAY_MS, y: p.y }))
+            }))}
           />
         )}
       </ChartBox>
