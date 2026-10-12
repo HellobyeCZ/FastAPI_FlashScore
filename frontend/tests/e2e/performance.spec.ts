@@ -447,7 +447,7 @@ async function stubPerformance(page: Page, opts: Options = {}) {
     return route.fulfill({ json: empty ? { ...FACETS, models: [], competitions: [] } : FACETS });
   });
   await stubJson(page, "**/api/backend/picks/summary", empty ? summary(null) : summary(lastSettled));
-  await stubJson(page, "**/api/backend/backtest/runs", BACKTEST_RUNS);
+  await stubJson(page, "**/api/backend/backtest/runs?*", BACKTEST_RUNS);
   await stubJson(page, "**/api/backend/mlflow/registry", registry);
   await page.route("**/api/backend/picks/stats/calibration*", (route) => {
     const url = new URL(route.request().url());
